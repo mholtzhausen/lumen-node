@@ -534,6 +534,10 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     let action_group = gio::SimpleActionGroup::new();
 
+    let copy_prompt_action = gio::SimpleAction::new("copy-prompt", None);
+    let copy_negative_prompt_action = gio::SimpleAction::new("copy-negative-prompt", None);
+    let copy_seed_action = gio::SimpleAction::new("copy-seed", None);
+    let copy_generation_command_action = gio::SimpleAction::new("copy-generation-command", None);
     let copy_image_action = gio::SimpleAction::new("copy-image", None);
     let copy_path_action = gio::SimpleAction::new("copy-path", None);
     let copy_metadata_action = gio::SimpleAction::new("copy-metadata", None);
@@ -543,6 +547,78 @@ fn build_ui(app: &adw::Application) {
         gio::SimpleAction::new("refresh-folder-thumbnails", None);
     let refresh_folder_meta_action =
         gio::SimpleAction::new("refresh-folder-metadata", None);
+
+    let selection_for_actions = selection_model.clone();
+    let meta_cache_for_actions = meta_cache.clone();
+    let window_for_actions = window.clone();
+    copy_prompt_action.connect_activate(move |_, _| {
+        let Some(path) = selected_image_path(&selection_for_actions) else {
+            return;
+        };
+        let path_key = path.to_string_lossy().to_string();
+        let text = meta_cache_for_actions
+            .borrow()
+            .get(&path_key)
+            .and_then(|meta| meta.prompt.clone())
+            .unwrap_or_else(|| "No prompt found".to_string());
+        gtk4::prelude::WidgetExt::display(&window_for_actions)
+            .clipboard()
+            .set_text(&text);
+    });
+
+    let selection_for_actions = selection_model.clone();
+    let meta_cache_for_actions = meta_cache.clone();
+    let window_for_actions = window.clone();
+    copy_negative_prompt_action.connect_activate(move |_, _| {
+        let Some(path) = selected_image_path(&selection_for_actions) else {
+            return;
+        };
+        let path_key = path.to_string_lossy().to_string();
+        let text = meta_cache_for_actions
+            .borrow()
+            .get(&path_key)
+            .and_then(|meta| meta.negative_prompt.clone())
+            .unwrap_or_else(|| "No negative prompt found".to_string());
+        gtk4::prelude::WidgetExt::display(&window_for_actions)
+            .clipboard()
+            .set_text(&text);
+    });
+
+    let selection_for_actions = selection_model.clone();
+    let meta_cache_for_actions = meta_cache.clone();
+    let window_for_actions = window.clone();
+    copy_seed_action.connect_activate(move |_, _| {
+        let Some(path) = selected_image_path(&selection_for_actions) else {
+            return;
+        };
+        let path_key = path.to_string_lossy().to_string();
+        let text = meta_cache_for_actions
+            .borrow()
+            .get(&path_key)
+            .and_then(|meta| extract_seed_from_parameters(&meta))
+            .unwrap_or_else(|| "No seed found".to_string());
+        gtk4::prelude::WidgetExt::display(&window_for_actions)
+            .clipboard()
+            .set_text(&text);
+    });
+
+    let selection_for_actions = selection_model.clone();
+    let meta_cache_for_actions = meta_cache.clone();
+    let window_for_actions = window.clone();
+    copy_generation_command_action.connect_activate(move |_, _| {
+        let Some(path) = selected_image_path(&selection_for_actions) else {
+            return;
+        };
+        let path_key = path.to_string_lossy().to_string();
+        let text = meta_cache_for_actions
+            .borrow()
+            .get(&path_key)
+            .map(|meta| format_generation_command(meta))
+            .unwrap_or_else(|| "No generation parameters found".to_string());
+        gtk4::prelude::WidgetExt::display(&window_for_actions)
+            .clipboard()
+            .set_text(&text);
+    });
 
     let selection_for_actions = selection_model.clone();
     let window_for_actions = window.clone();
@@ -701,6 +777,10 @@ fn build_ui(app: &adw::Application) {
         scan_directory(folder, sender_for_actions.clone());
     });
 
+    action_group.add_action(&copy_prompt_action);
+    action_group.add_action(&copy_negative_prompt_action);
+    action_group.add_action(&copy_seed_action);
+    action_group.add_action(&copy_generation_command_action);
     action_group.add_action(&copy_image_action);
     action_group.add_action(&copy_path_action);
     action_group.add_action(&copy_metadata_action);
@@ -711,6 +791,13 @@ fn build_ui(app: &adw::Application) {
     window.insert_action_group("ctx", Some(&action_group));
 
     let menu_model = gio::Menu::new();
+    let prompt_section = gio::Menu::new();
+    prompt_section.append(Some("Copy Prompt"), Some("ctx.copy-prompt"));
+    prompt_section.append(Some("Copy Negative Prompt"), Some("ctx.copy-negative-prompt"));
+    prompt_section.append(Some("Copy Seed"), Some("ctx.copy-seed"));
+    prompt_section.append(Some("Copy Generation Command"), Some("ctx.copy-generation-command"));
+    menu_model.append_section(None, &prompt_section);
+
     let clipboard_section = gio::Menu::new();
     clipboard_section.append(Some("Copy Image"), Some("ctx.copy-image"));
     clipboard_section.append(Some("Copy Path"), Some("ctx.copy-path"));
@@ -1058,6 +1145,44 @@ fn format_metadata_text(meta: &ImageMetadata) -> String {
         "No metadata found".to_string()
     } else {
         out.join("\n\n")
+    }
+}
+
+/// Extracts seed value from raw parameters string (Automatic1111 format: "Seed: 123456, ...")
+fn extract_seed_from_parameters(meta: &ImageMetadata) -> Option<String> {
+    if let Some(params) = &meta.raw_parameters {
+        // Try to find "Seed: <number>" pattern
+        for part in params.split(',') {
+            if let Some(seed_part) = part.trim().strip_prefix("Seed:") {
+                if let Ok(seed_val) = seed_part.trim().parse::<u64>() {
+                    return Some(seed_val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Formats a CLI-style generation command from available metadata
+fn format_generation_command(meta: &ImageMetadata) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(prompt) = &meta.prompt {
+        parts.push(format!("--prompt \"{}\" ", prompt.replace('"', "\\\"")));
+    }
+
+    if let Some(neg_prompt) = &meta.negative_prompt {
+        parts.push(format!("--negative \"{}\" ", neg_prompt.replace('"', "\\\"")));
+    }
+
+    if let Some(seed) = extract_seed_from_parameters(meta) {
+        parts.push(format!("--seed {} ", seed));
+    }
+
+    if parts.is_empty() {
+        "comfy-ui-cli".to_string()
+    } else {
+        format!("comfy-ui-cli {}", parts.join("").trim())
     }
 }
 
