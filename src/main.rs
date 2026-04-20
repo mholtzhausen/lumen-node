@@ -7,7 +7,7 @@ mod thumbnails;
 use metadata::{ImageMetadata, ScanMessage};
 use scanner::scan_directory;
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, collections::VecDeque, rc::Rc};
 
 use libadwaita as adw;
 use adw::prelude::*;
@@ -39,7 +39,8 @@ fn build_ui(app: &adw::Application) {
     let list_store = gio::ListStore::new::<StringObject>();
 
     // Async channel: background scan thread → GTK main thread.
-    let (sender, receiver) = async_channel::unbounded::<ScanMessage>();
+    // Bounded to provide backpressure when the UI can't keep up.
+    let (sender, receiver) = async_channel::bounded::<ScanMessage>(200);
 
     // ViewStack — toggled programmatically (no visible tab switcher).
     let view_stack = adw::ViewStack::new();
@@ -69,25 +70,96 @@ fn build_ui(app: &adw::Application) {
     ));
 
     // -----------------------------------------------------------------------
-    // Receiver task: update model, manage spinner, show scan-complete toast
+    // Receiver task: buffer messages and drain in idle-priority batches
     // -----------------------------------------------------------------------
     let list_store_recv = list_store.clone();
     let spinner_recv = spinner.clone();
     let toast_recv = toast_overlay.clone();
     let meta_cache_recv = meta_cache.clone();
     let hash_cache_recv = hash_cache.clone();
-    glib::MainContext::default().spawn_local(async move {
-        while let Ok(msg) = receiver.recv().await {
-            match msg {
-                ScanMessage::ImageFound { path, hash, meta } => {
-                    list_store_recv.append(&StringObject::new(&path));
-                    // Cache the hash and metadata from the DB (already extracted by scanner).
-                    if !hash.is_empty() {
-                        hash_cache_recv.borrow_mut().insert(path.clone(), hash);
+
+    /// Maximum items drained from the buffer per idle tick.
+    const BATCH_SIZE: usize = 50;
+
+    let buffer: Rc<RefCell<VecDeque<ScanMessage>>> =
+        Rc::new(RefCell::new(VecDeque::new()));
+    let drain_scheduled: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+
+    // Idle-priority drain callback: processes up to BATCH_SIZE messages per
+    // tick, then yields control back to GTK for user-input events.
+    let schedule_drain = {
+        let buffer = buffer.clone();
+        let drain_scheduled = drain_scheduled.clone();
+        let list_store_recv = list_store_recv.clone();
+        let hash_cache_recv = hash_cache_recv.clone();
+        let meta_cache_recv = meta_cache_recv.clone();
+        let spinner_recv = spinner_recv.clone();
+        let toast_recv = toast_recv.clone();
+        Rc::new(move || {
+            if *drain_scheduled.borrow() {
+                return;
+            }
+            *drain_scheduled.borrow_mut() = true;
+
+            let buffer = buffer.clone();
+            let drain_scheduled = drain_scheduled.clone();
+            let list_store_recv = list_store_recv.clone();
+            let hash_cache_recv = hash_cache_recv.clone();
+            let meta_cache_recv = meta_cache_recv.clone();
+            let spinner_recv = spinner_recv.clone();
+            let toast_recv = toast_recv.clone();
+            glib::idle_add_local(move || {
+                *drain_scheduled.borrow_mut() = false;
+
+                let mut batch: Vec<ScanMessage> =
+                    Vec::with_capacity(BATCH_SIZE);
+                {
+                    let mut buf = buffer.borrow_mut();
+                    for _ in 0..BATCH_SIZE {
+                        if let Some(msg) = buf.pop_front() {
+                            batch.push(msg);
+                        } else {
+                            break;
+                        }
                     }
-                    meta_cache_recv.borrow_mut().insert(path, meta);
                 }
-                ScanMessage::ScanComplete => {
+
+                // Collect enumerated paths for batch splice.
+                let mut new_paths: Vec<StringObject> = Vec::new();
+                let mut scan_complete = false;
+
+                for msg in batch {
+                    match msg {
+                        ScanMessage::ImageEnumerated { path } => {
+                            new_paths.push(StringObject::new(&path));
+                        }
+                        ScanMessage::EnumerationComplete => {
+                            // Nothing special needed on the UI side.
+                        }
+                        ScanMessage::ImageEnriched { path, hash, meta } => {
+                            if !hash.is_empty() {
+                                hash_cache_recv
+                                    .borrow_mut()
+                                    .insert(path.clone(), hash);
+                            }
+                            meta_cache_recv.borrow_mut().insert(path, meta);
+                        }
+                        ScanMessage::ScanComplete => {
+                            scan_complete = true;
+                        }
+                    }
+                }
+
+                // Batch-insert enumerated paths via splice (single model notification).
+                if !new_paths.is_empty() {
+                    list_store_recv.splice(
+                        list_store_recv.n_items(),
+                        0,
+                        &new_paths,
+                    );
+                }
+
+                if scan_complete {
                     spinner_recv.stop();
                     let n = list_store_recv.n_items();
                     let text = format!(
@@ -99,7 +171,25 @@ fn build_ui(app: &adw::Application) {
                     toast.set_timeout(3);
                     toast_recv.add_toast(toast);
                 }
-            }
+
+                // Re-schedule if the buffer still has items.
+                if !buffer.borrow().is_empty() {
+                    *drain_scheduled.borrow_mut() = true;
+                    glib::ControlFlow::Continue
+                } else {
+                    glib::ControlFlow::Break
+                }
+            });
+        })
+    };
+
+    // Async receiver: pushes messages into the buffer and triggers idle drain.
+    let buffer_recv = buffer.clone();
+    let schedule_drain_recv = schedule_drain.clone();
+    glib::MainContext::default().spawn_local(async move {
+        while let Ok(msg) = receiver.recv().await {
+            buffer_recv.borrow_mut().push_back(msg);
+            schedule_drain_recv();
         }
     });
 
@@ -201,6 +291,7 @@ fn build_ui(app: &adw::Application) {
     let current_folder_tree = current_folder.clone();
     let meta_cache_tree = meta_cache.clone();
     let hash_cache_tree = hash_cache.clone();
+    let sort_key_tree = sort_key.clone();
     tree_selection.connect_selection_changed(move |model, _, _| {
         let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
             return;
@@ -218,7 +309,7 @@ fn build_ui(app: &adw::Application) {
         meta_cache_tree.borrow_mut().clear();
         hash_cache_tree.borrow_mut().clear();
         spinner_tree.start();
-        scan_directory(path, sender_tree.clone());
+        scan_directory(path, sender_tree.clone(), sort_key_tree.borrow().clone());
     });
 
     let tree_factory = SignalListItemFactory::new();
@@ -727,6 +818,7 @@ fn build_ui(app: &adw::Application) {
     let meta_cache_for_actions = meta_cache.clone();
     let spinner_for_actions = spinner.clone();
     let sender_for_actions = sender.clone();
+    let sort_key_for_actions = sort_key.clone();
     refresh_folder_thumbs_action.connect_activate(move |_, _| {
         let Some(folder) = current_folder_for_actions.borrow().as_ref().cloned() else {
             return;
@@ -743,7 +835,7 @@ fn build_ui(app: &adw::Application) {
         hash_cache_for_actions.borrow_mut().clear();
         meta_cache_for_actions.borrow_mut().clear();
         spinner_for_actions.start();
-        scan_directory(folder, sender_for_actions.clone());
+        scan_directory(folder, sender_for_actions.clone(), sort_key_for_actions.borrow().clone());
     });
 
     let current_folder_for_actions = current_folder.clone();
@@ -752,6 +844,7 @@ fn build_ui(app: &adw::Application) {
     let meta_cache_for_actions = meta_cache.clone();
     let spinner_for_actions = spinner.clone();
     let sender_for_actions = sender.clone();
+    let sort_key_for_actions = sort_key.clone();
     refresh_folder_meta_action.connect_activate(move |_, _| {
         let Some(folder) = current_folder_for_actions.borrow().as_ref().cloned() else {
             return;
@@ -774,7 +867,7 @@ fn build_ui(app: &adw::Application) {
         hash_cache_for_actions.borrow_mut().clear();
         meta_cache_for_actions.borrow_mut().clear();
         spinner_for_actions.start();
-        scan_directory(folder, sender_for_actions.clone());
+        scan_directory(folder, sender_for_actions.clone(), sort_key_for_actions.borrow().clone());
     });
 
     action_group.add_action(&copy_prompt_action);
@@ -886,6 +979,7 @@ fn build_ui(app: &adw::Application) {
     let current_folder_btn = current_folder.clone();
     let meta_cache_btn = meta_cache.clone();
     let hash_cache_btn = hash_cache.clone();
+    let sort_key_btn = sort_key.clone();
     open_btn.connect_clicked(move |_| {
         let dialog = gtk4::FileDialog::builder().title("Choose a Folder").build();
         let sender2 = sender_btn.clone();
@@ -894,6 +988,7 @@ fn build_ui(app: &adw::Application) {
         let cf2 = current_folder_btn.clone();
         let cache2 = meta_cache_btn.clone();
         let hash2 = hash_cache_btn.clone();
+        let sk2 = sort_key_btn.clone();
         dialog.select_folder(
             Some(&window_ref),
             None::<&gio::Cancellable>,
@@ -905,7 +1000,7 @@ fn build_ui(app: &adw::Application) {
                 cache2.borrow_mut().clear();
                 hash2.borrow_mut().clear();
                 spinner2.start();
-                scan_directory(path, sender2.clone());
+                scan_directory(path, sender2.clone(), sk2.borrow().clone());
             },
         );
     });
@@ -1062,7 +1157,7 @@ fn build_ui(app: &adw::Application) {
             *current_folder.borrow_mut() = Some(last_folder.clone());
             list_store.remove_all();
             spinner.start();
-            scan_directory(last_folder.clone(), sender.clone());
+            scan_directory(last_folder.clone(), sender.clone(), sort_key.borrow().clone());
             sync_tree_to_path(&tree_model, &tree_list_view, &last_folder);
         }
     }
