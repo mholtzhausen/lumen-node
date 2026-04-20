@@ -32,6 +32,11 @@ pub fn normal_cache_dir() -> PathBuf {
     xdg_cache_home().join("thumbnails/normal")
 }
 
+/// Returns `$XDG_CACHE_HOME/thumbnails/lumen-node` for hash-based thumbnails.
+pub fn hash_cache_dir() -> PathBuf {
+    xdg_cache_home().join("thumbnails/lumen-node")
+}
+
 fn xdg_cache_home() -> PathBuf {
     std::env::var("XDG_CACHE_HOME")
         .map(PathBuf::from)
@@ -163,4 +168,42 @@ fn generate_and_cache(source: &Path, thumb: &Path) -> Option<Pixbuf> {
     );
 
     Some(pixbuf)
+}
+
+// ---------------------------------------------------------------------------
+// Hash-based thumbnail storage (content-addressed)
+// ---------------------------------------------------------------------------
+
+/// Returns the path to a hash-addressed thumbnail.
+pub fn hash_thumb_path(hash: &str) -> PathBuf {
+    hash_cache_dir().join(format!("{hash}.png"))
+}
+
+/// Returns the hash-based thumbnail path if it already exists on disk.
+pub fn hash_thumb_if_exists(hash: &str) -> Option<PathBuf> {
+    let p = hash_thumb_path(hash);
+    if p.exists() { Some(p) } else { None }
+}
+
+/// Generates and saves a thumbnail keyed by content hash.
+/// Returns the path to the generated thumbnail, or `None` on failure.
+pub fn generate_hash_thumbnail(source: &Path, hash: &str) -> Option<PathBuf> {
+    let thumb = hash_thumb_path(hash);
+    if thumb.exists() {
+        return Some(thumb);
+    }
+    let pixbuf = Pixbuf::from_file_at_scale(
+        source,
+        THUMB_NORMAL_SIZE,
+        THUMB_NORMAL_SIZE,
+        true,
+    )
+    .ok()?;
+
+    if let Some(parent) = thumb.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let _ = pixbuf.savev(&thumb, "png", &[]);
+    Some(thumb)
 }

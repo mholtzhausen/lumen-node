@@ -1,9 +1,10 @@
 mod config;
+mod db;
 mod metadata;
 mod scanner;
 mod thumbnails;
 
-use metadata::{DefaultMetadataDispatcher, ImageMetadata, MetadataDispatcher, ScanMessage};
+use metadata::{ImageMetadata, ScanMessage};
 use scanner::scan_directory;
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -48,6 +49,10 @@ fn build_ui(app: &adw::Application) {
     // Toast overlay wraps all main content for non-intrusive notifications.
     let toast_overlay = adw::ToastOverlay::new();
 
+    // Hash cache: path → content hash (for hash-based thumbnail lookup).
+    let hash_cache: Rc<RefCell<HashMap<String, String>>> =
+        Rc::new(RefCell::new(HashMap::new()));
+
     // Metadata cache: path → extracted metadata (for search filtering).
     let meta_cache: Rc<RefCell<HashMap<String, ImageMetadata>>> =
         Rc::new(RefCell::new(HashMap::new()));
@@ -69,29 +74,18 @@ fn build_ui(app: &adw::Application) {
     let spinner_recv = spinner.clone();
     let toast_recv = toast_overlay.clone();
     let meta_cache_recv = meta_cache.clone();
+    let hash_cache_recv = hash_cache.clone();
     glib::MainContext::default().spawn_local(async move {
         while let Ok(msg) = receiver.recv().await {
             match msg {
-                ScanMessage::ImageFound(path) => {
+                ScanMessage::ImageFound { path, hash, meta } => {
                     list_store_recv.append(&StringObject::new(&path));
-                    // Kick off metadata extraction in background so cache is ready for search.
-                    let path_clone = path.clone();
-                    let (tx, rx) = async_channel::bounded::<(String, ImageMetadata)>(1);
-                    std::thread::spawn(move || {
-                        let dispatcher = DefaultMetadataDispatcher;
-                        let meta = dispatcher
-                            .extract(std::path::Path::new(&path_clone))
-                            .unwrap_or_default();
-                        let _ = tx.send_blocking((path_clone, meta));
-                    });
-                    let cache_clone = meta_cache_recv.clone();
-                    glib::MainContext::default().spawn_local(async move {
-                        if let Ok((p, m)) = rx.recv().await {
-                            cache_clone.borrow_mut().insert(p, m);
-                        }
-                    });
+                    // Cache the hash and metadata from the DB (already extracted by scanner).
+                    if !hash.is_empty() {
+                        hash_cache_recv.borrow_mut().insert(path.clone(), hash);
+                    }
+                    meta_cache_recv.borrow_mut().insert(path, meta);
                 }
-                ScanMessage::MetadataReady { .. } => {}
                 ScanMessage::ScanComplete => {
                     spinner_recv.stop();
                     let n = list_store_recv.n_items();
@@ -205,6 +199,7 @@ fn build_ui(app: &adw::Application) {
     let spinner_tree = spinner.clone();
     let current_folder_tree = current_folder.clone();
     let meta_cache_tree = meta_cache.clone();
+    let hash_cache_tree = hash_cache.clone();
     tree_selection.connect_selection_changed(move |model, _, _| {
         let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
             return;
@@ -220,6 +215,7 @@ fn build_ui(app: &adw::Application) {
         *current_folder_tree.borrow_mut() = Some(path.clone());
         list_store_tree.remove_all();
         meta_cache_tree.borrow_mut().clear();
+        hash_cache_tree.borrow_mut().clear();
         spinner_tree.start();
         scan_directory(path, sender_tree.clone());
     });
@@ -387,7 +383,8 @@ fn build_ui(app: &adw::Application) {
         list_item.set_child(Some(&cell_box));
     });
 
-    factory.connect_bind(|_, obj| {
+    let hash_cache_bind = hash_cache.clone();
+    factory.connect_bind(move |_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
         let path_str = list_item
             .item()
@@ -411,30 +408,42 @@ fn build_ui(app: &adw::Application) {
         // The async callback uses this to detect stale (recycled) cells.
         unsafe { thumb_image.set_data("bound-path", path_str.clone()); }
 
-        // Off-thread thumbnail generation via GLib's bounded thread pool.
-        let path_for_thread = std::path::PathBuf::from(&path_str);
-        let task =
-            gio::spawn_blocking(move || thumbnails::ensure_thumbnail(&path_for_thread));
+        // Try to load hash-based thumbnail synchronously first (instant if cached).
+        let cached_hash = hash_cache_bind.borrow().get(&path_str).cloned();
+        let already_loaded = if let Some(ref hash) = cached_hash {
+            if let Some(thumb) = thumbnails::hash_thumb_if_exists(hash) {
+                if let Ok(pb) = gdk_pixbuf::Pixbuf::from_file(&thumb) {
+                    thumb_image.set_from_pixbuf(Some(&pb));
+                    true
+                } else { false }
+            } else { false }
+        } else { false };
 
-        let image_weak = thumb_image.downgrade();
-        glib::MainContext::default().spawn_local(async move {
-            let Ok(maybe_cache) = task.await else { return };
-            let Some(image) = image_weak.upgrade() else { return };
-            // Stale-update guard: skip if this cell was recycled to another item.
-            let is_current = unsafe {
-                image
-                    .data::<String>("bound-path")
-                    .map(|p| p.as_ref().as_str() == path_str.as_str())
-                    .unwrap_or(false)
-            };
-            if !is_current {
-                return;
-            }
-            match maybe_cache.and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok()) {
-                Some(pb) => image.set_from_pixbuf(Some(&pb)),
-                None => image.set_icon_name(Some("image-missing-symbolic")),
-            }
-        });
+        if !already_loaded {
+            // Fall back to off-thread thumbnail generation via GLib's bounded thread pool.
+            let path_for_thread = std::path::PathBuf::from(&path_str);
+            let task =
+                gio::spawn_blocking(move || thumbnails::ensure_thumbnail(&path_for_thread));
+
+            let image_weak = thumb_image.downgrade();
+            glib::MainContext::default().spawn_local(async move {
+                let Ok(maybe_cache) = task.await else { return };
+                let Some(image) = image_weak.upgrade() else { return };
+                let is_current = unsafe {
+                    image
+                        .data::<String>("bound-path")
+                        .map(|p| p.as_ref().as_str() == path_str.as_str())
+                        .unwrap_or(false)
+                };
+                if !is_current {
+                    return;
+                }
+                match maybe_cache.and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok()) {
+                    Some(pb) => image.set_from_pixbuf(Some(&pb)),
+                    None => image.set_icon_name(Some("image-missing-symbolic")),
+                }
+            });
+        }
     });
 
     factory.connect_unbind(|_, obj| {
@@ -555,6 +564,7 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     let meta_listbox_sel = meta_listbox.clone();
     let meta_preview_sel = meta_preview.clone();
+    let meta_cache_sel = meta_cache.clone();
     selection_model.connect_selection_changed(move |model, _, _| {
         let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
             return;
@@ -564,19 +574,13 @@ fn build_ui(app: &adw::Application) {
         // Update the preview image immediately.
         meta_preview_sel.set_filename(Some(&path));
 
-        let (tx, rx) = async_channel::bounded::<ImageMetadata>(1);
-        let path_for_thread = path.clone();
-        std::thread::spawn(move || {
-            let dispatcher = DefaultMetadataDispatcher;
-            let meta = dispatcher.extract(&path_for_thread).unwrap_or_default();
-            let _ = tx.send_blocking(meta);
-        });
-        let listbox = meta_listbox_sel.clone();
-        glib::MainContext::default().spawn_local(async move {
-            if let Ok(meta) = rx.recv().await {
-                populate_metadata_sidebar(&listbox, &meta);
-            }
-        });
+        // Use cached metadata from the DB (populated during scan).
+        let cache = meta_cache_sel.borrow();
+        let meta = cache
+            .get(item.string().as_str())
+            .cloned()
+            .unwrap_or_default();
+        populate_metadata_sidebar(&meta_listbox_sel, &meta);
     });
 
     // -----------------------------------------------------------------------
@@ -588,6 +592,7 @@ fn build_ui(app: &adw::Application) {
     let spinner_btn = spinner.clone();
     let current_folder_btn = current_folder.clone();
     let meta_cache_btn = meta_cache.clone();
+    let hash_cache_btn = hash_cache.clone();
     open_btn.connect_clicked(move |_| {
         let dialog = gtk4::FileDialog::builder().title("Choose a Folder").build();
         let sender2 = sender_btn.clone();
@@ -595,6 +600,7 @@ fn build_ui(app: &adw::Application) {
         let spinner2 = spinner_btn.clone();
         let cf2 = current_folder_btn.clone();
         let cache2 = meta_cache_btn.clone();
+        let hash2 = hash_cache_btn.clone();
         dialog.select_folder(
             Some(&window_ref),
             None::<&gio::Cancellable>,
@@ -604,6 +610,7 @@ fn build_ui(app: &adw::Application) {
                 *cf2.borrow_mut() = Some(path.clone());
                 list_store2.remove_all();
                 cache2.borrow_mut().clear();
+                hash2.borrow_mut().clear();
                 spinner2.start();
                 scan_directory(path, sender2.clone());
             },

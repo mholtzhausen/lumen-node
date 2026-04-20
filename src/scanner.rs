@@ -1,13 +1,15 @@
 //! Directory scanning for LumenNode.
 //!
 //! [`scan_directory`] spawns a background thread that walks the immediate
-//! contents of a folder and emits [`ScanMessage::ImageFound`] for every
-//! recognised image file, followed by [`ScanMessage::ScanComplete`].
+//! contents of a folder, opens (or creates) the per-folder `.lumen-node.db`,
+//! and emits [`ScanMessage::ImageFound`] for every recognised image file,
+//! followed by [`ScanMessage::ScanComplete`].
 //!
-//! The scan is intentionally *non-recursive*: for power users the containing
-//! folder is the primary organisational unit. Recursive scanning can be added
-//! behind a future option toggle.
+//! Each discovered image is indexed into the database (hash, metadata,
+//! thumbnail) via [`crate::db::ensure_indexed`]. The database is pruned of
+//! entries for files that no longer exist.
 
+use crate::db;
 use crate::metadata::ScanMessage;
 use async_channel::Sender;
 use std::path::PathBuf;
@@ -30,6 +32,15 @@ pub fn scan_directory(dir: PathBuf, sender: Sender<ScanMessage>) {
             return;
         };
 
+        // Open (or create) the per-folder database.
+        let conn = match db::open(&dir) {
+            Ok(c) => c,
+            Err(_) => {
+                let _ = sender.send_blocking(ScanMessage::ScanComplete);
+                return;
+            }
+        };
+
         // Collect and sort entries for a stable, predictable display order.
         let mut entries: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
         entries.sort_by_key(|e| e.file_name());
@@ -41,12 +52,42 @@ pub fn scan_directory(dir: PathBuf, sender: Sender<ScanMessage>) {
             }
             if is_image(&path) {
                 let path_str = path.to_string_lossy().into_owned();
-                // If the receiver has been dropped (app closed mid-scan), stop.
-                if sender.send_blocking(ScanMessage::ImageFound(path_str)).is_err() {
-                    return;
+
+                // Index the image: hash, extract metadata, generate thumbnail,
+                // upsert into DB. `ensure_indexed` uses the DB cache when the
+                // file hasn't changed.
+                let maybe_row = db::ensure_indexed(&conn, &path);
+
+                // Send the ImageFound message along with metadata if available.
+                if let Some(row) = maybe_row {
+                    if sender
+                        .send_blocking(ScanMessage::ImageFound {
+                            path: path_str,
+                            hash: row.hash,
+                            meta: row.meta,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                } else {
+                    // Indexing failed — still display the image, just without cache data.
+                    if sender
+                        .send_blocking(ScanMessage::ImageFound {
+                            path: path_str,
+                            hash: String::new(),
+                            meta: Default::default(),
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
             }
         }
+
+        // Prune DB entries for files that no longer exist on disk.
+        let _ = db::prune_missing(&conn);
 
         let _ = sender.send_blocking(ScanMessage::ScanComplete);
     });

@@ -57,10 +57,12 @@ pub trait MetadataDispatcher: Send + Sync {
 
 #[derive(Debug)]
 pub enum ScanMessage {
-    /// A new image path was discovered during a directory scan.
-    ImageFound(String),
-    /// Metadata extraction completed for one image.
-    MetadataReady { path: String, data: ImageMetadata },
+    /// A new image was discovered and indexed during a directory scan.
+    ImageFound {
+        path: String,
+        hash: String,
+        meta: ImageMetadata,
+    },
     /// The directory scan is finished.
     ScanComplete,
 }
