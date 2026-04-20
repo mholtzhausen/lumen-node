@@ -1,3 +1,4 @@
+mod config;
 mod metadata;
 mod scanner;
 mod thumbnails;
@@ -5,11 +6,14 @@ mod thumbnails;
 use metadata::{DefaultMetadataDispatcher, ImageMetadata, MetadataDispatcher, ScanMessage};
 use scanner::scan_directory;
 
+use std::{cell::RefCell, rc::Rc};
+
 use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
-    gdk, gio, glib, EventControllerKey, GridView, Image, Label, ListItem, Orientation, Picture,
-    ScrolledWindow, Separator, SignalListItemFactory, SingleSelection, Spinner, StringObject,
+    gdk, gio, glib, EventControllerKey, GridView, Image, Label, ListItem, ListView,
+    ListScrollFlags, Orientation, Paned, Picture, ScrolledWindow, SignalListItemFactory,
+    SingleSelection, Spinner, StringObject, TreeExpander, TreeListModel, TreeListRow,
 };
 
 // ---------------------------------------------------------------------------
@@ -20,6 +24,13 @@ fn build_ui(app: &adw::Application) {
     let window = adw::ApplicationWindow::new(app);
     window.set_title(Some("LumenNode"));
     window.set_default_size(1280, 800);
+
+    // Load persisted config (last folder).
+    let app_config = config::load();
+
+    // Tracks the most recently scanned folder for config persistence.
+    let current_folder: Rc<RefCell<Option<std::path::PathBuf>>> =
+        Rc::new(RefCell::new(None));
 
     // Shared model: each item holds the absolute path of one image.
     let list_store = gio::ListStore::new::<StringObject>();
@@ -87,27 +98,109 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Three-pane layout: [left sidebar] | [center] | [right sidebar]
     // -----------------------------------------------------------------------
-    let root_box = gtk4::Box::new(Orientation::Horizontal, 0);
+    // --- Left sidebar: file system tree ---
+    let left_sidebar = gtk4::Box::new(Orientation::Vertical, 0);
+    left_sidebar.set_width_request(200);
 
-    // --- Left sidebar: current folder path ---
-    let left_sidebar = gtk4::Box::new(Orientation::Vertical, 8);
-    left_sidebar.set_width_request(220);
-    left_sidebar.set_margin_top(12);
-    left_sidebar.set_margin_bottom(12);
-    left_sidebar.set_margin_start(8);
-    left_sidebar.set_margin_end(4);
+    // Root items: home directory + real mount points.
+    let tree_root = build_tree_root();
 
-    let folders_label = Label::new(Some("Folders"));
-    folders_label.add_css_class("title-4");
-    folders_label.set_halign(gtk4::Align::Start);
-    left_sidebar.append(&folders_label);
+    // TreeListModel lazily loads subdirectories when a node is expanded.
+    let tree_model = TreeListModel::new(tree_root, false, false, move |item: &glib::Object| -> Option<gio::ListModel> {
+        let file = item.downcast_ref::<gio::File>()?;
+        let store = gio::ListStore::new::<gio::File>();
+        if let Ok(enumerator) = file.enumerate_children(
+            "standard::name,standard::type",
+            gio::FileQueryInfoFlags::NONE,
+            None::<&gio::Cancellable>,
+        ) {
+            let mut children: Vec<gio::FileInfo> = enumerator
+                .filter_map(|r| r.ok())
+                .filter(|info| {
+                    info.file_type() == gio::FileType::Directory
+                        && !info.name().to_string_lossy().starts_with('.')
+                })
+                .collect();
+            children.sort_by_key(|info| info.name().to_string_lossy().to_lowercase().to_string());
+            for info in children {
+                store.append(&file.child(info.name()));
+            }
+        }
+        if store.n_items() > 0 { Some(store.upcast::<gio::ListModel>()) } else { None }
+    });
 
-    let current_folder_label = Label::new(Some("No folder selected"));
-    current_folder_label.set_wrap(true);
-    current_folder_label.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
-    current_folder_label.set_halign(gtk4::Align::Start);
-    current_folder_label.add_css_class("caption");
-    left_sidebar.append(&current_folder_label);
+    let tree_selection = SingleSelection::new(Some(tree_model.clone()));
+
+    // Wire tree folder selection → clear grid, start scan.
+    let sender_tree = sender.clone();
+    let list_store_tree = list_store.clone();
+    let spinner_tree = spinner.clone();
+    let current_folder_tree = current_folder.clone();
+    tree_selection.connect_selection_changed(move |model, _, _| {
+        let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
+            return;
+        };
+        let Some(file) = row.item().and_downcast::<gio::File>() else {
+            return;
+        };
+        let Some(path) = file.path() else { return };
+        // Skip if this folder is already loaded (e.g. during startup restore).
+        if current_folder_tree.borrow().as_deref() == Some(path.as_path()) {
+            return;
+        }
+        *current_folder_tree.borrow_mut() = Some(path.clone());
+        list_store_tree.remove_all();
+        spinner_tree.start();
+        scan_directory(path, sender_tree.clone());
+    });
+
+    let tree_factory = SignalListItemFactory::new();
+    tree_factory.connect_setup(|_, obj| {
+        let list_item = obj.downcast_ref::<ListItem>().unwrap();
+        let expander = TreeExpander::new();
+        let row_box = gtk4::Box::new(Orientation::Horizontal, 4);
+        row_box.set_margin_top(3);
+        row_box.set_margin_bottom(3);
+        let icon = Image::from_icon_name("folder-symbolic");
+        let label = Label::new(None);
+        label.set_halign(gtk4::Align::Start);
+        label.set_hexpand(true);
+        label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        row_box.append(&icon);
+        row_box.append(&label);
+        expander.set_child(Some(&row_box));
+        list_item.set_child(Some(&expander));
+    });
+    tree_factory.connect_bind(|_, obj| {
+        let list_item = obj.downcast_ref::<ListItem>().unwrap();
+        let expander = list_item.child().and_downcast::<TreeExpander>().unwrap();
+        let row = list_item.item().and_downcast::<TreeListRow>().unwrap();
+        expander.set_list_row(Some(&row));
+        let file = row.item().and_downcast::<gio::File>().unwrap();
+        let row_box = expander.child().and_downcast::<gtk4::Box>().unwrap();
+        let label = row_box.last_child().and_downcast::<Label>().unwrap();
+        let name = if let Some(p) = file.path() {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.to_string_lossy().into_owned())
+        } else {
+            file.uri().to_string()
+        };
+        label.set_text(&name);
+    });
+
+    let tree_list_view = ListView::new(Some(tree_selection), Some(tree_factory));
+    tree_list_view.add_css_class("navigation-sidebar");
+    // Disable natural-width propagation so the ScrolledWindow can clip the
+    // ListView and show a horizontal scrollbar for deeply-nested long names.
+    tree_list_view.set_hexpand(false);
+
+    let tree_scroll = ScrolledWindow::new();
+    tree_scroll.set_vexpand(true);
+    tree_scroll.set_hscrollbar_policy(gtk4::PolicyType::Automatic);
+    tree_scroll.set_propagate_natural_width(false);
+    tree_scroll.set_child(Some(&tree_list_view));
+    left_sidebar.append(&tree_scroll);
 
     // --- Center: ViewStack with Grid + Single pages ---
     let selection_model = SingleSelection::new(Some(list_store.clone()));
@@ -274,26 +367,26 @@ fn build_ui(app: &adw::Application) {
     });
 
     // -----------------------------------------------------------------------
-    // Wire: open_btn → FileDialog → start scan
+    // Wire: open_btn → FileDialog → start scan (quick-jump shortcut)
     // -----------------------------------------------------------------------
     let sender_btn = sender.clone();
     let list_store_btn = list_store.clone();
-    let folder_label_btn = current_folder_label.clone();
     let window_ref = window.clone();
     let spinner_btn = spinner.clone();
+    let current_folder_btn = current_folder.clone();
     open_btn.connect_clicked(move |_| {
         let dialog = gtk4::FileDialog::builder().title("Choose a Folder").build();
         let sender2 = sender_btn.clone();
         let list_store2 = list_store_btn.clone();
-        let label2 = folder_label_btn.clone();
         let spinner2 = spinner_btn.clone();
+        let cf2 = current_folder_btn.clone();
         dialog.select_folder(
             Some(&window_ref),
             None::<&gio::Cancellable>,
             move |result| {
                 let Ok(file) = result else { return };
                 let Some(path) = file.path() else { return };
-                label2.set_text(&path.display().to_string());
+                *cf2.borrow_mut() = Some(path.clone());
                 list_store2.remove_all();
                 spinner2.start();
                 scan_directory(path, sender2.clone());
@@ -302,16 +395,30 @@ fn build_ui(app: &adw::Application) {
     });
 
     // -----------------------------------------------------------------------
-    // Assemble three-pane layout with visual separators
+    // Assemble three-pane layout with resizable Paned dividers
     // -----------------------------------------------------------------------
-    root_box.append(&left_sidebar);
-    root_box.append(&Separator::new(Orientation::Vertical));
-    root_box.append(&center_box);
-    root_box.append(&Separator::new(Orientation::Vertical));
-    root_box.append(&right_sidebar);
+    // Inner paned: center | right sidebar
+    let inner_paned = Paned::new(Orientation::Horizontal);
+    inner_paned.set_start_child(Some(&center_box));
+    inner_paned.set_end_child(Some(&right_sidebar));
+    inner_paned.set_resize_start_child(true);
+    inner_paned.set_resize_end_child(false);
+    inner_paned.set_shrink_start_child(false);
+    inner_paned.set_shrink_end_child(false);
+    inner_paned.set_position(app_config.right_pane_pos.unwrap_or(800));
+
+    // Outer paned: left sidebar | (center + right)
+    let outer_paned = Paned::new(Orientation::Horizontal);
+    outer_paned.set_start_child(Some(&left_sidebar));
+    outer_paned.set_end_child(Some(&inner_paned));
+    outer_paned.set_resize_start_child(false);
+    outer_paned.set_resize_end_child(true);
+    outer_paned.set_shrink_start_child(false);
+    outer_paned.set_shrink_end_child(false);
+    outer_paned.set_position(app_config.left_pane_pos.unwrap_or(220));
 
     // Wrap content in ToastOverlay → ToolbarView → window
-    toast_overlay.set_child(Some(&root_box));
+    toast_overlay.set_child(Some(&outer_paned));
 
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&header_bar);
@@ -320,18 +427,72 @@ fn build_ui(app: &adw::Application) {
     window.set_content(Some(&toolbar_view));
 
     // -----------------------------------------------------------------------
-    // Keyboard: Escape → back to grid view
+    // Keyboard: Escape → grid; Left/Right (single view) → prev/next image
     // -----------------------------------------------------------------------
     let key_controller = EventControllerKey::new();
-    let stack_for_esc = view_stack.clone();
+    let stack_for_keys = view_stack.clone();
+    let selection_for_keys = selection_model.clone();
+    let picture_for_keys = single_picture.clone();
     key_controller.connect_key_pressed(move |_, key, _, _| {
         if key == gdk::Key::Escape {
-            stack_for_esc.set_visible_child_name("grid");
+            stack_for_keys.set_visible_child_name("grid");
+            return glib::Propagation::Stop;
+        }
+        let in_single = stack_for_keys.visible_child_name().as_deref() == Some("single");
+        if in_single && (key == gdk::Key::Left || key == gdk::Key::Right) {
+            let count = selection_for_keys.n_items();
+            if count == 0 {
+                return glib::Propagation::Proceed;
+            }
+            let cur = selection_for_keys.selected();
+            let next = if key == gdk::Key::Left {
+                cur.saturating_sub(1)
+            } else {
+                (cur + 1).min(count - 1)
+            };
+            if next != cur {
+                selection_for_keys.set_selected(next);
+                if let Some(item) =
+                    selection_for_keys.selected_item().and_downcast::<StringObject>()
+                {
+                    picture_for_keys.set_filename(Some(
+                        &std::path::PathBuf::from(item.string().as_str()),
+                    ));
+                }
+            }
             return glib::Propagation::Stop;
         }
         glib::Propagation::Proceed
     });
     window.add_controller(key_controller);
+
+    // -----------------------------------------------------------------------
+    // Save config on window close (folder + pane positions)
+    // -----------------------------------------------------------------------
+    let cf_close = current_folder.clone();
+    let outer_paned_close = outer_paned.clone();
+    let inner_paned_close = inner_paned.clone();
+    window.connect_close_request(move |_| {
+        config::save(
+            cf_close.borrow().as_deref(),
+            outer_paned_close.position(),
+            inner_paned_close.position(),
+        );
+        glib::Propagation::Proceed
+    });
+
+    // -----------------------------------------------------------------------
+    // Restore last folder from config + sync tree
+    // -----------------------------------------------------------------------
+    if let Some(last_folder) = app_config.last_folder {
+        if last_folder.is_dir() {
+            *current_folder.borrow_mut() = Some(last_folder.clone());
+            list_store.remove_all();
+            spinner.start();
+            scan_directory(last_folder.clone(), sender.clone());
+            sync_tree_to_path(&tree_model, &tree_list_view, &last_folder);
+        }
+    }
 
     window.present();
 }
@@ -371,6 +532,137 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
         empty.set_title("No metadata found");
         listbox.append(&empty);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tree-view path sync: expand ancestors and scroll to the target folder
+// ---------------------------------------------------------------------------
+
+/// Expands ancestor rows in the `TreeListModel` so `target` is visible, then
+/// selects and scrolls to it.  Expansion is synchronous because our
+/// `create_model` callback is synchronous.
+fn sync_tree_to_path(
+    tree_model: &TreeListModel,
+    tree_list_view: &ListView,
+    target: &std::path::Path,
+) {
+    // Find the root item that is either equal to `target` or its deepest
+    // ancestor that appears as a root row (depth 0).
+    let n = tree_model.n_items();
+    let mut best_root: Option<(u32, std::path::PathBuf)> = None;
+    for pos in 0..n {
+        if let Some(row) = tree_model.item(pos).and_downcast::<TreeListRow>() {
+            if row.depth() != 0 {
+                continue;
+            }
+            if let Some(file) = row.item().and_downcast::<gio::File>() {
+                if let Some(p) = file.path() {
+                    if target.starts_with(&p) {
+                        let depth = p.components().count();
+                        let better = best_root
+                            .as_ref()
+                            .map_or(true, |(_, b)| depth > b.components().count());
+                        if better {
+                            best_root = Some((pos, p));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let (_, root_path) = match best_root {
+        Some(v) => v,
+        None => return,
+    };
+
+    // Build the chain: root_path → … → target (each step one component deeper)
+    let rel = match target.strip_prefix(&root_path) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let mut segments: Vec<std::path::PathBuf> = vec![root_path.clone()];
+    let mut acc = root_path;
+    for component in rel.components() {
+        acc.push(component);
+        segments.push(acc.clone());
+    }
+
+    // Walk segments: find each in the flat model, expand non-last ones.
+    for (i, seg) in segments.iter().enumerate() {
+        let is_last = i == segments.len() - 1;
+        let n = tree_model.n_items();
+        for pos in 0..n {
+            if let Some(row) = tree_model.item(pos).and_downcast::<TreeListRow>() {
+                if let Some(file) = row.item().and_downcast::<gio::File>() {
+                    if file.path().as_deref() == Some(seg.as_path()) {
+                        if is_last {
+                            tree_list_view.scroll_to(pos, ListScrollFlags::SELECT, None::<gtk4::ScrollInfo>);
+                        } else if row.is_expandable() {
+                            row.set_expanded(true);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// File system helpers for the tree sidebar
+// ---------------------------------------------------------------------------
+
+/// Returns real mount points (block devices, network mounts) from /proc/mounts,
+/// excluding pseudo-filesystems and kernel-internal mounts.
+fn get_mount_points() -> Vec<std::path::PathBuf> {
+    let pseudo_fs = [
+        "tmpfs", "proc", "sysfs", "devtmpfs", "devpts", "cgroup", "cgroup2",
+        "pstore", "bpf", "tracefs", "debugfs", "securityfs", "fusectl",
+        "hugetlbfs", "mqueue", "configfs", "binfmt_misc", "ramfs", "squashfs",
+        "overlay", "nsfs", "autofs", "efivarfs", "rpc_pipefs",
+    ];
+    let mut points = vec![std::path::PathBuf::from("/")];
+    if let Ok(content) = std::fs::read_to_string("/proc/mounts") {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let mount_point = parts[1];
+            let fs_type = parts[2];
+            if pseudo_fs.contains(&fs_type) {
+                continue;
+            }
+            if mount_point.starts_with("/proc")
+                || mount_point.starts_with("/sys")
+                || mount_point.starts_with("/dev")
+                || mount_point.starts_with("/run")
+            {
+                continue;
+            }
+            if mount_point == "/" {
+                continue; // already in vec
+            }
+            points.push(std::path::PathBuf::from(mount_point));
+        }
+    }
+    points.sort();
+    points.dedup();
+    points
+}
+
+/// Builds the root `ListStore` for the file tree: home directory first,
+/// then all real mount points (deduplicating home if it is also a mount point).
+fn build_tree_root() -> gio::ListStore {
+    let store = gio::ListStore::new::<gio::File>();
+    let home = glib::home_dir();
+    store.append(&gio::File::for_path(&home));
+    for mp in get_mount_points() {
+        if mp != home {
+            store.append(&gio::File::for_path(&mp));
+        }
+    }
+    store
 }
 
 // ---------------------------------------------------------------------------
