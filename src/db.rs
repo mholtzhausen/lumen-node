@@ -23,6 +23,7 @@ pub struct ImageRow {
     pub hash: String,
     pub mtime: i64,
     pub size: i64,
+    pub favourite: i32,
     pub meta: ImageMetadata,
 }
 
@@ -57,6 +58,7 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
             hash            TEXT NOT NULL,
             mtime           INTEGER NOT NULL,
             size            INTEGER NOT NULL,
+            favourite       INTEGER NOT NULL DEFAULT 0,
             camera_make     TEXT,
             camera_model    TEXT,
             exposure        TEXT,
@@ -67,7 +69,21 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
             workflow_json   TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_images_hash ON images(hash);",
-    )
+    )?;
+
+    // Migration path for databases created before the `favourite` column existed.
+    let mut stmt = conn.prepare("PRAGMA table_info(images)")?;
+    let cols: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+    if !cols.iter().any(|c| c == "favourite") {
+        conn.execute_batch(
+            "ALTER TABLE images ADD COLUMN favourite INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +132,7 @@ pub fn get_cached(conn: &Connection, path: &Path) -> Option<ImageRow> {
 
     let mut stmt = conn
         .prepare_cached(
-            "SELECT path, filename, hash, mtime, size,
+            "SELECT path, filename, hash, mtime, size, favourite,
                     camera_make, camera_model, exposure, iso,
                     prompt, negative_prompt, raw_parameters, workflow_json
              FROM images WHERE path = ?1",
@@ -131,15 +147,16 @@ pub fn get_cached(conn: &Connection, path: &Path) -> Option<ImageRow> {
                 hash: row.get(2)?,
                 mtime: row.get(3)?,
                 size: row.get(4)?,
+                favourite: row.get(5)?,
                 meta: ImageMetadata {
-                    camera_make: row.get(5)?,
-                    camera_model: row.get(6)?,
-                    exposure: row.get(7)?,
-                    iso: row.get(8)?,
-                    prompt: row.get(9)?,
-                    negative_prompt: row.get(10)?,
-                    raw_parameters: row.get(11)?,
-                    workflow_json: row.get(12)?,
+                    camera_make: row.get(6)?,
+                    camera_model: row.get(7)?,
+                    exposure: row.get(8)?,
+                    iso: row.get(9)?,
+                    prompt: row.get(10)?,
+                    negative_prompt: row.get(11)?,
+                    raw_parameters: row.get(12)?,
+                    workflow_json: row.get(13)?,
                 },
             })
         })
@@ -157,16 +174,17 @@ pub fn get_cached(conn: &Connection, path: &Path) -> Option<ImageRow> {
 pub fn upsert(conn: &Connection, row: &ImageRow) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO images
-         (path, filename, hash, mtime, size,
+         (path, filename, hash, mtime, size, favourite,
           camera_make, camera_model, exposure, iso,
           prompt, negative_prompt, raw_parameters, workflow_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             row.path,
             row.filename,
             row.hash,
             row.mtime,
             row.size,
+            row.favourite,
             row.meta.camera_make,
             row.meta.camera_model,
             row.meta.exposure,
@@ -178,6 +196,42 @@ pub fn upsert(conn: &Connection, row: &ImageRow) -> rusqlite::Result<()> {
         ],
     )?;
     Ok(())
+}
+
+fn favourite_for_path(conn: &Connection, path: &Path) -> i32 {
+    let path_str = path.to_string_lossy();
+    conn.query_row(
+        "SELECT favourite FROM images WHERE path = ?1",
+        params![path_str.as_ref()],
+        |row| row.get::<_, i32>(0),
+    )
+    .unwrap_or(0)
+}
+
+fn build_index_row(conn: &Connection, path: &Path) -> Option<ImageRow> {
+    let hash = hash_file(path).ok()?;
+    let mtime = file_mtime(path)?;
+    let size = file_size(path)?;
+    let filename = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let dispatcher = DefaultMetadataDispatcher;
+    let meta = dispatcher.extract(path).unwrap_or_default();
+
+    // Generate thumbnail (keyed by content hash).
+    crate::thumbnails::generate_hash_thumbnail(path, &hash);
+
+    Some(ImageRow {
+        path: path.to_string_lossy().into_owned(),
+        filename,
+        hash,
+        mtime,
+        size,
+        favourite: favourite_for_path(conn, path),
+        meta,
+    })
 }
 
 /// Removes rows for paths that no longer exist on disk.
@@ -211,29 +265,15 @@ pub fn ensure_indexed(conn: &Connection, path: &Path) -> Option<ImageRow> {
     }
 
     // Slow path: hash + extract + thumbnail + DB upsert.
-    let hash = hash_file(path).ok()?;
-    let mtime = file_mtime(path)?;
-    let size = file_size(path)?;
-    let filename = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let row = build_index_row(conn, path)?;
 
-    let dispatcher = DefaultMetadataDispatcher;
-    let meta = dispatcher.extract(path).unwrap_or_default();
+    let _ = upsert(conn, &row);
+    Some(row)
+}
 
-    // Generate thumbnail (keyed by content hash).
-    crate::thumbnails::generate_hash_thumbnail(path, &hash);
-
-    let row = ImageRow {
-        path: path.to_string_lossy().into_owned(),
-        filename,
-        hash,
-        mtime,
-        size,
-        meta,
-    };
-
+/// Forces full re-indexing even when mtime + size are unchanged.
+pub fn refresh_indexed(conn: &Connection, path: &Path) -> Option<ImageRow> {
+    let row = build_index_row(conn, path)?;
     let _ = upsert(conn, &row);
     Some(row)
 }
