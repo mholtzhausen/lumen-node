@@ -937,8 +937,8 @@ fn build_ui(app: &adw::Application) {
     let right_toggle_grid = right_toggle.clone();
     grid_view.connect_activate(move |_, pos| {
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
-            let path = std::path::PathBuf::from(item.string().as_str());
-            picture_for_grid.set_filename(Some(&path));
+            let path_str = item.string().to_string();
+            load_picture_async(&picture_for_grid, &path_str);
         }
         stack_for_grid.set_visible_child_name("single");
         left_toggle_grid.set_active(false);
@@ -955,10 +955,10 @@ fn build_ui(app: &adw::Application) {
         let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
             return;
         };
-        let path = std::path::PathBuf::from(item.string().as_str());
+        let path_str = item.string().to_string();
 
-        // Update the preview image immediately.
-        meta_preview_sel.set_filename(Some(&path));
+        // Load the preview image off-thread so the UI stays responsive.
+        load_picture_async(&meta_preview_sel, &path_str);
 
         // Use cached metadata from the DB (populated during scan).
         let cache = meta_cache_sel.borrow();
@@ -1117,9 +1117,10 @@ fn build_ui(app: &adw::Application) {
                 if let Some(item) =
                     selection_for_keys.selected_item().and_downcast::<StringObject>()
                 {
-                    picture_for_keys.set_filename(Some(
-                        &std::path::PathBuf::from(item.string().as_str()),
-                    ));
+                    load_picture_async(
+                        &picture_for_keys,
+                        &item.string().to_string(),
+                    );
                 }
             }
             return glib::Propagation::Stop;
@@ -1279,6 +1280,42 @@ fn format_generation_command(meta: &ImageMetadata) -> String {
     } else {
         format!("comfy-ui-cli {}", parts.join("").trim())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Async image loading for Picture widgets
+// ---------------------------------------------------------------------------
+
+/// Loads an image off the main thread and sets it on a [`Picture`] widget
+/// once decoded.  A tag on the widget guards against stale loads when the
+/// user navigates away before decoding finishes.
+fn load_picture_async(picture: &Picture, path: &str) {
+    // Clear immediately so the user sees something is happening.
+    picture.set_paintable(gdk::Paintable::NONE);
+
+    // Tag to detect stale loads (user clicked a different image before this one finished).
+    unsafe { picture.set_data("loading-path", path.to_owned()); }
+
+    let path_owned = path.to_owned();
+    let path_check = path_owned.clone();
+    let weak = picture.downgrade();
+    let task = gio::spawn_blocking(move || {
+        gdk::Texture::from_filename(&path_owned).ok()
+    });
+    glib::MainContext::default().spawn_local(async move {
+        let Ok(maybe_tex) = task.await else { return };
+        let Some(pic) = weak.upgrade() else { return };
+        // Check the widget is still expecting this path.
+        let is_current = unsafe {
+            pic.data::<String>("loading-path")
+                .map(|p| p.as_ref() == &path_check)
+                .unwrap_or(false)
+        };
+        if !is_current { return; }
+        if let Some(tex) = maybe_tex {
+            pic.set_paintable(Some(&tex));
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
