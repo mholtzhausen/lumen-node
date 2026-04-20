@@ -455,18 +455,32 @@ fn build_ui(app: &adw::Application) {
     center_box.set_hexpand(true);
     center_box.append(&view_stack);
 
-    // --- Right sidebar: metadata display ---
-    let right_sidebar = gtk4::Box::new(Orientation::Vertical, 6);
+    // --- Right sidebar: preview (top) + metadata list (bottom) ---
+    let right_sidebar = gtk4::Box::new(Orientation::Vertical, 0);
     right_sidebar.set_width_request(260);
-    right_sidebar.set_margin_top(12);
-    right_sidebar.set_margin_bottom(12);
-    right_sidebar.set_margin_start(4);
-    right_sidebar.set_margin_end(8);
+    right_sidebar.set_margin_top(0);
+    right_sidebar.set_margin_bottom(0);
+    right_sidebar.set_margin_start(0);
+    right_sidebar.set_margin_end(0);
+
+    // Top pane: image preview
+    let meta_preview = Picture::new();
+    meta_preview.set_vexpand(true);
+    meta_preview.set_hexpand(true);
+    meta_preview.set_can_shrink(true);
+
+    // Bottom pane: metadata list
+    let meta_content = gtk4::Box::new(Orientation::Vertical, 6);
+    meta_content.set_vexpand(true);
+    meta_content.set_margin_top(12);
+    meta_content.set_margin_bottom(12);
+    meta_content.set_margin_start(4);
+    meta_content.set_margin_end(8);
 
     let meta_title = Label::new(Some("Metadata"));
     meta_title.add_css_class("title-4");
     meta_title.set_halign(gtk4::Align::Start);
-    right_sidebar.append(&meta_title);
+    meta_content.append(&meta_title);
 
     let meta_scroll = ScrolledWindow::new();
     meta_scroll.set_vexpand(true);
@@ -474,7 +488,19 @@ fn build_ui(app: &adw::Application) {
     meta_listbox.add_css_class("boxed-list");
     meta_listbox.set_selection_mode(gtk4::SelectionMode::None);
     meta_scroll.set_child(Some(&meta_listbox));
-    right_sidebar.append(&meta_scroll);
+    meta_content.append(&meta_scroll);
+
+    // Vertical paned: preview (top) | metadata (bottom)
+    let meta_paned = Paned::new(Orientation::Vertical);
+    meta_paned.set_vexpand(true);
+    meta_paned.set_start_child(Some(&meta_preview));
+    meta_paned.set_end_child(Some(&meta_content));
+    meta_paned.set_resize_start_child(true);
+    meta_paned.set_resize_end_child(true);
+    meta_paned.set_shrink_start_child(false);
+    meta_paned.set_shrink_end_child(false);
+    meta_paned.set_position(app_config.meta_pane_pos.unwrap_or(200));
+    right_sidebar.append(&meta_paned);
 
     // -----------------------------------------------------------------------
     // Wire: grid item activate → switch to single view
@@ -494,15 +520,21 @@ fn build_ui(app: &adw::Application) {
     // Wire: selection change → populate metadata sidebar
     // -----------------------------------------------------------------------
     let meta_listbox_sel = meta_listbox.clone();
+    let meta_preview_sel = meta_preview.clone();
     selection_model.connect_selection_changed(move |model, _, _| {
         let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
             return;
         };
         let path = std::path::PathBuf::from(item.string().as_str());
+
+        // Update the preview image immediately.
+        meta_preview_sel.set_filename(Some(&path));
+
         let (tx, rx) = async_channel::bounded::<ImageMetadata>(1);
+        let path_for_thread = path.clone();
         std::thread::spawn(move || {
             let dispatcher = DefaultMetadataDispatcher;
-            let meta = dispatcher.extract(&path).unwrap_or_default();
+            let meta = dispatcher.extract(&path_for_thread).unwrap_or_default();
             let _ = tx.send_blocking(meta);
         });
         let listbox = meta_listbox_sel.clone();
@@ -669,11 +701,13 @@ fn build_ui(app: &adw::Application) {
     let cf_close = current_folder.clone();
     let outer_paned_close = outer_paned.clone();
     let inner_paned_close = inner_paned.clone();
+    let meta_paned_close = meta_paned.clone();
     window.connect_close_request(move |_| {
         config::save(
             cf_close.borrow().as_deref(),
             outer_paned_close.position(),
             inner_paned_close.position(),
+            meta_paned_close.position(),
         );
         glib::Propagation::Proceed
     });
@@ -719,7 +753,7 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
         let Some(val) = maybe_val else { continue };
         let row = adw::ActionRow::new();
         row.set_title(key);
-        row.set_subtitle(val);
+        row.set_subtitle(&glib::markup_escape_text(val));
         row.set_subtitle_selectable(true);
         listbox.append(&row);
     }
