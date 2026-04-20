@@ -6,14 +6,15 @@ mod thumbnails;
 use metadata::{DefaultMetadataDispatcher, ImageMetadata, MetadataDispatcher, ScanMessage};
 use scanner::scan_directory;
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
-    gdk, gio, glib, EventControllerKey, GridView, Image, Label, ListItem, ListView,
-    ListScrollFlags, Orientation, Paned, Picture, ScrolledWindow, SignalListItemFactory,
-    SingleSelection, Spinner, StringObject, TreeExpander, TreeListModel, TreeListRow,
+    gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, FilterListModel,
+    GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Paned, Picture,
+    ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
+    Spinner, StringObject, TreeExpander, TreeListModel, TreeListRow,
 };
 
 // ---------------------------------------------------------------------------
@@ -38,8 +39,7 @@ fn build_ui(app: &adw::Application) {
     // Async channel: background scan thread → GTK main thread.
     let (sender, receiver) = async_channel::unbounded::<ScanMessage>();
 
-    // ViewStack is created early so the AdwViewSwitcher (in the header bar)
-    // can reference it before the content area is assembled.
+    // ViewStack — toggled programmatically (no visible tab switcher).
     let view_stack = adw::ViewStack::new();
 
     // Scan-progress indicator (shown in header while a scan is running).
@@ -48,17 +48,44 @@ fn build_ui(app: &adw::Application) {
     // Toast overlay wraps all main content for non-intrusive notifications.
     let toast_overlay = adw::ToastOverlay::new();
 
+    // Metadata cache: path → extracted metadata (for search filtering).
+    let meta_cache: Rc<RefCell<HashMap<String, ImageMetadata>>> =
+        Rc::new(RefCell::new(HashMap::new()));
+
+    // Sort key: "name_asc" | "name_desc" | "date_asc" | "date_desc" | "size_asc" | "size_desc"
+    let sort_key: Rc<RefCell<String>> = Rc::new(RefCell::new("name_asc".to_string()));
+
+    // Search text.
+    let search_text: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+
     // -----------------------------------------------------------------------
     // Receiver task: update model, manage spinner, show scan-complete toast
     // -----------------------------------------------------------------------
     let list_store_recv = list_store.clone();
     let spinner_recv = spinner.clone();
     let toast_recv = toast_overlay.clone();
+    let meta_cache_recv = meta_cache.clone();
     glib::MainContext::default().spawn_local(async move {
         while let Ok(msg) = receiver.recv().await {
             match msg {
                 ScanMessage::ImageFound(path) => {
                     list_store_recv.append(&StringObject::new(&path));
+                    // Kick off metadata extraction in background so cache is ready for search.
+                    let path_clone = path.clone();
+                    let (tx, rx) = async_channel::bounded::<(String, ImageMetadata)>(1);
+                    std::thread::spawn(move || {
+                        let dispatcher = DefaultMetadataDispatcher;
+                        let meta = dispatcher
+                            .extract(std::path::Path::new(&path_clone))
+                            .unwrap_or_default();
+                        let _ = tx.send_blocking((path_clone, meta));
+                    });
+                    let cache_clone = meta_cache_recv.clone();
+                    glib::MainContext::default().spawn_local(async move {
+                        if let Ok((p, m)) = rx.recv().await {
+                            cache_clone.borrow_mut().insert(p, m);
+                        }
+                    });
                 }
                 ScanMessage::MetadataReady { .. } => {}
                 ScanMessage::ScanComplete => {
@@ -87,10 +114,34 @@ fn build_ui(app: &adw::Application) {
     open_btn.set_tooltip_text(Some("Open Folder…"));
     header_bar.pack_start(&open_btn);
 
-    // AdwViewSwitcher as the title widget — shows "Grid" and "Single" tabs.
-    let view_switcher = adw::ViewSwitcher::new();
-    view_switcher.set_stack(Some(&view_stack));
-    header_bar.set_title_widget(Some(&view_switcher));
+    // --- Sort dropdown ---
+    let sort_options = gtk4::StringList::new(&[
+        "Name ↑",
+        "Name ↓",
+        "Date ↑",
+        "Date ↓",
+        "Size ↑",
+        "Size ↓",
+    ]);
+    let sort_dropdown = gtk4::DropDown::new(Some(sort_options), gtk4::Expression::NONE);
+    sort_dropdown.set_tooltip_text(Some("Sort order"));
+
+    // --- Search entry ---
+    let search_entry = gtk4::SearchEntry::new();
+    search_entry.set_placeholder_text(Some("Search…"));
+    search_entry.set_width_request(220);
+
+    // --- Clear button ---
+    let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
+    clear_btn.set_tooltip_text(Some("Clear filters"));
+
+    // Center widget: sort + search + clear grouped together.
+    let toolbar_center = gtk4::Box::new(Orientation::Horizontal, 6);
+    toolbar_center.set_valign(gtk4::Align::Center);
+    toolbar_center.append(&sort_dropdown);
+    toolbar_center.append(&search_entry);
+    toolbar_center.append(&clear_btn);
+    header_bar.set_title_widget(Some(&toolbar_center));
 
     // Spinner in the end slot — visible while scanning.
     header_bar.pack_end(&spinner);
@@ -136,6 +187,7 @@ fn build_ui(app: &adw::Application) {
     let list_store_tree = list_store.clone();
     let spinner_tree = spinner.clone();
     let current_folder_tree = current_folder.clone();
+    let meta_cache_tree = meta_cache.clone();
     tree_selection.connect_selection_changed(move |model, _, _| {
         let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
             return;
@@ -150,6 +202,7 @@ fn build_ui(app: &adw::Application) {
         }
         *current_folder_tree.borrow_mut() = Some(path.clone());
         list_store_tree.remove_all();
+        meta_cache_tree.borrow_mut().clear();
         spinner_tree.start();
         scan_directory(path, sender_tree.clone());
     });
@@ -202,8 +255,102 @@ fn build_ui(app: &adw::Application) {
     tree_scroll.set_child(Some(&tree_list_view));
     left_sidebar.append(&tree_scroll);
 
+    // --- Filter model: wraps list_store, applies search text ---
+    let meta_cache_filter = meta_cache.clone();
+    let search_text_filter = search_text.clone();
+    let filter = CustomFilter::new(move |obj| {
+        let query = search_text_filter.borrow().to_lowercase();
+        if query.is_empty() {
+            return true;
+        }
+        let path_str = obj
+            .downcast_ref::<StringObject>()
+            .map(|s| s.string().to_string())
+            .unwrap_or_default();
+        // Match against filename.
+        let filename = std::path::Path::new(&path_str)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if filename.contains(&query) {
+            return true;
+        }
+        // Match against cached metadata fields.
+        let cache = meta_cache_filter.borrow();
+        if let Some(meta) = cache.get(&path_str) {
+            let fields: [Option<&str>; 8] = [
+                meta.camera_make.as_deref(),
+                meta.camera_model.as_deref(),
+                meta.exposure.as_deref(),
+                meta.iso.as_deref(),
+                meta.prompt.as_deref(),
+                meta.negative_prompt.as_deref(),
+                meta.raw_parameters.as_deref(),
+                meta.workflow_json.as_deref(),
+            ];
+            for field in fields.iter().flatten() {
+                if field.to_lowercase().contains(&query) {
+                    return true;
+                }
+            }
+        }
+        false
+    });
+    let filter_model = FilterListModel::new(Some(list_store.clone()), Some(filter.clone()));
+
+    // --- Sort model: wraps filter_model, applies selected sort key ---
+    let sort_key_sorter = sort_key.clone();
+    let sorter = CustomSorter::new(move |a, b| {
+        let path_a = a
+            .downcast_ref::<StringObject>()
+            .map(|s| s.string().to_string())
+            .unwrap_or_default();
+        let path_b = b
+            .downcast_ref::<StringObject>()
+            .map(|s| s.string().to_string())
+            .unwrap_or_default();
+        let key = sort_key_sorter.borrow().clone();
+        let ord = match key.as_str() {
+            "name_asc" | "name_desc" => {
+                let na = std::path::Path::new(&path_a)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                let nb = std::path::Path::new(&path_b)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                let cmp = na.cmp(&nb);
+                if key == "name_desc" { cmp.reverse() } else { cmp }
+            }
+            "date_asc" | "date_desc" => {
+                let mt = |p: &str| {
+                    std::fs::metadata(p)
+                        .and_then(|m| m.modified())
+                        .ok()
+                };
+                let ta = mt(&path_a);
+                let tb = mt(&path_b);
+                let cmp = ta.cmp(&tb);
+                if key == "date_desc" { cmp.reverse() } else { cmp }
+            }
+            "size_asc" | "size_desc" => {
+                let sz = |p: &str| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+                let cmp = sz(&path_a).cmp(&sz(&path_b));
+                if key == "size_desc" { cmp.reverse() } else { cmp }
+            }
+            _ => std::cmp::Ordering::Equal,
+        };
+        match ord {
+            std::cmp::Ordering::Less => gtk4::Ordering::Smaller,
+            std::cmp::Ordering::Greater => gtk4::Ordering::Larger,
+            std::cmp::Ordering::Equal => gtk4::Ordering::Equal,
+        }
+    });
+    let sort_model = SortListModel::new(Some(filter_model.clone()), Some(sorter.clone()));
+
     // --- Center: ViewStack with Grid + Single pages ---
-    let selection_model = SingleSelection::new(Some(list_store.clone()));
+    let selection_model = SingleSelection::new(Some(sort_model.clone()));
 
     let factory = SignalListItemFactory::new();
 
@@ -374,12 +521,14 @@ fn build_ui(app: &adw::Application) {
     let window_ref = window.clone();
     let spinner_btn = spinner.clone();
     let current_folder_btn = current_folder.clone();
+    let meta_cache_btn = meta_cache.clone();
     open_btn.connect_clicked(move |_| {
         let dialog = gtk4::FileDialog::builder().title("Choose a Folder").build();
         let sender2 = sender_btn.clone();
         let list_store2 = list_store_btn.clone();
         let spinner2 = spinner_btn.clone();
         let cf2 = current_folder_btn.clone();
+        let cache2 = meta_cache_btn.clone();
         dialog.select_folder(
             Some(&window_ref),
             None::<&gio::Cancellable>,
@@ -388,10 +537,58 @@ fn build_ui(app: &adw::Application) {
                 let Some(path) = file.path() else { return };
                 *cf2.borrow_mut() = Some(path.clone());
                 list_store2.remove_all();
+                cache2.borrow_mut().clear();
                 spinner2.start();
                 scan_directory(path, sender2.clone());
             },
         );
+    });
+
+    // -----------------------------------------------------------------------
+    // Wire: sort dropdown → update sort key and invalidate sorter
+    // -----------------------------------------------------------------------
+    let sort_key_dd = sort_key.clone();
+    let sorter_dd = sorter.clone();
+    sort_dropdown.connect_selected_notify(move |dd| {
+        let key = match dd.selected() {
+            0 => "name_asc",
+            1 => "name_desc",
+            2 => "date_asc",
+            3 => "date_desc",
+            4 => "size_asc",
+            5 => "size_desc",
+            _ => "name_asc",
+        };
+        *sort_key_dd.borrow_mut() = key.to_string();
+        sorter_dd.changed(gtk4::SorterChange::Different);
+    });
+
+    // -----------------------------------------------------------------------
+    // Wire: search entry → update search text and invalidate filter
+    // -----------------------------------------------------------------------
+    let search_text_entry = search_text.clone();
+    let filter_entry = filter.clone();
+    search_entry.connect_search_changed(move |entry| {
+        *search_text_entry.borrow_mut() = entry.text().to_lowercase();
+        filter_entry.changed(gtk4::FilterChange::Different);
+    });
+
+    // -----------------------------------------------------------------------
+    // Wire: clear button → reset search and sort
+    // -----------------------------------------------------------------------
+    let search_text_clear = search_text.clone();
+    let sort_key_clear = sort_key.clone();
+    let filter_clear = filter.clone();
+    let sorter_clear = sorter.clone();
+    let search_entry_clear = search_entry.clone();
+    let sort_dropdown_clear = sort_dropdown.clone();
+    clear_btn.connect_clicked(move |_| {
+        *search_text_clear.borrow_mut() = String::new();
+        *sort_key_clear.borrow_mut() = "name_asc".to_string();
+        search_entry_clear.set_text("");
+        sort_dropdown_clear.set_selected(0);
+        filter_clear.changed(gtk4::FilterChange::LessStrict);
+        sorter_clear.changed(gtk4::SorterChange::Different);
     });
 
     // -----------------------------------------------------------------------
