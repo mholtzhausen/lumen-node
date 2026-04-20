@@ -10,9 +10,11 @@
 //! | everything else| Returns empty [`ImageMetadata`]                    |
 //!
 //! PNG dispatch keys:
-//! - `"parameters"` → Automatic1111 / InvokeAI raw prompt string
-//! - `"prompt"`     → ComfyUI API node graph → positive/negative prompts
-//! - `"workflow"`   → ComfyUI UI workflow → human-readable node summary
+//! - `"parameters"`        → Automatic1111 / InvokeAI raw prompt string
+//! - `"prompt"`            → ComfyUI API node graph → positive/negative prompts
+//! - `"workflow"`          → ComfyUI UI workflow → human-readable node summary
+//! - `"invokeai_metadata"` → InvokeAI JSON → positive/negative prompts + settings
+//! - other keywords         → captured verbatim as fallback metadata
 
 use std::cmp::Reverse;
 use std::io::BufReader;
@@ -83,7 +85,7 @@ impl MetadataDispatcher for DefaultMetadataDispatcher {
 
         match ext.as_str() {
             "jpg" | "jpeg" | "tiff" | "tif" => extract_exif(path),
-            "png" => extract_png(path),
+            "png" => extract_png_with_exif(path),
             _ => Ok(ImageMetadata::default()),
         }
     }
@@ -113,8 +115,32 @@ fn extract_exif(path: &Path) -> Result<ImageMetadata, Box<dyn std::error::Error>
 }
 
 // ---------------------------------------------------------------------------
-// PNG text-chunk extraction (tEXt / zTXt / iTXt)
+// PNG extraction: EXIF (eXIf chunk) + text chunks (tEXt / zTXt / iTXt)
 // ---------------------------------------------------------------------------
+
+/// Attempts EXIF extraction first (for PNG eXIf chunks), then overlays any
+/// text-chunk metadata on top. Either source may fail independently.
+fn extract_png_with_exif(path: &Path) -> Result<ImageMetadata, Box<dyn std::error::Error>> {
+    // Best-effort EXIF from the PNG eXIf chunk (kamadak-exif supports this).
+    let mut meta = extract_exif(path).unwrap_or_default();
+
+    // Overlay text-chunk metadata; merge non-None fields.
+    if let Ok(text_meta) = extract_png(path) {
+        macro_rules! merge {
+            ($field:ident) => {
+                if text_meta.$field.is_some() {
+                    meta.$field = text_meta.$field;
+                }
+            };
+        }
+        merge!(raw_parameters);
+        merge!(prompt);
+        merge!(negative_prompt);
+        merge!(workflow_json);
+    }
+
+    Ok(meta)
+}
 
 fn extract_png(path: &Path) -> Result<ImageMetadata, Box<dyn std::error::Error>> {
     let file = std::fs::File::open(path)?;
@@ -167,7 +193,37 @@ fn apply_text_chunk(meta: &mut ImageMetadata, keyword: &str, text: &str) {
                 .or_else(|| Some(text.to_owned()));
         }
 
-        _ => {}
+        // InvokeAI metadata: JSON with positive_prompt, negative_prompt, model, etc.
+        "invokeai_metadata" => {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
+                if let Some(p) = val.get("positive_prompt").and_then(|v| v.as_str()) {
+                    if !p.is_empty() {
+                        meta.prompt = Some(p.to_owned());
+                    }
+                }
+                if let Some(n) = val.get("negative_prompt").and_then(|v| v.as_str()) {
+                    if !n.is_empty() {
+                        meta.negative_prompt = Some(n.to_owned());
+                    }
+                }
+                // Store the full JSON as raw parameters for reference.
+                meta.raw_parameters = Some(text.to_owned());
+            }
+        }
+
+        _ => {
+            // Capture unknown keywords so they appear as "Parameters" in the UI.
+            let entry = format!("{}: {}", keyword, text);
+            match &mut meta.raw_parameters {
+                Some(existing) => {
+                    existing.push('\n');
+                    existing.push_str(&entry);
+                }
+                None => {
+                    meta.raw_parameters = Some(entry);
+                }
+            }
+        }
     }
 }
 
