@@ -53,10 +53,14 @@ fn build_ui(app: &adw::Application) {
         Rc::new(RefCell::new(HashMap::new()));
 
     // Sort key: "name_asc" | "name_desc" | "date_asc" | "date_desc" | "size_asc" | "size_desc"
-    let sort_key: Rc<RefCell<String>> = Rc::new(RefCell::new("name_asc".to_string()));
+    let sort_key: Rc<RefCell<String>> = Rc::new(RefCell::new(
+        app_config.sort_key.clone().unwrap_or_else(|| "name_asc".to_string()),
+    ));
 
     // Search text.
-    let search_text: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    let search_text: Rc<RefCell<String>> = Rc::new(RefCell::new(
+        app_config.search_text.clone().unwrap_or_default(),
+    ));
 
     // -----------------------------------------------------------------------
     // Receiver task: update model, manage spinner, show scan-complete toast
@@ -145,6 +149,19 @@ fn build_ui(app: &adw::Application) {
 
     // Spinner in the end slot — visible while scanning.
     header_bar.pack_end(&spinner);
+
+    // Sidebar toggle buttons — collapse/expand left and right panels.
+    let left_toggle = gtk4::ToggleButton::new();
+    left_toggle.set_icon_name("sidebar-show-symbolic");
+    left_toggle.set_active(true);
+    left_toggle.set_tooltip_text(Some("Toggle left panel"));
+    header_bar.pack_start(&left_toggle);
+
+    let right_toggle = gtk4::ToggleButton::new();
+    right_toggle.set_icon_name("sidebar-show-right-symbolic");
+    right_toggle.set_active(true);
+    right_toggle.set_tooltip_text(Some("Toggle right panel"));
+    header_bar.pack_end(&right_toggle);
 
     // -----------------------------------------------------------------------
     // Three-pane layout: [left sidebar] | [center] | [right sidebar]
@@ -503,17 +520,34 @@ fn build_ui(app: &adw::Application) {
     right_sidebar.append(&meta_paned);
 
     // -----------------------------------------------------------------------
+    // Wire: sidebar toggle buttons → show/hide panels
+    // -----------------------------------------------------------------------
+    let left_sidebar_toggle = left_sidebar.clone();
+    left_toggle.connect_toggled(move |btn| {
+        left_sidebar_toggle.set_visible(btn.is_active());
+    });
+
+    let right_sidebar_toggle = right_sidebar.clone();
+    right_toggle.connect_toggled(move |btn| {
+        right_sidebar_toggle.set_visible(btn.is_active());
+    });
+
+    // -----------------------------------------------------------------------
     // Wire: grid item activate → switch to single view
     // -----------------------------------------------------------------------
     let stack_for_grid = view_stack.clone();
     let picture_for_grid = single_picture.clone();
     let selection_for_grid = selection_model.clone();
+    let left_toggle_grid = left_toggle.clone();
+    let right_toggle_grid = right_toggle.clone();
     grid_view.connect_activate(move |_, pos| {
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
             let path = std::path::PathBuf::from(item.string().as_str());
             picture_for_grid.set_filename(Some(&path));
         }
         stack_for_grid.set_visible_child_name("single");
+        left_toggle_grid.set_active(false);
+        right_toggle_grid.set_active(false);
     });
 
     // -----------------------------------------------------------------------
@@ -662,9 +696,13 @@ fn build_ui(app: &adw::Application) {
     let stack_for_keys = view_stack.clone();
     let selection_for_keys = selection_model.clone();
     let picture_for_keys = single_picture.clone();
+    let left_toggle_keys = left_toggle.clone();
+    let right_toggle_keys = right_toggle.clone();
     key_controller.connect_key_pressed(move |_, key, _, _| {
         if key == gdk::Key::Escape {
             stack_for_keys.set_visible_child_name("grid");
+            left_toggle_keys.set_active(true);
+            right_toggle_keys.set_active(true);
             return glib::Propagation::Stop;
         }
         let in_single = stack_for_keys.visible_child_name().as_deref() == Some("single");
@@ -702,12 +740,16 @@ fn build_ui(app: &adw::Application) {
     let outer_paned_close = outer_paned.clone();
     let inner_paned_close = inner_paned.clone();
     let meta_paned_close = meta_paned.clone();
+    let sort_key_close = sort_key.clone();
+    let search_text_close = search_text.clone();
     window.connect_close_request(move |_| {
         config::save(
             cf_close.borrow().as_deref(),
             outer_paned_close.position(),
             inner_paned_close.position(),
             meta_paned_close.position(),
+            &sort_key_close.borrow(),
+            &search_text_close.borrow(),
         );
         glib::Propagation::Proceed
     });
@@ -722,6 +764,29 @@ fn build_ui(app: &adw::Application) {
             spinner.start();
             scan_directory(last_folder.clone(), sender.clone());
             sync_tree_to_path(&tree_model, &tree_list_view, &last_folder);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Restore persisted sort + search state into the UI controls
+    // -----------------------------------------------------------------------
+    {
+        let initial_sort_idx: u32 = match sort_key.borrow().as_str() {
+            "name_desc" => 1,
+            "date_asc"  => 2,
+            "date_desc" => 3,
+            "size_asc"  => 4,
+            "size_desc" => 5,
+            _           => 0,
+        };
+        if initial_sort_idx != 0 {
+            // fires connect_selected_notify → updates sort_key + calls sorter.changed()
+            sort_dropdown.set_selected(initial_sort_idx);
+        }
+        let initial_search = search_text.borrow().clone();
+        if !initial_search.is_empty() {
+            search_entry.set_text(&initial_search);
+            filter.changed(gtk4::FilterChange::Different);
         }
     }
 

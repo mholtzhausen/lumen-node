@@ -5,6 +5,8 @@ pub struct AppConfig {
     pub left_pane_pos: Option<i32>,
     pub right_pane_pos: Option<i32>,
     pub meta_pane_pos: Option<i32>,
+    pub sort_key: Option<String>,
+    pub search_text: Option<String>,
 }
 
 /// Loads `~/.lumen-node/config.yml`.  Missing file → empty config.
@@ -13,6 +15,8 @@ pub fn load() -> AppConfig {
     let mut left_pane_pos = None;
     let mut right_pane_pos = None;
     let mut meta_pane_pos = None;
+    let mut sort_key = None;
+    let mut search_text = None;
     if let Ok(content) = std::fs::read_to_string(config_path()) {
         for line in content.lines() {
             if let Some(val) = line.strip_prefix("last_folder: ") {
@@ -26,14 +30,29 @@ pub fn load() -> AppConfig {
                 right_pane_pos = val.trim().parse::<i32>().ok();
             } else if let Some(val) = line.strip_prefix("meta_pane_pos: ") {
                 meta_pane_pos = val.trim().parse::<i32>().ok();
+            } else if let Some(val) = line.strip_prefix("sort_key: ") {
+                let val = val.trim();
+                if !val.is_empty() {
+                    sort_key = Some(val.to_string());
+                }
+            } else if let Some(val) = line.strip_prefix("search_text: ") {
+                // Value may be empty (empty search = no prefix match, so use raw line remainder)
+                search_text = Some(val.to_string());
             }
         }
     }
-    AppConfig { last_folder, left_pane_pos, right_pane_pos, meta_pane_pos }
+    AppConfig { last_folder, left_pane_pos, right_pane_pos, meta_pane_pos, sort_key, search_text }
 }
 
 /// Writes config to `~/.lumen-node/config.yml`, creating the directory if needed.
-pub fn save(last_folder: Option<&Path>, left_pane_pos: i32, right_pane_pos: i32, meta_pane_pos: i32) {
+pub fn save(
+    last_folder: Option<&Path>,
+    left_pane_pos: i32,
+    right_pane_pos: i32,
+    meta_pane_pos: i32,
+    sort_key: &str,
+    search_text: &str,
+) {
     let path = config_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -42,8 +61,8 @@ pub fn save(last_folder: Option<&Path>, left_pane_pos: i32, right_pane_pos: i32,
         .map(|p| p.display().to_string())
         .unwrap_or_default();
     let content = format!(
-        "last_folder: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\n",
-        folder_str, left_pane_pos, right_pane_pos, meta_pane_pos,
+        "last_folder: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nsort_key: {}\nsearch_text: {}\n",
+        folder_str, left_pane_pos, right_pane_pos, meta_pane_pos, sort_key, search_text,
     );
     let _ = std::fs::write(&path, content);
 }
