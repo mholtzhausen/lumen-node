@@ -9,6 +9,9 @@
 *.swo
 *~
 
+# Packaging build tools and output (downloaded binaries, AppDir staging)
+packaging/*
+
 # Project-local working dirs
 /.plan/
 /tmp/
