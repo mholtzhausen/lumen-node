@@ -55,7 +55,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/scanner.rs",
       "source_location": "L1",
       "id": "media_nemesarial_smalldata_code_lumen_node_src_scanner_rs",
-      "community": 7,
+      "community": 8,
       "norm_label": "scanner.rs"
     },
     {
@@ -64,7 +64,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/scanner.rs",
       "source_location": "L29",
       "id": "scanner_scan_directory",
-      "community": 7,
+      "community": 8,
       "norm_label": "scan_directory()"
     },
     {
@@ -73,7 +73,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/scanner.rs",
       "source_location": "L95",
       "id": "scanner_sort_paths",
-      "community": 7,
+      "community": 8,
       "norm_label": "sort_paths()"
     },
     {
@@ -82,7 +82,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/scanner.rs",
       "source_location": "L135",
       "id": "scanner_is_image",
-      "community": 7,
+      "community": 8,
       "norm_label": "is_image()"
     },
     {
@@ -199,7 +199,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/db.rs",
       "source_location": "L238",
       "id": "db_prune_missing",
-      "community": 7,
+      "community": 8,
       "norm_label": "prune_missing()"
     },
     {
@@ -235,7 +235,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L41",
       "id": "main_atomictaskguard",
-      "community": 10,
+      "community": 9,
       "norm_label": "atomictaskguard"
     },
     {
@@ -244,7 +244,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L46",
       "id": "main_atomictaskguard_new",
-      "community": 10,
+      "community": 9,
       "norm_label": ".new()"
     },
     {
@@ -253,7 +253,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L53",
       "id": "main_atomictaskguard_drop",
-      "community": 10,
+      "community": 9,
       "norm_label": ".drop()"
     },
     {
@@ -271,7 +271,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L65",
       "id": "main_clicktrace",
-      "community": 9,
+      "community": 11,
       "norm_label": "clicktrace"
     },
     {
@@ -280,7 +280,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L98",
       "id": "main_clicktrace_new",
-      "community": 9,
+      "community": 11,
       "norm_label": ".new()"
     },
     {
@@ -289,7 +289,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L142",
       "id": "main_clicktrace_mark_step",
-      "community": 4,
+      "community": 5,
       "norm_label": ".mark_step()"
     },
     {
@@ -298,7 +298,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L150",
       "id": "main_clicktrace_total_ms",
-      "community": 9,
+      "community": 11,
       "norm_label": ".total_ms()"
     },
     {
@@ -325,7 +325,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L173",
       "id": "main_fullviewtrace",
-      "community": 5,
+      "community": 4,
       "norm_label": "fullviewtrace"
     },
     {
@@ -334,7 +334,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L191",
       "id": "main_fullviewtrace_new",
-      "community": 5,
+      "community": 4,
       "norm_label": ".new()"
     },
     {
@@ -343,7 +343,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L215",
       "id": "main_fullviewtrace_total_ms",
-      "community": 5,
+      "community": 4,
       "norm_label": ".total_ms()"
     },
     {
@@ -352,7 +352,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L220",
       "id": "main_write_timing_report",
-      "community": 8,
+      "community": 10,
       "norm_label": "write_timing_report()"
     },
     {
@@ -361,7 +361,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L224",
       "id": "main_emit_click_report",
-      "community": 8,
+      "community": 10,
       "norm_label": "emit_click_report()"
     },
     {
@@ -370,7 +370,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L303",
       "id": "main_emit_full_view_report",
-      "community": 8,
+      "community": 10,
       "norm_label": "emit_full_view_report()"
     },
     {
@@ -379,7 +379,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L347",
       "id": "main_mark_click_step",
-      "community": 4,
+      "community": 5,
       "norm_label": "mark_click_step()"
     },
     {
@@ -388,7 +388,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L355",
       "id": "main_try_finalize_click_trace",
-      "community": 8,
+      "community": 5,
       "norm_label": "try_finalize_click_trace()"
     },
     {
@@ -397,7 +397,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L410",
       "id": "main_build_ui",
-      "community": 4,
+      "community": 6,
       "norm_label": "build_ui()"
     },
     {
@@ -406,7 +406,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L1788",
       "id": "main_attach_context_menu",
-      "community": 5,
+      "community": 4,
       "norm_label": "attach_context_menu()"
     },
     {
@@ -415,7 +415,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L1803",
       "id": "main_selected_image_path",
-      "community": 4,
+      "community": 6,
       "norm_label": "selected_image_path()"
     },
     {
@@ -424,7 +424,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L1810",
       "id": "main_format_metadata_text",
-      "community": 5,
+      "community": 4,
       "norm_label": "format_metadata_text()"
     },
     {
@@ -433,7 +433,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L1844",
       "id": "main_extract_seed_from_parameters",
-      "community": 3,
+      "community": 6,
       "norm_label": "extract_seed_from_parameters()"
     },
     {
@@ -442,7 +442,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L1859",
       "id": "main_format_generation_command",
-      "community": 3,
+      "community": 6,
       "norm_label": "format_generation_command()"
     },
     {
@@ -451,7 +451,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L1892",
       "id": "main_load_picture_async",
-      "community": 5,
+      "community": 4,
       "norm_label": "load_picture_async()"
     },
     {
@@ -460,7 +460,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L2086",
       "id": "main_populate_metadata_sidebar",
-      "community": 4,
+      "community": 5,
       "norm_label": "populate_metadata_sidebar()"
     },
     {
@@ -469,7 +469,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L2189",
       "id": "main_load_metadata_async",
-      "community": 4,
+      "community": 5,
       "norm_label": "load_metadata_async()"
     },
     {
@@ -478,7 +478,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L2217",
       "id": "main_sync_tree_to_path",
-      "community": 4,
+      "community": 6,
       "norm_label": "sync_tree_to_path()"
     },
     {
@@ -514,7 +514,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/config.rs",
       "source_location": "L1",
       "id": "media_nemesarial_smalldata_code_lumen_node_src_config_rs",
-      "community": 6,
+      "community": 7,
       "norm_label": "config.rs"
     },
     {
@@ -523,7 +523,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/config.rs",
       "source_location": "L3",
       "id": "config_appconfig",
-      "community": 6,
+      "community": 7,
       "norm_label": "appconfig"
     },
     {
@@ -532,7 +532,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/config.rs",
       "source_location": "L13",
       "id": "config_load",
-      "community": 6,
+      "community": 7,
       "norm_label": "load()"
     },
     {
@@ -541,7 +541,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/config.rs",
       "source_location": "L48",
       "id": "config_save",
-      "community": 6,
+      "community": 7,
       "norm_label": "save()"
     },
     {
@@ -550,7 +550,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/config.rs",
       "source_location": "L70",
       "id": "config_config_path",
-      "community": 6,
+      "community": 7,
       "norm_label": "config_path()"
     },
     {
@@ -787,7 +787,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 11,
+      "community": 12,
       "norm_label": "lumennode ui - image gallery with professional context",
       "id": "lumen_ui_conception"
     }
