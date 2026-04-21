@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=LumenNode
+Comment=Image gallery viewer
+Exec=lumen-node
+Icon=com.lumennode.app
+Type=Application
+Categories=Graphics;Viewer;
+Keywords=image;gallery;photo;

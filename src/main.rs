@@ -3,6 +3,7 @@ mod db;
 mod metadata;
 mod scanner;
 mod thumbnails;
+mod updater;
 
 use metadata::{ImageMetadata, ScanMessage};
 use scanner::scan_directory;
@@ -2486,9 +2487,14 @@ fn build_ui(app: &adw::Application) {
     status_bar.set_margin_bottom(2);
     status_bar.append(&progress_box);
 
+    let update_banner = adw::Banner::new("");
+    update_banner.set_button_label(Some("View release"));
+    update_banner.set_revealed(false);
+
     let content_with_status = gtk4::Box::new(Orientation::Vertical, 0);
     content_with_status.set_hexpand(true);
     content_with_status.set_vexpand(true);
+    content_with_status.append(&update_banner);
     content_with_status.append(&toast_overlay);
     content_with_status.append(&status_bar);
 
@@ -2497,6 +2503,26 @@ fn build_ui(app: &adw::Application) {
     toolbar_view.set_content(Some(&content_with_status));
 
     window.set_content(Some(&toolbar_view));
+
+    // Check for updates in a background thread; show banner if a newer release exists.
+    let (update_tx, update_rx) = async_channel::bounded::<updater::UpdateInfo>(1);
+    std::thread::spawn(move || {
+        if let Some(info) = updater::check_for_update() {
+            let _ = update_tx.send_blocking(info);
+        }
+    });
+    glib::MainContext::default().spawn_local(async move {
+        if let Ok(info) = update_rx.recv().await {
+            update_banner.set_title(&format!("Version {} available", info.version));
+            update_banner.set_revealed(true);
+            update_banner.connect_button_clicked(move |_| {
+                let _ = gio::AppInfo::launch_default_for_uri(
+                    &info.url,
+                    None::<&gio::AppLaunchContext>,
+                );
+            });
+        }
+    });
 
     // -----------------------------------------------------------------------
     // Keyboard: Escape / Left / Right / Page navigation
