@@ -7,7 +7,14 @@ mod thumbnails;
 use metadata::{ImageMetadata, ScanMessage};
 use scanner::scan_directory;
 
-use std::{cell::RefCell, collections::HashMap, collections::VecDeque, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    collections::VecDeque,
+    rc::Rc,
+    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
+    time::{Duration, Instant},
+};
 
 use libadwaita as adw;
 use adw::prelude::*;
@@ -18,6 +25,383 @@ use gtk4::{
     PopoverMenu, ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
     Spinner, StringObject, TreeExpander, TreeListModel, TreeListRow,
 };
+
+static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
+static FULL_VIEW_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
+static ACTIVE_THUMBNAIL_TASKS: AtomicU64 = AtomicU64::new(0);
+static ACTIVE_PREVIEW_TASKS: AtomicU64 = AtomicU64::new(0);
+static PREVIEW_REQUEST_PENDING: AtomicU64 = AtomicU64::new(0);
+static SUPPRESS_SIDEBAR_DURING_PREVIEW: AtomicU64 = AtomicU64::new(0);
+static THUMB_UI_CALLBACKS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW: AtomicU64 = AtomicU64::new(0);
+static SCAN_BUFFER_DEPTH: AtomicU64 = AtomicU64::new(0);
+static SCAN_DRAIN_SCHEDULED: AtomicU64 = AtomicU64::new(0);
+const SCAN_DRAIN_BATCH_SIZE: u64 = 50;
+
+struct AtomicTaskGuard {
+    counter: &'static AtomicU64,
+}
+
+impl AtomicTaskGuard {
+    fn new(counter: &'static AtomicU64) -> Self {
+        counter.fetch_add(1, AtomicOrdering::Relaxed);
+        Self { counter }
+    }
+}
+
+impl Drop for AtomicTaskGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, AtomicOrdering::Relaxed);
+    }
+}
+
+#[derive(Clone)]
+struct ClickStepTiming {
+    name: String,
+    elapsed_ms: f64,
+}
+
+#[derive(Clone)]
+struct ClickTrace {
+    id: u64,
+    path: String,
+    started: Instant,
+    steps: Vec<ClickStepTiming>,
+    preview_done: bool,
+    metadata_done: bool,
+    finalize_scheduled: bool,
+    finished: bool,
+    outcome: String,
+    active_thumbnail_jobs_at_click: u64,
+    active_preview_jobs_at_click: u64,
+    scan_buffer_depth_at_click: u64,
+    idle_drain_scheduled_at_click: bool,
+    pending_idle_drain_cycles_est_at_click: u64,
+    thumb_ui_callbacks_total_at_click: u64,
+    thumb_ui_callbacks_skipped_at_click: u64,
+    thumb_ui_callbacks_total_until_preview: Option<u64>,
+    thumb_ui_callbacks_skipped_until_preview: Option<u64>,
+    scan_buffer_depth_at_idle_settled: Option<u64>,
+    idle_drain_scheduled_at_idle_settled: Option<bool>,
+    preview_displayed_at_ms: Option<f64>,
+    preview_queue_wait_ms: Option<f64>,
+    preview_file_open_ms: Option<f64>,
+    preview_decode_ms: Option<f64>,
+    preview_texture_create_ms: Option<f64>,
+    preview_worker_total_ms: Option<f64>,
+    preview_main_thread_dispatch_ms: Option<f64>,
+    preview_texture_apply_ms: Option<f64>,
+    main_loop_settle_ms: Option<f64>,
+}
+
+impl ClickTrace {
+    fn new(
+        id: u64,
+        path: String,
+        active_thumbnail_jobs_at_click: u64,
+        active_preview_jobs_at_click: u64,
+        scan_buffer_depth_at_click: u64,
+        idle_drain_scheduled_at_click: bool,
+        pending_idle_drain_cycles_est_at_click: u64,
+        thumb_ui_callbacks_total_at_click: u64,
+        thumb_ui_callbacks_skipped_at_click: u64,
+    ) -> Self {
+        Self {
+            id,
+            path,
+            started: Instant::now(),
+            steps: Vec::new(),
+            preview_done: false,
+            metadata_done: false,
+            finalize_scheduled: false,
+            finished: false,
+            outcome: "pending".to_string(),
+            active_thumbnail_jobs_at_click,
+            active_preview_jobs_at_click,
+            scan_buffer_depth_at_click,
+            idle_drain_scheduled_at_click,
+            pending_idle_drain_cycles_est_at_click,
+            thumb_ui_callbacks_total_at_click,
+            thumb_ui_callbacks_skipped_at_click,
+            thumb_ui_callbacks_total_until_preview: None,
+            thumb_ui_callbacks_skipped_until_preview: None,
+            scan_buffer_depth_at_idle_settled: None,
+            idle_drain_scheduled_at_idle_settled: None,
+            preview_displayed_at_ms: None,
+            preview_queue_wait_ms: None,
+            preview_file_open_ms: None,
+            preview_decode_ms: None,
+            preview_texture_create_ms: None,
+            preview_worker_total_ms: None,
+            preview_main_thread_dispatch_ms: None,
+            preview_texture_apply_ms: None,
+            main_loop_settle_ms: None,
+        }
+    }
+
+    fn mark_step(&mut self, name: &str) {
+        let elapsed_ms = self.started.elapsed().as_secs_f64() * 1000.0;
+        self.steps.push(ClickStepTiming {
+            name: name.to_string(),
+            elapsed_ms,
+        });
+    }
+
+    fn total_ms(&self) -> f64 {
+        self.started.elapsed().as_secs_f64() * 1000.0
+    }
+}
+
+enum PreviewLoadOutcome {
+    Displayed,
+    Failed,
+    StaleOrCancelled,
+}
+
+struct PreviewLoadMetrics {
+    outcome: PreviewLoadOutcome,
+    queue_wait_ms: f64,
+    file_open_ms: f64,
+    decode_ms: f64,
+    texture_create_ms: f64,
+    worker_total_ms: f64,
+    worker_done_since_enqueue_ms: f64,
+    main_thread_dispatch_ms: f64,
+    texture_apply_ms: f64,
+}
+
+struct FullViewTrace {
+    id: u64,
+    path: String,
+    started: Instant,
+    outcome: String,
+    active_thumbnail_jobs_at_activate: u64,
+    active_preview_jobs_at_activate: u64,
+    preview_queue_wait_ms: Option<f64>,
+    preview_file_open_ms: Option<f64>,
+    preview_decode_ms: Option<f64>,
+    preview_texture_create_ms: Option<f64>,
+    preview_worker_total_ms: Option<f64>,
+    preview_main_thread_dispatch_ms: Option<f64>,
+    preview_texture_apply_ms: Option<f64>,
+    displayed_ms: Option<f64>,
+}
+
+impl FullViewTrace {
+    fn new(
+        id: u64,
+        path: String,
+        active_thumbnail_jobs_at_activate: u64,
+        active_preview_jobs_at_activate: u64,
+    ) -> Self {
+        Self {
+            id,
+            path,
+            started: Instant::now(),
+            outcome: "pending".to_string(),
+            active_thumbnail_jobs_at_activate,
+            active_preview_jobs_at_activate,
+            preview_queue_wait_ms: None,
+            preview_file_open_ms: None,
+            preview_decode_ms: None,
+            preview_texture_create_ms: None,
+            preview_worker_total_ms: None,
+            preview_main_thread_dispatch_ms: None,
+            preview_texture_apply_ms: None,
+            displayed_ms: None,
+        }
+    }
+
+    fn total_ms(&self) -> f64 {
+        self.started.elapsed().as_secs_f64() * 1000.0
+    }
+}
+
+fn write_timing_report(_report: &str) {
+    // Timing debug output disabled.
+}
+
+fn emit_click_report(trace: &ClickTrace) {
+    let mut report = String::new();
+    report.push_str(&format!(
+        "CLICK {} | {} | outcome={}\n",
+        trace.id, trace.path, trace.outcome
+    ));
+    for step in &trace.steps {
+        report.push_str(&format!("{:>8.3}ms {}\n", step.elapsed_ms, step.name));
+    }
+    report.push_str("METRICS\n");
+    report.push_str(&format!(
+        "active_thumbnail_jobs_at_click={}\n",
+        trace.active_thumbnail_jobs_at_click
+    ));
+    report.push_str(&format!(
+        "active_preview_jobs_at_click={}\n",
+        trace.active_preview_jobs_at_click
+    ));
+    report.push_str(&format!(
+        "scan_buffer_depth_at_click={}\n",
+        trace.scan_buffer_depth_at_click
+    ));
+    report.push_str(&format!(
+        "idle_drain_scheduled_at_click={}\n",
+        trace.idle_drain_scheduled_at_click
+    ));
+    report.push_str(&format!(
+        "pending_idle_drain_cycles_est_at_click={}\n",
+        trace.pending_idle_drain_cycles_est_at_click
+    ));
+    report.push_str(&format!(
+        "thumb_ui_callbacks_total_at_click={}\n",
+        trace.thumb_ui_callbacks_total_at_click
+    ));
+    report.push_str(&format!(
+        "thumb_ui_callbacks_skipped_at_click={}\n",
+        trace.thumb_ui_callbacks_skipped_at_click
+    ));
+    if let Some(v) = trace.thumb_ui_callbacks_total_until_preview {
+        report.push_str(&format!("thumb_ui_callbacks_total_until_preview={}\n", v));
+    }
+    if let Some(v) = trace.thumb_ui_callbacks_skipped_until_preview {
+        report.push_str(&format!("thumb_ui_callbacks_skipped_until_preview={}\n", v));
+    }
+    if let Some(v) = trace.scan_buffer_depth_at_idle_settled {
+        report.push_str(&format!("scan_buffer_depth_at_idle_settled={}\n", v));
+    }
+    if let Some(v) = trace.idle_drain_scheduled_at_idle_settled {
+        report.push_str(&format!("idle_drain_scheduled_at_idle_settled={}\n", v));
+    }
+    if let Some(v) = trace.preview_queue_wait_ms {
+        report.push_str(&format!("preview_queue_wait_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_file_open_ms {
+        report.push_str(&format!("preview_file_open_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_decode_ms {
+        report.push_str(&format!("preview_decode_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_texture_create_ms {
+        report.push_str(&format!("preview_texture_create_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_worker_total_ms {
+        report.push_str(&format!("preview_worker_total_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_main_thread_dispatch_ms {
+        report.push_str(&format!("preview_main_thread_dispatch_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_texture_apply_ms {
+        report.push_str(&format!("preview_texture_apply_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.main_loop_settle_ms {
+        report.push_str(&format!("main_loop_settle_ms={:.3}\n", v));
+    }
+    report.push_str(&format!("TOTAL {:>8.3}ms\n\n", trace.total_ms()));
+
+    write_timing_report(&report);
+}
+
+fn emit_full_view_report(trace: &FullViewTrace) {
+    let mut report = String::new();
+    report.push_str(&format!(
+        "FULLVIEW {} | {} | outcome={}\n",
+        trace.id, trace.path, trace.outcome
+    ));
+    if let Some(v) = trace.displayed_ms {
+        report.push_str(&format!("{:>8.3}ms fullview_displayed\n", v));
+    }
+    report.push_str("METRICS\n");
+    report.push_str(&format!(
+        "active_thumbnail_jobs_at_activate={}\n",
+        trace.active_thumbnail_jobs_at_activate
+    ));
+    report.push_str(&format!(
+        "active_preview_jobs_at_activate={}\n",
+        trace.active_preview_jobs_at_activate
+    ));
+    if let Some(v) = trace.preview_queue_wait_ms {
+        report.push_str(&format!("preview_queue_wait_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_file_open_ms {
+        report.push_str(&format!("preview_file_open_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_decode_ms {
+        report.push_str(&format!("preview_decode_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_texture_create_ms {
+        report.push_str(&format!("preview_texture_create_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_worker_total_ms {
+        report.push_str(&format!("preview_worker_total_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_main_thread_dispatch_ms {
+        report.push_str(&format!("preview_main_thread_dispatch_ms={:.3}\n", v));
+    }
+    if let Some(v) = trace.preview_texture_apply_ms {
+        report.push_str(&format!("preview_texture_apply_ms={:.3}\n", v));
+    }
+    report.push_str(&format!("TOTAL {:>8.3}ms\n\n", trace.total_ms()));
+
+    write_timing_report(&report);
+}
+
+fn mark_click_step(trace_state: &Rc<RefCell<Option<ClickTrace>>>, click_id: u64, step: &str) {
+    if let Some(trace) = trace_state.borrow_mut().as_mut() {
+        if trace.id == click_id && !trace.finished {
+            trace.mark_step(step);
+        }
+    }
+}
+
+fn try_finalize_click_trace(trace_state: &Rc<RefCell<Option<ClickTrace>>>, click_id: u64) {
+    let should_schedule = {
+        let mut state = trace_state.borrow_mut();
+        if let Some(trace) = state.as_mut() {
+            if trace.id == click_id
+                && trace.preview_done
+                && trace.metadata_done
+                && !trace.finished
+                && !trace.finalize_scheduled
+            {
+                trace.finalize_scheduled = true;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+
+    if !should_schedule {
+        return;
+    }
+
+    // Wait roughly one frame to allow the latest UI updates to paint,
+    // without relying on low-priority idle handlers that can starve.
+    let trace_state_idle = trace_state.clone();
+    glib::timeout_add_local_once(Duration::from_millis(16), move || {
+        if let Some(trace) = trace_state_idle.borrow_mut().as_mut() {
+            if trace.id == click_id
+                && trace.preview_done
+                && trace.metadata_done
+                && !trace.finished
+            {
+                let ui_idle_ms = trace.started.elapsed().as_secs_f64() * 1000.0;
+                trace.mark_step("ui_idle_settled");
+                if let Some(preview_ms) = trace.preview_displayed_at_ms {
+                    trace.main_loop_settle_ms = Some((ui_idle_ms - preview_ms).max(0.0));
+                }
+                trace.scan_buffer_depth_at_idle_settled =
+                    Some(SCAN_BUFFER_DEPTH.load(AtomicOrdering::Relaxed));
+                trace.idle_drain_scheduled_at_idle_settled =
+                    Some(SCAN_DRAIN_SCHEDULED.load(AtomicOrdering::Relaxed) != 0);
+                trace.outcome = "done".to_string();
+                trace.finished = true;
+                emit_click_report(trace);
+            }
+        }
+    });
+}
 
 // ---------------------------------------------------------------------------
 // UI construction
@@ -79,7 +463,7 @@ fn build_ui(app: &adw::Application) {
     let hash_cache_recv = hash_cache.clone();
 
     /// Maximum items drained from the buffer per idle tick.
-    const BATCH_SIZE: usize = 50;
+    const BATCH_SIZE: usize = SCAN_DRAIN_BATCH_SIZE as usize;
 
     let buffer: Rc<RefCell<VecDeque<ScanMessage>>> =
         Rc::new(RefCell::new(VecDeque::new()));
@@ -100,6 +484,7 @@ fn build_ui(app: &adw::Application) {
                 return;
             }
             *drain_scheduled.borrow_mut() = true;
+            SCAN_DRAIN_SCHEDULED.store(1, AtomicOrdering::Relaxed);
 
             let buffer = buffer.clone();
             let drain_scheduled = drain_scheduled.clone();
@@ -110,6 +495,7 @@ fn build_ui(app: &adw::Application) {
             let toast_recv = toast_recv.clone();
             glib::idle_add_local(move || {
                 *drain_scheduled.borrow_mut() = false;
+                SCAN_DRAIN_SCHEDULED.store(0, AtomicOrdering::Relaxed);
 
                 let mut batch: Vec<ScanMessage> =
                     Vec::with_capacity(BATCH_SIZE);
@@ -122,6 +508,9 @@ fn build_ui(app: &adw::Application) {
                             break;
                         }
                     }
+                }
+                if !batch.is_empty() {
+                    SCAN_BUFFER_DEPTH.fetch_sub(batch.len() as u64, AtomicOrdering::Relaxed);
                 }
 
                 // Collect enumerated paths for batch splice.
@@ -175,6 +564,7 @@ fn build_ui(app: &adw::Application) {
                 // Re-schedule if the buffer still has items.
                 if !buffer.borrow().is_empty() {
                     *drain_scheduled.borrow_mut() = true;
+                    SCAN_DRAIN_SCHEDULED.store(1, AtomicOrdering::Relaxed);
                     glib::ControlFlow::Continue
                 } else {
                     glib::ControlFlow::Break
@@ -189,6 +579,7 @@ fn build_ui(app: &adw::Application) {
     glib::MainContext::default().spawn_local(async move {
         while let Ok(msg) = receiver.recv().await {
             buffer_recv.borrow_mut().push_back(msg);
+            SCAN_BUFFER_DEPTH.fetch_add(1, AtomicOrdering::Relaxed);
             schedule_drain_recv();
         }
     });
@@ -500,6 +891,12 @@ fn build_ui(app: &adw::Application) {
         // The async callback uses this to detect stale (recycled) cells.
         unsafe { thumb_image.set_data("bound-path", path_str.clone()); }
 
+        // While preview loading is in flight, avoid all thumbnail work in bind,
+        // including synchronous cache reads/decodes, to reduce main-thread pressure.
+        if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0 {
+            return;
+        }
+
         // Try to load hash-based thumbnail synchronously first (instant if cached).
         let cached_hash = hash_cache_bind.borrow().get(&path_str).cloned();
         let already_loaded = if let Some(ref hash) = cached_hash {
@@ -515,12 +912,19 @@ fn build_ui(app: &adw::Application) {
         if !already_loaded {
             // Fall back to off-thread thumbnail generation via GLib's bounded thread pool.
             let path_for_thread = std::path::PathBuf::from(&path_str);
-            let task =
-                gio::spawn_blocking(move || thumbnails::ensure_thumbnail(&path_for_thread));
+            let task = gio::spawn_blocking(move || {
+                let _guard = AtomicTaskGuard::new(&ACTIVE_THUMBNAIL_TASKS);
+                thumbnails::ensure_thumbnail(&path_for_thread)
+            });
 
             let image_weak = thumb_image.downgrade();
             glib::MainContext::default().spawn_local(async move {
+                THUMB_UI_CALLBACKS_TOTAL.fetch_add(1, AtomicOrdering::Relaxed);
                 let Ok(maybe_cache) = task.await else { return };
+                if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0 {
+                    THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW.fetch_add(1, AtomicOrdering::Relaxed);
+                    return;
+                }
                 let Some(image) = image_weak.upgrade() else { return };
                 let is_current = unsafe {
                     image
@@ -942,7 +1346,41 @@ fn build_ui(app: &adw::Application) {
     grid_view.connect_activate(move |_, pos| {
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
             let path_str = item.string().to_string();
-            load_picture_async(&picture_for_grid, &path_str, None);
+            let full_view_id = FULL_VIEW_TRACE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+            let active_thumbnail_jobs_at_activate =
+                ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed);
+            let active_preview_jobs_at_activate =
+                ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed);
+            let trace = Rc::new(RefCell::new(FullViewTrace::new(
+                full_view_id,
+                path_str.clone(),
+                active_thumbnail_jobs_at_activate,
+                active_preview_jobs_at_activate,
+            )));
+            let trace_for_cb = trace.clone();
+
+            load_picture_async(
+                &picture_for_grid,
+                &path_str,
+                None,
+                Some(Box::new(move |metrics| {
+                    let mut t = trace_for_cb.borrow_mut();
+                    t.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
+                    t.preview_file_open_ms = Some(metrics.file_open_ms);
+                    t.preview_decode_ms = Some(metrics.decode_ms);
+                    t.preview_texture_create_ms = Some(metrics.texture_create_ms);
+                    t.preview_worker_total_ms = Some(metrics.worker_total_ms);
+                    t.preview_main_thread_dispatch_ms = Some(metrics.main_thread_dispatch_ms);
+                    t.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
+                    t.displayed_ms = Some(t.started.elapsed().as_secs_f64() * 1000.0);
+                    t.outcome = match metrics.outcome {
+                        PreviewLoadOutcome::Displayed => "done".to_string(),
+                        PreviewLoadOutcome::Failed => "failed".to_string(),
+                        PreviewLoadOutcome::StaleOrCancelled => "cancelled".to_string(),
+                    };
+                    emit_full_view_report(&t);
+                })),
+            );
         }
         stack_for_grid.set_visible_child_name("single");
         left_toggle_grid.set_active(false);
@@ -955,23 +1393,174 @@ fn build_ui(app: &adw::Application) {
     let meta_listbox_sel = meta_listbox.clone();
     let meta_preview_sel = meta_preview.clone();
     let meta_cache_sel = meta_cache.clone();
+    let click_trace_state: Rc<RefCell<Option<ClickTrace>>> = Rc::new(RefCell::new(None));
+    let click_trace_state_sel = click_trace_state.clone();
     selection_model.connect_selection_changed(move |model, _, _| {
         let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
             return;
         };
         let path_str = item.string().to_string();
+        let click_id = CLICK_TRACE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+        let active_thumbnail_jobs_at_click =
+            ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed);
+        let active_preview_jobs_at_click =
+            ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed);
+        let scan_buffer_depth_at_click = SCAN_BUFFER_DEPTH.load(AtomicOrdering::Relaxed);
+        let idle_drain_scheduled_at_click =
+            SCAN_DRAIN_SCHEDULED.load(AtomicOrdering::Relaxed) != 0;
+        let thumb_ui_callbacks_total_at_click =
+            THUMB_UI_CALLBACKS_TOTAL.load(AtomicOrdering::Relaxed);
+        let thumb_ui_callbacks_skipped_at_click =
+            THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW.load(AtomicOrdering::Relaxed);
+        let pending_idle_drain_cycles_est_at_click = if scan_buffer_depth_at_click == 0 {
+            0
+        } else {
+            scan_buffer_depth_at_click.div_ceil(SCAN_DRAIN_BATCH_SIZE)
+        };
+
+        {
+            let mut state = click_trace_state_sel.borrow_mut();
+            if let Some(prev) = state.as_mut() {
+                if !prev.finished {
+                    prev.mark_step("superseded_by_new_click");
+                    prev.outcome = "superseded".to_string();
+                    prev.finished = true;
+                    emit_click_report(prev);
+                }
+            }
+            let mut trace = ClickTrace::new(
+                click_id,
+                path_str.clone(),
+                active_thumbnail_jobs_at_click,
+                active_preview_jobs_at_click,
+                scan_buffer_depth_at_click,
+                idle_drain_scheduled_at_click,
+                pending_idle_drain_cycles_est_at_click,
+                thumb_ui_callbacks_total_at_click,
+                thumb_ui_callbacks_skipped_at_click,
+            );
+            trace.mark_step("selection_changed");
+            trace.mark_step(&format!(
+                "active_jobs_captured thumb={} preview={} scan_depth={} drain_scheduled={} thumb_cb_total={} thumb_cb_skipped={}",
+                active_thumbnail_jobs_at_click,
+                active_preview_jobs_at_click,
+                scan_buffer_depth_at_click,
+                idle_drain_scheduled_at_click,
+                thumb_ui_callbacks_total_at_click,
+                thumb_ui_callbacks_skipped_at_click
+            ));
+            *state = Some(trace);
+        }
+
+        mark_click_step(&click_trace_state_sel, click_id, "selected_item_resolved");
 
         // Load the preview image off-thread so the UI stays responsive.
         // Decode at 2× sidebar width (520px) for fast display on HiDPI.
-        load_picture_async(&meta_preview_sel, &path_str, Some(520));
-
-        // Use cached metadata from the DB (populated during scan).
+        mark_click_step(&click_trace_state_sel, click_id, "preview_load_dispatched");
+        PREVIEW_REQUEST_PENDING.store(1, AtomicOrdering::Relaxed);
+        SUPPRESS_SIDEBAR_DURING_PREVIEW.store(1, AtomicOrdering::Relaxed);
+        
+        // Load metadata asynchronously (cancellable if user navigates away).
+        mark_click_step(&click_trace_state_sel, click_id, "metadata_lookup_started");
         let cache = meta_cache_sel.borrow();
         let meta = cache
             .get(item.string().as_str())
             .cloned()
             .unwrap_or_default();
-        populate_metadata_sidebar(&meta_listbox_sel, &meta);
+        mark_click_step(&click_trace_state_sel, click_id, "metadata_lookup_finished");
+        mark_click_step(&click_trace_state_sel, click_id, "metadata_render_started");
+        
+        let click_trace_for_preview = click_trace_state_sel.clone();
+        let meta_listbox_for_metadata = meta_listbox_sel.clone();
+        let click_trace_for_metadata = click_trace_state_sel.clone();
+        
+        // Start metadata load in background (non-blocking).
+        load_metadata_async(
+            meta.clone(),
+            meta_listbox_for_metadata,
+            click_trace_for_metadata,
+            click_id,
+        );
+        load_picture_async(
+            &meta_preview_sel,
+            &path_str,
+            Some(520),
+            Some(Box::new(move |metrics| {
+                match metrics.outcome {
+                    PreviewLoadOutcome::Displayed => {
+                        PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
+                        SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
+                        if let Some(trace) = click_trace_for_preview.borrow_mut().as_mut() {
+                            if trace.id == click_id && !trace.finished {
+                                trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
+                                trace.preview_file_open_ms = Some(metrics.file_open_ms);
+                                trace.preview_decode_ms = Some(metrics.decode_ms);
+                                trace.preview_texture_create_ms = Some(metrics.texture_create_ms);
+                                trace.preview_worker_total_ms = Some(metrics.worker_total_ms);
+                                trace.preview_main_thread_dispatch_ms =
+                                    Some(metrics.main_thread_dispatch_ms);
+                                trace.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
+                                // Mark preview display complete; metadata will complete separately.
+                                let thumb_total_now =
+                                    THUMB_UI_CALLBACKS_TOTAL.load(AtomicOrdering::Relaxed);
+                                let thumb_skipped_now =
+                                    THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW
+                                        .load(AtomicOrdering::Relaxed);
+                                trace.thumb_ui_callbacks_total_until_preview = Some(
+                                    thumb_total_now.saturating_sub(trace.thumb_ui_callbacks_total_at_click),
+                                );
+                                trace.thumb_ui_callbacks_skipped_until_preview = Some(
+                                    thumb_skipped_now.saturating_sub(trace.thumb_ui_callbacks_skipped_at_click),
+                                );
+                                trace.mark_step("preview_displayed");
+                                trace.preview_displayed_at_ms =
+                                    Some(trace.started.elapsed().as_secs_f64() * 1000.0);
+                                trace.preview_done = true;
+                            }
+                        }
+                    }
+                    PreviewLoadOutcome::Failed => {
+                        PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
+                        SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
+                        if let Some(trace) = click_trace_for_preview.borrow_mut().as_mut() {
+                            if trace.id == click_id && !trace.finished {
+                                trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
+                                trace.preview_file_open_ms = Some(metrics.file_open_ms);
+                                trace.preview_decode_ms = Some(metrics.decode_ms);
+                                trace.preview_texture_create_ms = Some(metrics.texture_create_ms);
+                                trace.preview_worker_total_ms = Some(metrics.worker_total_ms);
+                                trace.preview_main_thread_dispatch_ms =
+                                    Some(metrics.main_thread_dispatch_ms);
+                                trace.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
+                                trace.mark_step("preview_failed");
+                                trace.preview_done = true;
+                                // Metadata load continues in background; don't finalize yet.
+                            }
+                        }
+                    }
+                    PreviewLoadOutcome::StaleOrCancelled => {
+                        PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
+                        SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
+                        if let Some(trace) = click_trace_for_preview.borrow_mut().as_mut() {
+                            if trace.id == click_id && !trace.finished {
+                                trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
+                                trace.preview_file_open_ms = Some(metrics.file_open_ms);
+                                trace.preview_decode_ms = Some(metrics.decode_ms);
+                                trace.preview_texture_create_ms = Some(metrics.texture_create_ms);
+                                trace.preview_worker_total_ms = Some(metrics.worker_total_ms);
+                                trace.preview_main_thread_dispatch_ms =
+                                    Some(metrics.main_thread_dispatch_ms);
+                                trace.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
+                                trace.mark_step("preview_stale_or_cancelled");
+                                trace.outcome = "cancelled".to_string();
+                                trace.finished = true;
+                                emit_click_report(trace);
+                            }
+                        }
+                    }
+                }
+            })),
+        );
     });
 
     // -----------------------------------------------------------------------
@@ -1125,6 +1714,7 @@ fn build_ui(app: &adw::Application) {
                     load_picture_async(
                         &picture_for_keys,
                         &item.string().to_string(),
+                        None,
                         None,
                     );
                 }
@@ -1299,7 +1889,12 @@ fn format_generation_command(meta: &ImageMetadata) -> String {
 /// When `max_dimension` is `Some(dim)`, the image is decoded at a reduced
 /// resolution (longest side capped to `dim` pixels) for faster display.
 /// Pass `None` to decode at the file's native resolution.
-fn load_picture_async(picture: &Picture, path: &str, max_dimension: Option<i32>) {
+fn load_picture_async(
+    picture: &Picture,
+    path: &str,
+    max_dimension: Option<i32>,
+    on_complete: Option<Box<dyn Fn(PreviewLoadMetrics) + 'static>>,
+) {
     // Clear immediately so the user sees something is happening.
     picture.set_paintable(gdk::Paintable::NONE);
 
@@ -1321,32 +1916,165 @@ fn load_picture_async(picture: &Picture, path: &str, max_dimension: Option<i32>)
     let path_check = path_owned.clone();
     let cancel_bg = cancel.clone();
     let weak = picture.downgrade();
+    let enqueued_at = Instant::now();
+    let enqueued_at_main = enqueued_at;
     let task = gio::spawn_blocking(move || {
+        let worker_started_at = Instant::now();
+        let started_at = Instant::now();
+        let queue_wait_ms = started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0;
+        let _guard = AtomicTaskGuard::new(&ACTIVE_PREVIEW_TASKS);
+
         if cancel_bg.is_cancelled() {
-            return None;
+            let worker_total_ms = worker_started_at.elapsed().as_secs_f64() * 1000.0;
+            let worker_done_since_enqueue_ms =
+                worker_started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0
+                    + worker_total_ms;
+            return (
+                None,
+                PreviewLoadMetrics {
+                    outcome: PreviewLoadOutcome::StaleOrCancelled,
+                    queue_wait_ms,
+                    file_open_ms: 0.0,
+                    decode_ms: 0.0,
+                    texture_create_ms: 0.0,
+                    worker_total_ms,
+                    worker_done_since_enqueue_ms,
+                    main_thread_dispatch_ms: 0.0,
+                    texture_apply_ms: 0.0,
+                },
+            );
         }
+
         let file = gio::File::for_path(&path_owned);
-        let stream = file.read(Some(&cancel_bg)).ok()?;
+        let file_open_started = Instant::now();
+        let Some(stream) = file.read(Some(&cancel_bg)).ok() else {
+            let worker_total_ms = worker_started_at.elapsed().as_secs_f64() * 1000.0;
+            let worker_done_since_enqueue_ms =
+                worker_started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0
+                    + worker_total_ms;
+            return (
+                None,
+                PreviewLoadMetrics {
+                    outcome: PreviewLoadOutcome::Failed,
+                    queue_wait_ms,
+                    file_open_ms: file_open_started.elapsed().as_secs_f64() * 1000.0,
+                    decode_ms: 0.0,
+                    texture_create_ms: 0.0,
+                    worker_total_ms,
+                    worker_done_since_enqueue_ms,
+                    main_thread_dispatch_ms: 0.0,
+                    texture_apply_ms: 0.0,
+                },
+            );
+        };
+        let file_open_ms = file_open_started.elapsed().as_secs_f64() * 1000.0;
+
+        let decode_started = Instant::now();
         let pixbuf = match max_dimension {
             Some(dim) => gdk_pixbuf::Pixbuf::from_stream_at_scale(
                 &stream, dim, dim, true, Some(&cancel_bg),
             ),
             None => gdk_pixbuf::Pixbuf::from_stream(&stream, Some(&cancel_bg)),
         };
-        pixbuf.ok().map(|pb| gdk::Texture::for_pixbuf(&pb))
+        let decode_ms = decode_started.elapsed().as_secs_f64() * 1000.0;
+
+        match pixbuf {
+            Ok(pb) => {
+                let texture_create_started = Instant::now();
+                let tex = gdk::Texture::for_pixbuf(&pb);
+                let texture_create_ms =
+                    texture_create_started.elapsed().as_secs_f64() * 1000.0;
+                let worker_total_ms = worker_started_at.elapsed().as_secs_f64() * 1000.0;
+                let worker_done_since_enqueue_ms =
+                    worker_started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0
+                        + worker_total_ms;
+                (
+                    Some(tex),
+                    PreviewLoadMetrics {
+                        outcome: PreviewLoadOutcome::Displayed,
+                        queue_wait_ms,
+                        file_open_ms,
+                        decode_ms,
+                        texture_create_ms,
+                        worker_total_ms,
+                        worker_done_since_enqueue_ms,
+                        main_thread_dispatch_ms: 0.0,
+                        texture_apply_ms: 0.0,
+                    },
+                )
+            }
+            Err(_) => {
+                let worker_total_ms = worker_started_at.elapsed().as_secs_f64() * 1000.0;
+                let worker_done_since_enqueue_ms =
+                    worker_started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0
+                        + worker_total_ms;
+                (
+                    None,
+                    PreviewLoadMetrics {
+                        outcome: PreviewLoadOutcome::Failed,
+                        queue_wait_ms,
+                        file_open_ms,
+                        decode_ms,
+                        texture_create_ms: 0.0,
+                        worker_total_ms,
+                        worker_done_since_enqueue_ms,
+                        main_thread_dispatch_ms: 0.0,
+                        texture_apply_ms: 0.0,
+                    },
+                )
+            }
+        }
     });
     glib::MainContext::default().spawn_local(async move {
-        let Ok(maybe_tex) = task.await else { return };
-        let Some(pic) = weak.upgrade() else { return };
+        let mut on_complete = on_complete;
+
+        let Ok((maybe_tex, mut metrics)) = task.await else {
+            if let Some(cb) = on_complete.take() {
+                cb(PreviewLoadMetrics {
+                    outcome: PreviewLoadOutcome::Failed,
+                    queue_wait_ms: 0.0,
+                    file_open_ms: 0.0,
+                    decode_ms: 0.0,
+                    texture_create_ms: 0.0,
+                    worker_total_ms: 0.0,
+                    worker_done_since_enqueue_ms: 0.0,
+                    main_thread_dispatch_ms: 0.0,
+                    texture_apply_ms: 0.0,
+                });
+            }
+            return;
+        };
+        let callback_started_since_enqueue_ms =
+            Instant::now().duration_since(enqueued_at_main).as_secs_f64() * 1000.0;
+        metrics.main_thread_dispatch_ms =
+            (callback_started_since_enqueue_ms - metrics.worker_done_since_enqueue_ms).max(0.0);
+        let Some(pic) = weak.upgrade() else {
+            if let Some(cb) = on_complete.take() {
+                metrics.outcome = PreviewLoadOutcome::StaleOrCancelled;
+                cb(metrics);
+            }
+            return;
+        };
         // Check the widget is still expecting this path.
         let is_current = unsafe {
             pic.data::<String>("loading-path")
                 .map(|p| p.as_ref() == &path_check)
                 .unwrap_or(false)
         };
-        if !is_current { return; }
+        if !is_current {
+            if let Some(cb) = on_complete.take() {
+                metrics.outcome = PreviewLoadOutcome::StaleOrCancelled;
+                cb(metrics);
+            }
+            return;
+        }
         if let Some(tex) = maybe_tex {
+            let apply_started = Instant::now();
             pic.set_paintable(Some(&tex));
+            metrics.texture_apply_ms = apply_started.elapsed().as_secs_f64() * 1000.0;
+        }
+        if let Some(cb) = on_complete.take() {
+            cb(metrics);
         }
     });
 }
@@ -1361,36 +2089,87 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
         listbox.remove(&child);
     }
 
-    let rows: &[(&str, Option<&str>)] = &[
+    // Short fields: render as ActionRow title+subtitle (fast, text is short).
+    let short_rows: &[(&str, Option<&str>)] = &[
         ("Make", meta.camera_make.as_deref()),
         ("Model", meta.camera_model.as_deref()),
         ("Exposure", meta.exposure.as_deref()),
         ("ISO", meta.iso.as_deref()),
+    ];
+
+    for (key, maybe_val) in short_rows {
+        let Some(val) = maybe_val else { continue };
+        let row = adw::ActionRow::new();
+        row.set_title(key);
+        row.set_subtitle(&glib::markup_escape_text(val));
+        row.set_subtitle_selectable(true);
+        let copy_text = val.to_string();
+        let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
+        copy_button.add_css_class("flat");
+        copy_button.set_tooltip_text(Some("Copy"));
+        copy_button.connect_clicked(move |btn| {
+            gtk4::prelude::WidgetExt::display(btn).clipboard().set_text(&copy_text);
+        });
+        row.add_suffix(&copy_button);
+        listbox.append(&row);
+    }
+
+    // Long / potentially large fields: use a TextView so Pango only lays out
+    // visible lines (lazy), instead of forcing full layout on the main thread.
+    let long_rows: &[(&str, Option<&str>)] = &[
         ("Prompt", meta.prompt.as_deref()),
         ("Neg. Prompt", meta.negative_prompt.as_deref()),
         ("Parameters", meta.raw_parameters.as_deref()),
         ("Workflow", meta.workflow_json.as_deref()),
     ];
 
-    for (key, maybe_val) in rows {
+    for (key, maybe_val) in long_rows {
         let Some(val) = maybe_val else { continue };
-        let row = adw::ActionRow::new();
-        row.set_title(key);
-        row.set_subtitle(&glib::markup_escape_text(val));
-        row.set_subtitle_selectable(true);
+
+        // Outer box acts as a list row container.
+        let row_box = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+        row_box.set_margin_top(8);
+        row_box.set_margin_bottom(4);
+        row_box.set_margin_start(12);
+        row_box.set_margin_end(8);
+
+        // Header: label + copy button.
+        let header_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        header_box.set_hexpand(true);
+
+        let key_label = gtk4::Label::new(Some(key));
+        key_label.add_css_class("caption-heading");
+        key_label.set_halign(gtk4::Align::Start);
+        key_label.set_hexpand(true);
+        header_box.append(&key_label);
 
         let copy_text = val.to_string();
         let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
         copy_button.add_css_class("flat");
         copy_button.set_tooltip_text(Some("Copy"));
         copy_button.connect_clicked(move |btn| {
-            gtk4::prelude::WidgetExt::display(btn)
-                .clipboard()
-                .set_text(&copy_text);
+            gtk4::prelude::WidgetExt::display(btn).clipboard().set_text(&copy_text);
         });
-        row.add_suffix(&copy_button);
+        header_box.append(&copy_button);
+        row_box.append(&header_box);
 
-        listbox.append(&row);
+        // TextView: non-editable, word-wrapped; Pango layout is lazy/incremental.
+        let text_view = gtk4::TextView::new();
+        text_view.set_editable(false);
+        text_view.set_cursor_visible(false);
+        text_view.set_wrap_mode(gtk4::WrapMode::WordChar);
+        text_view.set_hexpand(true);
+        text_view.add_css_class("caption");
+        text_view.add_css_class("metadata-text-view");
+        text_view.buffer().set_text(val);
+        row_box.append(&text_view);
+
+        // Wrap in a ListBoxRow.
+        let list_row = gtk4::ListBoxRow::new();
+        list_row.set_child(Some(&row_box));
+        list_row.set_activatable(false);
+        list_row.set_selectable(false);
+        listbox.append(&list_row);
     }
 
     if listbox.first_child().is_none() {
@@ -1398,6 +2177,34 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
         empty.set_title("No metadata found");
         listbox.append(&empty);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Asynchronous metadata sidebar loading (cancellable)
+// ---------------------------------------------------------------------------
+
+/// Loads metadata asynchronously and populates the sidebar when complete.
+/// If a new click supersedes this load, the trace state will have changed
+/// and the load will be silently skipped.
+fn load_metadata_async(
+    metadata: ImageMetadata,
+    listbox: gtk4::ListBox,
+    trace_state: Rc<RefCell<Option<ClickTrace>>>,
+    click_id: u64,
+) {
+    glib::MainContext::default().spawn_local(async move {
+        // Populate the sidebar (this is fast, all UI calls).
+        populate_metadata_sidebar(&listbox, &metadata);
+
+        // Mark metadata as complete in trace if it's still the current click.
+        if let Some(trace) = trace_state.borrow_mut().as_mut() {
+            if trace.id == click_id && !trace.finished {
+                trace.mark_step("metadata_shown");
+                trace.metadata_done = true;
+                try_finalize_click_trace(&trace_state, click_id);
+            }
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------

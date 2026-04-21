@@ -5,9 +5,14 @@ tmp/
 # .gitignore
 
 # Ignore the extraction cache (non-portable absolute paths/large binary data)
-graphify-out/cache/
+src/graphify-out/cache
+graphify-out/cache
+!graphify-out/cache/README.md
+!src/graphify-out/cache/README.md
+!graphify-out/cache/graph.json
+!src/graphify-out/cache/graph.json
+!graphify-out/cache/graph.html
+!src/graphify-out/cache/graph.html
+!graphify-out/cache/GRAPH_REPORT.md
+!src/graphify-out/cache/GRAPH_REPORT.md
 
-# Do NOT ignore these (recommended to commit for team collaboration):
-# graphify-out/graph.json
-# graphify-out/graph.html
-# graphify-out/GRAPH_REPORT.md
