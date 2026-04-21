@@ -1,18 +1,18 @@
-/target
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Editor and IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Project-local working dirs
 /.plan/
-tmp/
+/tmp/
 
-# .gitignore
-
-# Ignore the extraction cache (non-portable absolute paths/large binary data)
-src/graphify-out/cache
-graphify-out/cache
-!graphify-out/cache/README.md
-!src/graphify-out/cache/README.md
-!graphify-out/cache/graph.json
-!src/graphify-out/cache/graph.json
-!graphify-out/cache/graph.html
-!src/graphify-out/cache/graph.html
-!graphify-out/cache/GRAPH_REPORT.md
-!src/graphify-out/cache/GRAPH_REPORT.md
-
+# Graphify knowledge graph output (local tooling, not source)
+graphify-out/
+graphify-out_*/
