@@ -51,6 +51,16 @@ pub fn scan_directory(
         // Sort once and reuse the same order for enumeration and enrichment.
         sort_paths(&mut paths, &sort_key);
 
+        if sender
+            .send_blocking(ScanMessage::ScanStarted {
+                total_count: paths.len() as u32,
+                generation,
+            })
+            .is_err()
+        {
+            return;
+        }
+
         for path in &paths {
             let path_str = path.to_string_lossy().into_owned();
             if sender
@@ -78,11 +88,15 @@ pub fn scan_directory(
         // Phase 2: enrich each file in sort order.
         for path in &paths {
             let path_str = path.to_string_lossy().into_owned();
-            let maybe_row = db::ensure_indexed(&conn, path);
+            let maybe_row = db::ensure_indexed_with_outcome(&conn, path);
 
-            let (hash, meta) = match maybe_row {
-                Some(row) => (row.hash, row.meta),
-                None => (String::new(), Default::default()),
+            let (hash, meta, indexed_from_cache) = match maybe_row {
+                Some((row, outcome)) => (
+                    row.hash,
+                    row.meta,
+                    matches!(outcome, db::IndexOutcome::Cached),
+                ),
+                None => (String::new(), Default::default(), false),
             };
 
             if sender
@@ -90,6 +104,7 @@ pub fn scan_directory(
                     path: path_str,
                     hash,
                     meta,
+                    indexed_from_cache,
                     generation,
                 })
                 .is_err()

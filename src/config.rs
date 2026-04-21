@@ -5,6 +5,11 @@ pub struct AppConfig {
     pub left_pane_pos: Option<i32>,
     pub right_pane_pos: Option<i32>,
     pub meta_pane_pos: Option<i32>,
+    pub left_pane_width_pct: Option<f64>,
+    pub right_pane_width_pct: Option<f64>,
+    pub meta_pane_height_pct: Option<f64>,
+    pub left_sidebar_visible: Option<bool>,
+    pub right_sidebar_visible: Option<bool>,
     pub sort_key: Option<String>,
     pub search_text: Option<String>,
     pub thumbnail_size: Option<i32>,
@@ -16,6 +21,11 @@ pub fn load() -> AppConfig {
     let mut left_pane_pos = None;
     let mut right_pane_pos = None;
     let mut meta_pane_pos = None;
+    let mut left_pane_width_pct = None;
+    let mut right_pane_width_pct = None;
+    let mut meta_pane_height_pct = None;
+    let mut left_sidebar_visible = None;
+    let mut right_sidebar_visible = None;
     let mut sort_key = None;
     let mut search_text = None;
     let mut thumbnail_size = None;
@@ -32,6 +42,16 @@ pub fn load() -> AppConfig {
                 right_pane_pos = val.trim().parse::<i32>().ok();
             } else if let Some(val) = line.strip_prefix("meta_pane_pos: ") {
                 meta_pane_pos = val.trim().parse::<i32>().ok();
+            } else if let Some(val) = line.strip_prefix("left_pane_width_pct: ") {
+                left_pane_width_pct = val.trim().parse::<f64>().ok();
+            } else if let Some(val) = line.strip_prefix("right_pane_width_pct: ") {
+                right_pane_width_pct = val.trim().parse::<f64>().ok();
+            } else if let Some(val) = line.strip_prefix("meta_pane_height_pct: ") {
+                meta_pane_height_pct = val.trim().parse::<f64>().ok();
+            } else if let Some(val) = line.strip_prefix("left_sidebar_visible: ") {
+                left_sidebar_visible = val.trim().parse::<bool>().ok();
+            } else if let Some(val) = line.strip_prefix("right_sidebar_visible: ") {
+                right_sidebar_visible = val.trim().parse::<bool>().ok();
             } else if let Some(val) = line.strip_prefix("sort_key: ") {
                 let val = val.trim();
                 if !val.is_empty() {
@@ -50,6 +70,11 @@ pub fn load() -> AppConfig {
         left_pane_pos,
         right_pane_pos,
         meta_pane_pos,
+        left_pane_width_pct,
+        right_pane_width_pct,
+        meta_pane_height_pct,
+        left_sidebar_visible,
+        right_sidebar_visible,
         sort_key,
         search_text,
         thumbnail_size,
@@ -62,6 +87,11 @@ pub fn save(
     left_pane_pos: i32,
     right_pane_pos: i32,
     meta_pane_pos: i32,
+    left_pane_width_pct: f64,
+    right_pane_width_pct: f64,
+    meta_pane_height_pct: f64,
+    left_sidebar_visible: bool,
+    right_sidebar_visible: bool,
     sort_key: &str,
     search_text: &str,
     thumbnail_size: i32,
@@ -74,11 +104,16 @@ pub fn save(
         .map(|p| p.display().to_string())
         .unwrap_or_default();
     let content = format!(
-        "last_folder: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nsort_key: {}\nsearch_text: {}\nthumbnail_size: {}\n",
+        "last_folder: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\nsort_key: {}\nsearch_text: {}\nthumbnail_size: {}\n",
         folder_str,
         left_pane_pos,
         right_pane_pos,
         meta_pane_pos,
+        left_pane_width_pct,
+        right_pane_width_pct,
+        meta_pane_height_pct,
+        left_sidebar_visible,
+        right_sidebar_visible,
         sort_key,
         search_text,
         thumbnail_size,

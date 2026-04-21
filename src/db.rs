@@ -27,6 +27,12 @@ pub struct ImageRow {
     pub meta: ImageMetadata,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexOutcome {
+    Cached,
+    Generated,
+}
+
 // ---------------------------------------------------------------------------
 // Database path & connection
 // ---------------------------------------------------------------------------
@@ -249,26 +255,29 @@ pub fn prune_missing(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Ensures the image at `path` is fully indexed: hashed, metadata extracted,
-/// thumbnail generated, and stored in the DB. Returns the `ImageRow`.
-pub fn ensure_indexed(conn: &Connection, path: &Path) -> Option<ImageRow> {
+/// Ensures the image at `path` is fully indexed (hash, metadata, thumbnail),
+/// and returns whether work came from cache or required fresh generation.
+pub fn ensure_indexed_with_outcome(
+    conn: &Connection,
+    path: &Path,
+) -> Option<(ImageRow, IndexOutcome)> {
     // Fast path: DB cache hit with matching mtime+size.
     if let Some(cached) = get_cached(conn, path) {
         // Also ensure the thumbnail file still exists on disk.
         let thumb = crate::thumbnails::hash_thumb_path(&cached.hash);
         if thumb.exists() {
-            return Some(cached);
+            return Some((cached, IndexOutcome::Cached));
         }
         // Thumbnail missing — regenerate it but keep cached metadata.
         crate::thumbnails::generate_hash_thumbnail(path, &cached.hash);
-        return Some(cached);
+        return Some((cached, IndexOutcome::Generated));
     }
 
     // Slow path: hash + extract + thumbnail + DB upsert.
     let row = build_index_row(conn, path)?;
 
     let _ = upsert(conn, &row);
-    Some(row)
+    Some((row, IndexOutcome::Generated))
 }
 
 /// Forces full re-indexing even when mtime + size are unchanged.

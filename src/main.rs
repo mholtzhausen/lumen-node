@@ -24,7 +24,7 @@ use gtk4::{
     GestureClick,
     GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Paned, Picture,
     PopoverMenu, ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
-    Spinner, StringObject, TreeExpander, TreeListModel, TreeListRow,
+    ProgressBar, StringObject, TreeExpander, TreeListModel, TreeListRow,
 };
 
 static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -39,6 +39,140 @@ static SCAN_BUFFER_DEPTH: AtomicU64 = AtomicU64::new(0);
 static SCAN_DRAIN_SCHEDULED: AtomicU64 = AtomicU64::new(0);
 static DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE: AtomicU64 = AtomicU64::new(0);
 const SCAN_DRAIN_BATCH_SIZE: u64 = 50;
+const DEFAULT_WINDOW_WIDTH: i32 = 1280;
+const DEFAULT_WINDOW_HEIGHT: i32 = 800;
+const MIN_LEFT_PANE_PX: i32 = 120;
+const MIN_RIGHT_PANE_PX: i32 = 180;
+const MIN_CENTER_PANE_PX: i32 = 260;
+const MIN_META_SPLIT_PX: i32 = 120;
+const ENUM_PHASE_WEIGHT: f64 = 0.10;
+const THUMB_PHASE_WEIGHT: f64 = 0.35;
+const ENRICH_PHASE_WEIGHT: f64 = 0.55;
+
+fn clamp_f64(value: f64, min: f64, max: f64) -> f64 {
+    value.max(min).min(max)
+}
+
+fn pct_to_px(total: i32, pct: f64) -> i32 {
+    let total = total.max(1) as f64;
+    ((clamp_f64(pct, 0.0, 100.0) / 100.0) * total).round() as i32
+}
+
+fn px_to_pct(px: i32, total: i32) -> f64 {
+    let total = total.max(1) as f64;
+    clamp_f64(((px.max(0) as f64) / total) * 100.0, 0.0, 100.0)
+}
+
+#[derive(Default)]
+struct ScanProgressState {
+    generation: u64,
+    total_files: u32,
+    enumerated_done: u32,
+    thumbnails_ready_done: u32,
+    enriched_done: u32,
+    enriched_generated: u32,
+    enriched_cached: u32,
+    folder_image_count: u32,
+    folder_total_size_bytes: u64,
+    visible: bool,
+}
+
+impl ScanProgressState {
+    fn start_pending(&mut self, generation: u64) {
+        self.generation = generation;
+        self.total_files = 0;
+        self.enumerated_done = 0;
+        self.thumbnails_ready_done = 0;
+        self.enriched_done = 0;
+        self.enriched_generated = 0;
+        self.enriched_cached = 0;
+        self.visible = true;
+    }
+
+    fn begin_with_total(&mut self, generation: u64, total_files: u32) {
+        self.start_pending(generation);
+        self.total_files = total_files;
+    }
+
+    fn total_or_one(&self) -> u32 {
+        self.total_files.max(1)
+    }
+
+    fn overall_fraction(&self) -> f64 {
+        if self.total_files == 0 {
+            return 0.0;
+        }
+        let total = self.total_or_one() as f64;
+        let enum_fraction = (self.enumerated_done as f64 / total).min(1.0);
+        let thumb_fraction = (self.thumbnails_ready_done as f64 / total).min(1.0);
+        let enrich_fraction = (self.enriched_done as f64 / total).min(1.0);
+        (ENUM_PHASE_WEIGHT * enum_fraction
+            + THUMB_PHASE_WEIGHT * thumb_fraction
+            + ENRICH_PHASE_WEIGHT * enrich_fraction)
+            .min(1.0)
+    }
+
+    fn status_text(&self) -> String {
+        if !self.visible {
+            return format!(
+                "Images {} | Folder size {}",
+                self.folder_image_count,
+                human_readable_bytes(self.folder_total_size_bytes)
+            );
+        }
+        format!(
+            "Enum {}/{} | Thumbs {}/{} | Index {}/{} (gen {}, cached {})",
+            self.enumerated_done,
+            self.total_files,
+            self.thumbnails_ready_done,
+            self.total_files,
+            self.enriched_done,
+            self.total_files,
+            self.enriched_generated,
+            self.enriched_cached
+        )
+    }
+}
+
+fn human_readable_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit_idx = 0;
+    while value >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit_idx += 1;
+    }
+    if unit_idx == 0 {
+        format!("{} {}", bytes, UNITS[unit_idx])
+    } else {
+        format!("{value:.1} {}", UNITS[unit_idx])
+    }
+}
+
+fn sync_progress_widgets(
+    state: &ScanProgressState,
+    progress_box: &gtk4::Box,
+    progress_label: &Label,
+    progress_bar: &ProgressBar,
+) {
+    progress_box.set_visible(true);
+    progress_label.set_text(&state.status_text());
+    progress_bar.set_visible(state.visible);
+
+    if !state.visible {
+        return;
+    }
+
+    let fraction = state.overall_fraction();
+    if state.total_files == 0 {
+        progress_bar.set_fraction(0.0);
+        progress_bar.set_text(Some("--%"));
+        return;
+    }
+
+    progress_bar.set_fraction(fraction);
+    progress_bar.set_text(Some(&format!("{:.0}%", fraction * 100.0)));
+}
 
 struct AtomicTaskGuard {
     counter: &'static AtomicU64,
@@ -210,15 +344,13 @@ fn load_grid_thumbnail(
     path_str: String,
     size: i32,
     hash_cache: Rc<RefCell<HashMap<String, String>>>,
+    generation_token: Rc<Cell<u64>>,
+    expected_generation: u64,
 ) {
     thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
     unsafe { thumb_image.set_data("bound-path", path_str.clone()); }
 
     if DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.load(AtomicOrdering::Relaxed) != 0 {
-        return;
-    }
-
-    if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0 {
         return;
     }
 
@@ -268,8 +400,7 @@ fn load_grid_thumbnail(
     glib::MainContext::default().spawn_local(async move {
         THUMB_UI_CALLBACKS_TOTAL.fetch_add(1, AtomicOrdering::Relaxed);
         let Ok((maybe_cache, resolved_hash)) = task.await else { return };
-        if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0 {
-            THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW.fetch_add(1, AtomicOrdering::Relaxed);
+        if generation_token.get() != expected_generation {
             return;
         }
         let Some(image) = image_weak.upgrade() else { return };
@@ -312,7 +443,22 @@ fn refresh_realized_grid_thumbnails(
                     .map(|path| path.as_ref().clone())
             };
             if let Some(path_str) = bound_path {
-                load_grid_thumbnail(&image, path_str, size, hash_cache.clone());
+                let generation_token = unsafe {
+                    image
+                        .data::<Rc<Cell<u64>>>("thumb-generation")
+                        .map(|token| token.as_ref().clone())
+                };
+                if let Some(generation_token) = generation_token {
+                    let expected_generation = generation_token.get();
+                    load_grid_thumbnail(
+                        &image,
+                        path_str,
+                        size,
+                        hash_cache.clone(),
+                        generation_token,
+                        expected_generation,
+                    );
+                }
             }
         }
     }
@@ -589,8 +735,24 @@ fn build_ui(app: &adw::Application) {
     // ViewStack — toggled programmatically (no visible tab switcher).
     let view_stack = adw::ViewStack::new();
 
-    // Scan-progress indicator (shown in header while a scan is running).
-    let spinner = Spinner::new();
+    // Reusable multi-phase progress indicator shown while scanning/indexing.
+    let progress_box = gtk4::Box::new(Orientation::Horizontal, 6);
+    progress_box.set_visible(true);
+    progress_box.set_halign(gtk4::Align::Start);
+    progress_box.set_valign(gtk4::Align::Center);
+    let progress_label = Label::new(Some("Scanning folder..."));
+    progress_label.add_css_class("caption");
+    progress_label.set_halign(gtk4::Align::Start);
+    let progress_bar = ProgressBar::new();
+    progress_bar.set_hexpand(false);
+    progress_bar.set_show_text(true);
+    progress_bar.set_width_request(180);
+    progress_bar.set_height_request(8);
+    progress_bar.set_text(Some("--%"));
+    progress_box.append(&progress_label);
+    progress_box.append(&progress_bar);
+    let progress_state: Rc<RefCell<ScanProgressState>> =
+        Rc::new(RefCell::new(ScanProgressState::default()));
 
     // Toast overlay wraps all main content for non-intrusive notifications.
     let toast_overlay = adw::ToastOverlay::new();
@@ -633,7 +795,6 @@ fn build_ui(app: &adw::Application) {
     // Receiver task: buffer messages and drain in idle-priority batches
     // -----------------------------------------------------------------------
     let list_store_recv = list_store.clone();
-    let spinner_recv = spinner.clone();
     let toast_recv = toast_overlay.clone();
     let meta_cache_recv = meta_cache.clone();
     let hash_cache_recv = hash_cache.clone();
@@ -642,6 +803,10 @@ fn build_ui(app: &adw::Application) {
     let scan_in_progress_recv = scan_in_progress.clone();
     let thumbnail_size_recv = thumbnail_size.clone();
     let realized_thumb_images_recv = realized_thumb_images.clone();
+    let progress_state_recv = progress_state.clone();
+    let progress_box_recv = progress_box.clone();
+    let progress_label_recv = progress_label.clone();
+    let progress_bar_recv = progress_bar.clone();
 
     /// Maximum items drained from the buffer per idle tick.
     const BATCH_SIZE: usize = SCAN_DRAIN_BATCH_SIZE as usize;
@@ -661,8 +826,11 @@ fn build_ui(app: &adw::Application) {
         let sort_fields_cache_recv = sort_fields_cache_recv.clone();
         let active_scan_generation_recv = active_scan_generation_recv.clone();
         let scan_in_progress_recv = scan_in_progress_recv.clone();
-        let spinner_recv = spinner_recv.clone();
         let toast_recv = toast_recv.clone();
+        let progress_state_recv = progress_state_recv.clone();
+        let progress_box_recv = progress_box_recv.clone();
+        let progress_label_recv = progress_label_recv.clone();
+        let progress_bar_recv = progress_bar_recv.clone();
         Rc::new(move || {
             if *drain_scheduled.borrow() {
                 return;
@@ -678,10 +846,13 @@ fn build_ui(app: &adw::Application) {
             let sort_fields_cache_recv = sort_fields_cache_recv.clone();
             let active_scan_generation_recv = active_scan_generation_recv.clone();
             let scan_in_progress_recv = scan_in_progress_recv.clone();
-            let spinner_recv = spinner_recv.clone();
             let toast_recv = toast_recv.clone();
             let thumbnail_size_recv = thumbnail_size_recv.clone();
             let realized_thumb_images_recv = realized_thumb_images_recv.clone();
+            let progress_state_recv = progress_state_recv.clone();
+            let progress_box_recv = progress_box_recv.clone();
+            let progress_label_recv = progress_label_recv.clone();
+            let progress_bar_recv = progress_bar_recv.clone();
             glib::idle_add_local(move || {
                 *drain_scheduled.borrow_mut() = false;
                 SCAN_DRAIN_SCHEDULED.store(0, AtomicOrdering::Relaxed);
@@ -706,10 +877,22 @@ fn build_ui(app: &adw::Application) {
                 let mut new_paths: Vec<StringObject> = Vec::new();
                 let mut scan_complete = false;
                 let mut unlock_thumbnail_dispatch = false;
+                let mut progress_changed = false;
                 let active_generation = active_scan_generation_recv.get();
 
                 for msg in batch {
                     match msg {
+                        ScanMessage::ScanStarted {
+                            total_count,
+                            generation,
+                        } => {
+                            if generation != active_generation {
+                                continue;
+                            }
+                            let mut progress = progress_state_recv.borrow_mut();
+                            progress.begin_with_total(generation, total_count);
+                            progress_changed = true;
+                        }
                         ScanMessage::ImageEnumerated { path, generation } => {
                             if generation != active_generation {
                                 continue;
@@ -719,34 +902,77 @@ fn build_ui(app: &adw::Application) {
                                 .entry(path.clone())
                                 .or_insert_with(|| compute_sort_fields(&path));
                             new_paths.push(StringObject::new(&path));
+                            let mut progress = progress_state_recv.borrow_mut();
+                            if progress.generation == generation {
+                                progress.enumerated_done = progress
+                                    .enumerated_done
+                                    .saturating_add(1)
+                                    .min(progress.total_or_one());
+                                progress_changed = true;
+                            }
                         }
                         ScanMessage::EnumerationComplete { generation } => {
                             if generation != active_generation {
                                 continue;
                             }
                             unlock_thumbnail_dispatch = true;
+                            let mut progress = progress_state_recv.borrow_mut();
+                            if progress.generation == generation {
+                                progress.enumerated_done = progress.total_files;
+                                progress_changed = true;
+                            }
                         }
                         ScanMessage::ImageEnriched {
                             path,
                             hash,
                             meta,
+                            indexed_from_cache,
                             generation,
                         } => {
                             if generation != active_generation {
                                 continue;
                             }
-                            if !hash.is_empty() {
+                            let has_thumbnail_hash = !hash.is_empty();
+                            if has_thumbnail_hash {
                                 hash_cache_recv
                                     .borrow_mut()
                                     .insert(path.clone(), hash);
                             }
                             meta_cache_recv.borrow_mut().insert(path, meta);
+                            let mut progress = progress_state_recv.borrow_mut();
+                            if progress.generation == generation {
+                                progress.enriched_done = progress
+                                    .enriched_done
+                                    .saturating_add(1)
+                                    .min(progress.total_or_one());
+                                if indexed_from_cache {
+                                    progress.enriched_cached =
+                                        progress.enriched_cached.saturating_add(1);
+                                } else {
+                                    progress.enriched_generated =
+                                        progress.enriched_generated.saturating_add(1);
+                                }
+                                if has_thumbnail_hash {
+                                    progress.thumbnails_ready_done = progress
+                                        .thumbnails_ready_done
+                                        .saturating_add(1)
+                                        .min(progress.total_or_one());
+                                }
+                                progress_changed = true;
+                            }
                         }
                         ScanMessage::ScanComplete { generation } => {
                             if generation != active_generation {
                                 continue;
                             }
                             scan_complete = true;
+                            let mut progress = progress_state_recv.borrow_mut();
+                            if progress.generation == generation {
+                                progress.enumerated_done = progress.total_files;
+                                progress.enriched_done = progress.total_files;
+                                progress.thumbnails_ready_done = progress.total_files;
+                                progress_changed = true;
+                            }
                         }
                     }
                 }
@@ -774,8 +1000,18 @@ fn build_ui(app: &adw::Application) {
                     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE
                         .store(0, AtomicOrdering::Relaxed);
                     scan_in_progress_recv.set(false);
-                    spinner_recv.stop();
                     let n = list_store_recv.n_items();
+                    let mut total_size_bytes = 0_u64;
+                    {
+                        let cache = sort_fields_cache_recv.borrow();
+                        for i in 0..list_store_recv.n_items() {
+                            if let Some(item) = list_store_recv.item(i).and_downcast::<StringObject>() {
+                                if let Some(fields) = cache.get(item.string().as_str()) {
+                                    total_size_bytes = total_size_bytes.saturating_add(fields.size);
+                                }
+                            }
+                        }
+                    }
                     let text = format!(
                         "Found {} image{}",
                         n,
@@ -784,6 +1020,36 @@ fn build_ui(app: &adw::Application) {
                     let toast = adw::Toast::new(&text);
                     toast.set_timeout(3);
                     toast_recv.add_toast(toast);
+
+                    let done_generation = active_generation;
+                    let progress_state_done = progress_state_recv.clone();
+                    let progress_box_done = progress_box_recv.clone();
+                    let progress_label_done = progress_label_recv.clone();
+                    let progress_bar_done = progress_bar_recv.clone();
+                    glib::timeout_add_local_once(Duration::from_millis(900), move || {
+                        let mut progress = progress_state_done.borrow_mut();
+                        if progress.generation == done_generation {
+                            progress.folder_image_count = n;
+                            progress.folder_total_size_bytes = total_size_bytes;
+                            progress.visible = false;
+                            sync_progress_widgets(
+                                &progress,
+                                &progress_box_done,
+                                &progress_label_done,
+                                &progress_bar_done,
+                            );
+                        }
+                    });
+                }
+
+                if progress_changed {
+                    let progress = progress_state_recv.borrow();
+                    sync_progress_widgets(
+                        &progress,
+                        &progress_box_recv,
+                        &progress_label_recv,
+                        &progress_bar_recv,
+                    );
                 }
 
                 // Re-schedule if the buffer still has items.
@@ -865,19 +1131,18 @@ fn build_ui(app: &adw::Application) {
     toolbar_center.append(&clear_btn);
     header_bar.set_title_widget(Some(&toolbar_center));
 
-    // Spinner in the end slot — visible while scanning.
-    header_bar.pack_end(&spinner);
-
     // Sidebar toggle buttons — collapse/expand left and right panels.
     let left_toggle = gtk4::ToggleButton::new();
     left_toggle.set_icon_name("sidebar-show-symbolic");
-    left_toggle.set_active(true);
+    let initial_left_sidebar_visible = app_config.left_sidebar_visible.unwrap_or(false);
+    left_toggle.set_active(initial_left_sidebar_visible);
     left_toggle.set_tooltip_text(Some("Toggle left panel"));
     header_bar.pack_start(&left_toggle);
 
     let right_toggle = gtk4::ToggleButton::new();
     right_toggle.set_icon_name("sidebar-show-right-symbolic");
-    right_toggle.set_active(true);
+    let initial_right_sidebar_visible = app_config.right_sidebar_visible.unwrap_or(true);
+    right_toggle.set_active(initial_right_sidebar_visible);
     right_toggle.set_tooltip_text(Some("Toggle right panel"));
     header_bar.pack_end(&right_toggle);
 
@@ -887,6 +1152,7 @@ fn build_ui(app: &adw::Application) {
     // --- Left sidebar: file system tree ---
     let left_sidebar = gtk4::Box::new(Orientation::Vertical, 0);
     left_sidebar.set_width_request(200);
+    left_sidebar.set_visible(initial_left_sidebar_visible);
 
     // Root items: home directory + real mount points.
     let tree_root = build_tree_root();
@@ -919,7 +1185,6 @@ fn build_ui(app: &adw::Application) {
 
     let start_scan_for_folder = {
         let list_store = list_store.clone();
-        let spinner = spinner.clone();
         let sender = sender.clone();
         let hash_cache = hash_cache.clone();
         let meta_cache = meta_cache.clone();
@@ -927,6 +1192,10 @@ fn build_ui(app: &adw::Application) {
         let sort_key = sort_key.clone();
         let active_scan_generation = active_scan_generation.clone();
         let scan_in_progress = scan_in_progress.clone();
+        let progress_state = progress_state.clone();
+        let progress_box = progress_box.clone();
+        let progress_label = progress_label.clone();
+        let progress_bar = progress_bar.clone();
         Rc::new(move |folder: std::path::PathBuf| {
             let generation = active_scan_generation
                 .get()
@@ -938,8 +1207,12 @@ fn build_ui(app: &adw::Application) {
             hash_cache.borrow_mut().clear();
             meta_cache.borrow_mut().clear();
             sort_fields_cache.borrow_mut().clear();
+            {
+                let mut progress = progress_state.borrow_mut();
+                progress.start_pending(generation);
+                sync_progress_widgets(&progress, &progress_box, &progress_label, &progress_bar);
+            }
             DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.store(1, AtomicOrdering::Relaxed);
-            spinner.start();
             scan_directory(
                 folder,
                 sender.clone(),
@@ -1137,6 +1410,8 @@ fn build_ui(app: &adw::Application) {
         cell_box.set_size_request(size + 4, size + 20);
         let thumb_image = Image::new();
         thumb_image.set_pixel_size(size);
+        let generation_token = Rc::new(Cell::new(0_u64));
+        unsafe { thumb_image.set_data("thumb-generation", generation_token); }
         realized_cell_boxes_setup.borrow_mut().push(cell_box.downgrade());
         realized_thumb_images_setup.borrow_mut().push(thumb_image.downgrade());
         let name_label = Label::new(None);
@@ -1171,13 +1446,37 @@ fn build_ui(app: &adw::Application) {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         name_label.set_text(&filename);
-        load_grid_thumbnail(&thumb_image, path_str, size, hash_cache_bind.clone());
+        let generation_token = unsafe {
+            thumb_image
+                .data::<Rc<Cell<u64>>>("thumb-generation")
+                .map(|token| token.as_ref().clone())
+        };
+        if let Some(generation_token) = generation_token {
+            let expected_generation = generation_token.get().saturating_add(1);
+            generation_token.set(expected_generation);
+            load_grid_thumbnail(
+                &thumb_image,
+                path_str,
+                size,
+                hash_cache_bind.clone(),
+                generation_token,
+                expected_generation,
+            );
+        }
     });
 
     factory.connect_unbind(|_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
         if let Some(cell_box) = list_item.child().and_downcast::<gtk4::Box>() {
             if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
+                let generation_token = unsafe {
+                    image
+                        .data::<Rc<Cell<u64>>>("thumb-generation")
+                        .map(|token| token.as_ref().clone())
+                };
+                if let Some(generation_token) = generation_token {
+                    generation_token.set(generation_token.get().saturating_add(1));
+                }
                 unsafe { image.steal_data::<String>("bound-path"); }
                 image.set_icon_name(Some("image-x-generic-symbolic"));
             }
@@ -1212,10 +1511,40 @@ fn build_ui(app: &adw::Application) {
     // --- Right sidebar: preview (top) + metadata list (bottom) ---
     let right_sidebar = gtk4::Box::new(Orientation::Vertical, 0);
     right_sidebar.set_width_request(260);
+    right_sidebar.set_visible(initial_right_sidebar_visible);
     right_sidebar.set_margin_top(0);
     right_sidebar.set_margin_bottom(0);
     right_sidebar.set_margin_start(0);
     right_sidebar.set_margin_end(0);
+
+    let startup_window_width = DEFAULT_WINDOW_WIDTH;
+    let startup_window_height = DEFAULT_WINDOW_HEIGHT;
+    let left_pane_start_px = app_config
+        .left_pane_width_pct
+        .map(|pct| pct_to_px(startup_window_width, pct))
+        .or(app_config.left_pane_pos)
+        .unwrap_or(220)
+        .clamp(
+            MIN_LEFT_PANE_PX,
+            startup_window_width - MIN_CENTER_PANE_PX - MIN_RIGHT_PANE_PX,
+        );
+    let right_pane_width_px = app_config
+        .right_pane_width_pct
+        .map(|pct| pct_to_px(startup_window_width, pct))
+        .unwrap_or_else(|| startup_window_width.saturating_sub(app_config.right_pane_pos.unwrap_or(800)));
+    let max_right_pane_width_px = startup_window_width
+        .saturating_sub(left_pane_start_px + MIN_CENTER_PANE_PX)
+        .max(MIN_RIGHT_PANE_PX);
+    let right_pane_width_px = right_pane_width_px.clamp(MIN_RIGHT_PANE_PX, max_right_pane_width_px);
+    let inner_pane_start_px = startup_window_width
+        .saturating_sub(left_pane_start_px + right_pane_width_px)
+        .max(MIN_CENTER_PANE_PX);
+    let meta_pane_start_px = app_config
+        .meta_pane_height_pct
+        .map(|pct| pct_to_px(startup_window_height, pct))
+        .or(app_config.meta_pane_pos)
+        .unwrap_or(200)
+        .clamp(MIN_META_SPLIT_PX, startup_window_height - MIN_META_SPLIT_PX);
 
     // Top pane: image preview
     let meta_preview = Picture::new();
@@ -1253,7 +1582,7 @@ fn build_ui(app: &adw::Application) {
     meta_paned.set_resize_end_child(true);
     meta_paned.set_shrink_start_child(false);
     meta_paned.set_shrink_end_child(false);
-    meta_paned.set_position(app_config.meta_pane_pos.unwrap_or(200));
+    meta_paned.set_position(meta_pane_start_px);
     right_sidebar.append(&meta_paned);
 
     // -----------------------------------------------------------------------
@@ -1607,6 +1936,9 @@ fn build_ui(app: &adw::Application) {
     let meta_listbox_sel = meta_listbox.clone();
     let meta_preview_sel = meta_preview.clone();
     let meta_cache_sel = meta_cache.clone();
+    let realized_thumb_images_sel = realized_thumb_images.clone();
+    let thumbnail_size_sel = thumbnail_size.clone();
+    let hash_cache_sel = hash_cache.clone();
     let click_trace_state: Rc<RefCell<Option<ClickTrace>>> = Rc::new(RefCell::new(None));
     let click_trace_state_sel = click_trace_state.clone();
     selection_model.connect_selection_changed(move |model, _, _| {
@@ -1687,6 +2019,9 @@ fn build_ui(app: &adw::Application) {
         let click_trace_for_preview = click_trace_state_sel.clone();
         let meta_listbox_for_metadata = meta_listbox_sel.clone();
         let click_trace_for_metadata = click_trace_state_sel.clone();
+        let realized_thumb_images_for_preview = realized_thumb_images_sel.clone();
+        let thumbnail_size_for_preview = thumbnail_size_sel.clone();
+        let hash_cache_for_preview = hash_cache_sel.clone();
         
         // Start metadata load in background (non-blocking).
         load_metadata_async(
@@ -1704,6 +2039,11 @@ fn build_ui(app: &adw::Application) {
                     PreviewLoadOutcome::Displayed => {
                         PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
                         SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
+                        refresh_realized_grid_thumbnails(
+                            &realized_thumb_images_for_preview,
+                            &thumbnail_size_for_preview,
+                            &hash_cache_for_preview,
+                        );
                         if let Some(trace) = click_trace_for_preview.borrow_mut().as_mut() {
                             if trace.id == click_id && !trace.finished {
                                 trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
@@ -1736,6 +2076,11 @@ fn build_ui(app: &adw::Application) {
                     PreviewLoadOutcome::Failed => {
                         PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
                         SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
+                        refresh_realized_grid_thumbnails(
+                            &realized_thumb_images_for_preview,
+                            &thumbnail_size_for_preview,
+                            &hash_cache_for_preview,
+                        );
                         if let Some(trace) = click_trace_for_preview.borrow_mut().as_mut() {
                             if trace.id == click_id && !trace.finished {
                                 trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
@@ -1755,6 +2100,11 @@ fn build_ui(app: &adw::Application) {
                     PreviewLoadOutcome::StaleOrCancelled => {
                         PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
                         SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
+                        refresh_realized_grid_thumbnails(
+                            &realized_thumb_images_for_preview,
+                            &thumbnail_size_for_preview,
+                            &hash_cache_for_preview,
+                        );
                         if let Some(trace) = click_trace_for_preview.borrow_mut().as_mut() {
                             if trace.id == click_id && !trace.finished {
                                 trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
@@ -1923,7 +2273,7 @@ fn build_ui(app: &adw::Application) {
     inner_paned.set_resize_end_child(false);
     inner_paned.set_shrink_start_child(false);
     inner_paned.set_shrink_end_child(false);
-    inner_paned.set_position(app_config.right_pane_pos.unwrap_or(800));
+    inner_paned.set_position(inner_pane_start_px);
 
     // Outer paned: left sidebar | (center + right)
     let outer_paned = Paned::new(Orientation::Horizontal);
@@ -1933,14 +2283,31 @@ fn build_ui(app: &adw::Application) {
     outer_paned.set_resize_end_child(true);
     outer_paned.set_shrink_start_child(false);
     outer_paned.set_shrink_end_child(false);
-    outer_paned.set_position(app_config.left_pane_pos.unwrap_or(220));
+    outer_paned.set_position(left_pane_start_px);
 
-    // Wrap content in ToastOverlay → ToolbarView → window
+    // Wrap content in ToastOverlay + bottom status bar → ToolbarView → window
     toast_overlay.set_child(Some(&outer_paned));
+    toast_overlay.set_hexpand(true);
+    toast_overlay.set_vexpand(true);
+
+    let status_bar = gtk4::Box::new(Orientation::Horizontal, 0);
+    status_bar.set_hexpand(true);
+    status_bar.set_halign(gtk4::Align::Fill);
+    status_bar.set_margin_start(8);
+    status_bar.set_margin_end(8);
+    status_bar.set_margin_top(2);
+    status_bar.set_margin_bottom(2);
+    status_bar.append(&progress_box);
+
+    let content_with_status = gtk4::Box::new(Orientation::Vertical, 0);
+    content_with_status.set_hexpand(true);
+    content_with_status.set_vexpand(true);
+    content_with_status.append(&toast_overlay);
+    content_with_status.append(&status_bar);
 
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&header_bar);
-    toolbar_view.set_content(Some(&toast_overlay));
+    toolbar_view.set_content(Some(&content_with_status));
 
     window.set_content(Some(&toolbar_view));
 
@@ -2001,12 +2368,30 @@ fn build_ui(app: &adw::Application) {
     let sort_key_close = sort_key.clone();
     let search_text_close = search_text.clone();
     let thumbnail_size_close = thumbnail_size.clone();
+    let left_toggle_close = left_toggle.clone();
+    let right_toggle_close = right_toggle.clone();
+    let window_for_close = window.clone();
     window.connect_close_request(move |_| {
+        let window_width = window_for_close.width().max(DEFAULT_WINDOW_WIDTH);
+        let left_pos = outer_paned_close.position();
+        let inner_pos = inner_paned_close.position();
+        let meta_pos = meta_paned_close.position();
+        let inner_width = inner_paned_close
+            .width()
+            .max(window_width.saturating_sub(left_pos));
+        let right_width = inner_width.saturating_sub(inner_pos);
+        let meta_total_height = meta_paned_close.height().max(DEFAULT_WINDOW_HEIGHT);
+
         config::save(
             cf_close.borrow().as_deref(),
-            outer_paned_close.position(),
-            inner_paned_close.position(),
-            meta_paned_close.position(),
+            left_pos,
+            inner_pos,
+            meta_pos,
+            px_to_pct(left_pos, window_width),
+            px_to_pct(right_width, window_width),
+            px_to_pct(meta_pos, meta_total_height),
+            left_toggle_close.is_active(),
+            right_toggle_close.is_active(),
             &sort_key_close.borrow(),
             &search_text_close.borrow(),
             *thumbnail_size_close.borrow(),
