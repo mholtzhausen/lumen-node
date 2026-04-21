@@ -402,10 +402,21 @@ fn load_grid_thumbnail(
         return;
     }
 
+    // Count the task before spawning so ACTIVE_THUMBNAIL_TASKS reflects queued+running
+    // tasks, not just running ones. Without this, the counter stays near zero during
+    // fast scrolling because tasks pile up in the thread pool queue before any start.
+    // Cap at 64: enough to cover a full viewport refresh without allowing the
+    // unbounded backlog that causes the direction-change lag.
+    const MAX_THUMBNAIL_TASKS: u64 = 64;
+    if ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed) >= MAX_THUMBNAIL_TASKS {
+        return;
+    }
+    let task_guard = AtomicTaskGuard::new(&ACTIVE_THUMBNAIL_TASKS);
+
     let path_for_thread = std::path::PathBuf::from(&path_str);
     let cached_hash_for_task = cached_hash.clone();
     let task = gio::spawn_blocking(move || {
-        let _guard = AtomicTaskGuard::new(&ACTIVE_THUMBNAIL_TASKS);
+        let _guard = task_guard; // moves in; drops (decrements) when closure ends
 
         if let Some(hash) = cached_hash_for_task {
             let thumb = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size);
@@ -830,6 +841,11 @@ fn build_ui(app: &adw::Application) {
         Rc::new(RefCell::new(Vec::new()));
     let realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>> =
         Rc::new(RefCell::new(Vec::new()));
+
+    let fast_scroll_active: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let scroll_last_pos: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+    let scroll_last_time: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
+    let scroll_debounce_gen: Rc<Cell<u64>> = Rc::new(Cell::new(0));
 
     // -----------------------------------------------------------------------
     // Receiver task: buffer messages and drain in idle-priority batches
@@ -1471,6 +1487,7 @@ fn build_ui(app: &adw::Application) {
 
     let hash_cache_bind = hash_cache.clone();
     let thumbnail_size_bind = thumbnail_size.clone();
+    let fast_scroll_active_bind = fast_scroll_active.clone();
     factory.connect_bind(move |_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
         let path_str = list_item
@@ -1500,14 +1517,20 @@ fn build_ui(app: &adw::Application) {
         if let Some(generation_token) = generation_token {
             let expected_generation = generation_token.get().saturating_add(1);
             generation_token.set(expected_generation);
-            load_grid_thumbnail(
-                &thumb_image,
-                path_str,
-                size,
-                hash_cache_bind.clone(),
-                generation_token,
-                expected_generation,
-            );
+            if fast_scroll_active_bind.get() {
+                // Fast scroll: set placeholder + path so the debounce refresh can find this cell.
+                thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
+                unsafe { thumb_image.set_data("bound-path", path_str); }
+            } else {
+                load_grid_thumbnail(
+                    &thumb_image,
+                    path_str,
+                    size,
+                    hash_cache_bind.clone(),
+                    generation_token,
+                    expected_generation,
+                );
+            }
         }
     });
 
@@ -1537,6 +1560,50 @@ fn build_ui(app: &adw::Application) {
     grid_scroll.set_vexpand(true);
     grid_scroll.set_hexpand(true);
     grid_scroll.set_child(Some(&grid_view));
+
+    // Scroll-speed gate: suppress thumbnail spawning while scrolling faster than
+    // 5 rows/sec, then refresh visible cells 150 ms after scrolling quiets down.
+    {
+        let adj = grid_scroll.vadjustment();
+        let fast_scroll_active_adj = fast_scroll_active.clone();
+        let scroll_last_pos_adj    = scroll_last_pos.clone();
+        let scroll_last_time_adj   = scroll_last_time.clone();
+        let scroll_debounce_gen_adj = scroll_debounce_gen.clone();
+        let thumbnail_size_adj      = thumbnail_size.clone();
+        let realized_adj            = realized_thumb_images.clone();
+        let hash_cache_adj          = hash_cache.clone();
+        adj.connect_value_changed(move |adj| {
+            let now = Instant::now();
+            let pos = adj.value();
+            let cell_height = (*thumbnail_size_adj.borrow() + 24) as f64;
+            let rows_per_sec = scroll_last_time_adj.get()
+                .map(|last| {
+                    let dt = now.duration_since(last).as_secs_f64();
+                    if dt > 0.001 { (pos - scroll_last_pos_adj.get()).abs() / cell_height / dt }
+                    else          { f64::INFINITY }
+                })
+                .unwrap_or(0.0);
+            scroll_last_pos_adj.set(pos);
+            scroll_last_time_adj.set(Some(now));
+            fast_scroll_active_adj.set(rows_per_sec > 5.0);
+
+            // Bump the generation so any previous pending timeout becomes a no-op.
+            // We never cancel the old SourceId because one-shot timers are removed
+            // by GLib when they fire, making SourceId::remove() panic on the stale id.
+            let gen = scroll_debounce_gen_adj.get().wrapping_add(1);
+            scroll_debounce_gen_adj.set(gen);
+            let fsa            = fast_scroll_active_adj.clone();
+            let realized       = realized_adj.clone();
+            let hash_cache     = hash_cache_adj.clone();
+            let thumbnail_size = thumbnail_size_adj.clone();
+            let debounce_gen   = scroll_debounce_gen_adj.clone();
+            glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                if debounce_gen.get() != gen { return; }
+                fsa.set(false);
+                refresh_realized_grid_thumbnails(&realized, &thumbnail_size, &hash_cache);
+            });
+        });
+    }
 
     // add_titled returns ViewStackPage — use it to set the page icon.
     let grid_page = view_stack.add_titled(&grid_scroll, Some("grid"), "Grid");
