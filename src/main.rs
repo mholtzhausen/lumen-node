@@ -505,7 +505,8 @@ fn build_ui(app: &adw::Application) {
         let already_loaded = if let Some(ref hash) = cached_hash {
             if let Some(thumb) = thumbnails::hash_thumb_if_exists(hash) {
                 if let Ok(pb) = gdk_pixbuf::Pixbuf::from_file(&thumb) {
-                    thumb_image.set_from_pixbuf(Some(&pb));
+                    let tex = gdk::Texture::for_pixbuf(&pb);
+                    thumb_image.set_paintable(Some(&tex));
                     true
                 } else { false }
             } else { false }
@@ -531,7 +532,10 @@ fn build_ui(app: &adw::Application) {
                     return;
                 }
                 match maybe_cache.and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok()) {
-                    Some(pb) => image.set_from_pixbuf(Some(&pb)),
+                    Some(pb) => {
+                        let tex = gdk::Texture::for_pixbuf(&pb);
+                        image.set_paintable(Some(&tex));
+                    }
                     None => image.set_icon_name(Some("image-missing-symbolic")),
                 }
             });
@@ -938,7 +942,7 @@ fn build_ui(app: &adw::Application) {
     grid_view.connect_activate(move |_, pos| {
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
             let path_str = item.string().to_string();
-            load_picture_async(&picture_for_grid, &path_str);
+            load_picture_async(&picture_for_grid, &path_str, None);
         }
         stack_for_grid.set_visible_child_name("single");
         left_toggle_grid.set_active(false);
@@ -958,7 +962,8 @@ fn build_ui(app: &adw::Application) {
         let path_str = item.string().to_string();
 
         // Load the preview image off-thread so the UI stays responsive.
-        load_picture_async(&meta_preview_sel, &path_str);
+        // Decode at 2× sidebar width (520px) for fast display on HiDPI.
+        load_picture_async(&meta_preview_sel, &path_str, Some(520));
 
         // Use cached metadata from the DB (populated during scan).
         let cache = meta_cache_sel.borrow();
@@ -1120,6 +1125,7 @@ fn build_ui(app: &adw::Application) {
                     load_picture_async(
                         &picture_for_keys,
                         &item.string().to_string(),
+                        None,
                     );
                 }
             }
@@ -1289,18 +1295,45 @@ fn format_generation_command(meta: &ImageMetadata) -> String {
 /// Loads an image off the main thread and sets it on a [`Picture`] widget
 /// once decoded.  A tag on the widget guards against stale loads when the
 /// user navigates away before decoding finishes.
-fn load_picture_async(picture: &Picture, path: &str) {
+///
+/// When `max_dimension` is `Some(dim)`, the image is decoded at a reduced
+/// resolution (longest side capped to `dim` pixels) for faster display.
+/// Pass `None` to decode at the file's native resolution.
+fn load_picture_async(picture: &Picture, path: &str, max_dimension: Option<i32>) {
     // Clear immediately so the user sees something is happening.
     picture.set_paintable(gdk::Paintable::NONE);
+
+    // Cancel any in-flight load for this widget.
+    let prev_cancel: Option<gio::Cancellable> =
+        unsafe { picture.steal_data("loading-cancel") };
+    if let Some(c) = prev_cancel {
+        c.cancel();
+    }
+
+    // Fresh cancellable for this load.
+    let cancel = gio::Cancellable::new();
+    unsafe { picture.set_data("loading-cancel", cancel.clone()); }
 
     // Tag to detect stale loads (user clicked a different image before this one finished).
     unsafe { picture.set_data("loading-path", path.to_owned()); }
 
     let path_owned = path.to_owned();
     let path_check = path_owned.clone();
+    let cancel_bg = cancel.clone();
     let weak = picture.downgrade();
     let task = gio::spawn_blocking(move || {
-        gdk::Texture::from_filename(&path_owned).ok()
+        if cancel_bg.is_cancelled() {
+            return None;
+        }
+        let file = gio::File::for_path(&path_owned);
+        let stream = file.read(Some(&cancel_bg)).ok()?;
+        let pixbuf = match max_dimension {
+            Some(dim) => gdk_pixbuf::Pixbuf::from_stream_at_scale(
+                &stream, dim, dim, true, Some(&cancel_bg),
+            ),
+            None => gdk_pixbuf::Pixbuf::from_stream(&stream, Some(&cancel_bg)),
+        };
+        pixbuf.ok().map(|pb| gdk::Texture::for_pixbuf(&pb))
     });
     glib::MainContext::default().spawn_local(async move {
         let Ok(maybe_tex) = task.await else { return };
@@ -1345,6 +1378,18 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
         row.set_title(key);
         row.set_subtitle(&glib::markup_escape_text(val));
         row.set_subtitle_selectable(true);
+
+        let copy_text = val.to_string();
+        let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
+        copy_button.add_css_class("flat");
+        copy_button.set_tooltip_text(Some("Copy"));
+        copy_button.connect_clicked(move |btn| {
+            gtk4::prelude::WidgetExt::display(btn)
+                .clipboard()
+                .set_text(&copy_text);
+        });
+        row.add_suffix(&copy_button);
+
         listbox.append(&row);
     }
 

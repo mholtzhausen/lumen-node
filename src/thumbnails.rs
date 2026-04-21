@@ -130,14 +130,6 @@ pub fn ensure_thumbnail(source: &Path) -> Option<PathBuf> {
     generate_and_cache(source, &thumb).map(|_| thumb)
 }
 
-/// Loads a thumbnail for `source` from the Freedesktop cache.
-///
-/// If no valid thumbnail exists it is generated, saved to the cache, and
-/// returned. Returns `None` if the source file cannot be decoded.
-pub fn load_or_generate(source: &Path) -> Option<Pixbuf> {
-    ensure_thumbnail(source).and_then(|thumb| Pixbuf::from_file(&thumb).ok())
-}
-
 /// Scales `source` to `THUMB_NORMAL_SIZE` and writes it to `thumb` with the
 /// required Freedesktop `tEXt` metadata.
 fn generate_and_cache(source: &Path, thumb: &Path) -> Option<Pixbuf> {
