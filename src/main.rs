@@ -1168,6 +1168,7 @@ fn build_ui(app: &adw::Application) {
     let search_entry = gtk4::SearchEntry::new();
     search_entry.set_placeholder_text(Some("Search…"));
     search_entry.set_width_request(220);
+    search_entry.set_hexpand(true);
 
     // --- Clear button ---
     let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
@@ -1176,6 +1177,7 @@ fn build_ui(app: &adw::Application) {
     // Center widget: sort + search + clear grouped together.
     let toolbar_center = gtk4::Box::new(Orientation::Horizontal, 6);
     toolbar_center.set_valign(gtk4::Align::Center);
+    toolbar_center.set_hexpand(true);
     toolbar_center.append(&sort_dropdown);
     toolbar_center.append(&size_selector);
     toolbar_center.append(&search_entry);
@@ -1994,11 +1996,15 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Wire: grid item activate → switch to single view
     // -----------------------------------------------------------------------
+    let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let stack_for_grid = view_stack.clone();
     let picture_for_grid = single_picture.clone();
     let selection_for_grid = selection_model.clone();
     let left_toggle_grid = left_toggle.clone();
     let right_toggle_grid = right_toggle.clone();
+    let pre_fullview_left_grid = pre_fullview_left.clone();
+    let pre_fullview_right_grid = pre_fullview_right.clone();
     grid_view.connect_activate(move |_, pos| {
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
             let path_str = item.string().to_string();
@@ -2038,6 +2044,8 @@ fn build_ui(app: &adw::Application) {
                 })),
             );
         }
+        pre_fullview_left_grid.set(left_toggle_grid.is_active());
+        pre_fullview_right_grid.set(right_toggle_grid.is_active());
         stack_for_grid.set_visible_child_name("single");
         left_toggle_grid.set_active(false);
         right_toggle_grid.set_active(false);
@@ -2052,6 +2060,8 @@ fn build_ui(app: &adw::Application) {
         let selection_for_preview = selection_model.clone();
         let left_toggle_preview = left_toggle.clone();
         let right_toggle_preview = right_toggle.clone();
+        let pre_fullview_left_preview = pre_fullview_left.clone();
+        let pre_fullview_right_preview = pre_fullview_right.clone();
         let dbl_click = GestureClick::new();
         dbl_click.connect_pressed(move |_, n_press, _, _| {
             if n_press < 2 {
@@ -2098,6 +2108,8 @@ fn build_ui(app: &adw::Application) {
                     emit_full_view_report(&t);
                 })),
             );
+            pre_fullview_left_preview.set(left_toggle_preview.is_active());
+            pre_fullview_right_preview.set(right_toggle_preview.is_active());
             stack_for_preview.set_visible_child_name("single");
             left_toggle_preview.set_active(false);
             right_toggle_preview.set_active(false);
@@ -2500,6 +2512,10 @@ fn build_ui(app: &adw::Application) {
     let thumbnail_size_for_keys = thumbnail_size.clone();
     let toast_overlay_for_keys = toast_overlay.clone();
     let window_for_keys = window.clone();
+    let left_toggle_for_keys = left_toggle.clone();
+    let right_toggle_for_keys = right_toggle.clone();
+    let pre_fullview_left_keys = pre_fullview_left.clone();
+    let pre_fullview_right_keys = pre_fullview_right.clone();
     key_controller.connect_key_pressed(move |_, key, _, _| {
         if key == gdk::Key::Escape {
             let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
@@ -2518,6 +2534,8 @@ fn build_ui(app: &adw::Application) {
                 }
             } else {
                 stack_for_keys.set_visible_child_name("grid");
+                left_toggle_for_keys.set_active(pre_fullview_left_keys.get());
+                right_toggle_for_keys.set_active(pre_fullview_right_keys.get());
             }
             return glib::Propagation::Stop;
         }
