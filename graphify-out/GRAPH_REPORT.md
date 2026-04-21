@@ -1,12 +1,12 @@
 # Graph Report - /media/nemesarial/SmallData/code/lumen-node  (2026-04-21)
 
 ## Corpus Check
-- 6 files · ~79,818 words
+- 6 files · ~78,602 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 83 nodes · 177 edges · 12 communities detected
-- Extraction: 84% EXTRACTED · 16% INFERRED · 0% AMBIGUOUS · INFERRED: 29 edges (avg confidence: 0.8)
+- 82 nodes · 174 edges · 12 communities detected
+- Extraction: 83% EXTRACTED · 17% INFERRED · 0% AMBIGUOUS · INFERRED: 29 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -29,11 +29,11 @@
 3. `build_index_row()` - 9 edges
 4. `scan_directory()` - 8 edges
 5. `ensure_indexed()` - 7 edges
-6. `write_timing_report()` - 6 edges
-7. `hash_thumb_path()` - 6 edges
-8. `hash_file()` - 5 edges
-9. `emit_click_report()` - 5 edges
-10. `try_finalize_click_trace()` - 5 edges
+6. `hash_thumb_path()` - 6 edges
+7. `hash_file()` - 5 edges
+8. `emit_click_report()` - 5 edges
+9. `try_finalize_click_trace()` - 5 edges
+10. `load_metadata_async()` - 5 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `scan_directory()` --calls--> `open()`  [INFERRED]
@@ -42,10 +42,10 @@
   /media/nemesarial/SmallData/code/lumen-node/src/scanner.rs → /media/nemesarial/SmallData/code/lumen-node/src/db.rs
 - `scan_directory()` --calls--> `build_ui()`  [INFERRED]
   /media/nemesarial/SmallData/code/lumen-node/src/scanner.rs → /media/nemesarial/SmallData/code/lumen-node/src/main.rs
-- `open()` --calls--> `write_timing_report()`  [INFERRED]
-  /media/nemesarial/SmallData/code/lumen-node/src/db.rs → /media/nemesarial/SmallData/code/lumen-node/src/main.rs
 - `open()` --calls--> `build_ui()`  [INFERRED]
   /media/nemesarial/SmallData/code/lumen-node/src/db.rs → /media/nemesarial/SmallData/code/lumen-node/src/main.rs
+- `open()` --calls--> `extract_exif()`  [INFERRED]
+  /media/nemesarial/SmallData/code/lumen-node/src/db.rs → /media/nemesarial/SmallData/code/lumen-node/src/metadata.rs
 
 ## Hyperedges (group relationships)
 - **Message-Driven Data Flow Pipeline** — scanner_module, db_module, thumbnails_module, main_module [EXTRACTED 1.00]
@@ -67,12 +67,12 @@ Cohesion: 0.42
 Nodes (9): ensure_thumbnail(), file_uri(), generate_and_cache(), hash_cache_dir(), is_valid(), normal_cache_dir(), source_mtime(), thumb_path() (+1 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.36
-Nodes (8): build_ui(), emit_click_report(), load_metadata_async(), mark_click_step(), populate_metadata_sidebar(), selected_image_path(), sync_tree_to_path(), try_finalize_click_trace()
-
-### Community 4 - "Community 4"
 Cohesion: 0.28
 Nodes (7): build_tree_root(), ClickStepTiming, extract_seed_from_parameters(), format_generation_command(), get_mount_points(), PreviewLoadMetrics, PreviewLoadOutcome
+
+### Community 4 - "Community 4"
+Cohesion: 0.43
+Nodes (6): build_ui(), load_metadata_async(), mark_click_step(), populate_metadata_sidebar(), selected_image_path(), sync_tree_to_path()
 
 ### Community 5 - "Community 5"
 Cohesion: 0.33
@@ -80,23 +80,23 @@ Nodes (4): attach_context_menu(), format_metadata_text(), FullViewTrace, load_pi
 
 ### Community 6 - "Community 6"
 Cohesion: 0.6
-Nodes (4): prune_missing(), is_image(), scan_directory(), sort_paths()
+Nodes (4): AppConfig, config_path(), load(), save()
 
 ### Community 7 - "Community 7"
 Cohesion: 0.6
-Nodes (4): AppConfig, config_path(), load(), save()
+Nodes (4): prune_missing(), is_image(), scan_directory(), sort_paths()
 
 ### Community 8 - "Community 8"
-Cohesion: 0.67
-Nodes (1): AtomicTaskGuard
+Cohesion: 0.5
+Nodes (4): emit_click_report(), emit_full_view_report(), try_finalize_click_trace(), write_timing_report()
 
 ### Community 9 - "Community 9"
 Cohesion: 0.67
-Nodes (3): click_report_log_path(), emit_full_view_report(), write_timing_report()
+Nodes (1): ClickTrace
 
 ### Community 10 - "Community 10"
 Cohesion: 0.67
-Nodes (1): ClickTrace
+Nodes (1): AtomicTaskGuard
 
 ### Community 11 - "Community 11"
 Cohesion: 1.0
@@ -111,15 +111,15 @@ Nodes (1): LumenNode UI - Image Gallery with Professional Context
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `build_ui()` connect `Community 3` to `Community 0`, `Community 2`, `Community 4`, `Community 5`, `Community 6`, `Community 7`, `Community 9`?**
-  _High betweenness centrality (0.390) - this node is a cross-community bridge._
-- **Why does `open()` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 6`, `Community 9`?**
-  _High betweenness centrality (0.142) - this node is a cross-community bridge._
+- **Why does `build_ui()` connect `Community 4` to `Community 0`, `Community 2`, `Community 3`, `Community 5`, `Community 6`, `Community 7`, `Community 8`?**
+  _High betweenness centrality (0.396) - this node is a cross-community bridge._
+- **Why does `open()` connect `Community 0` to `Community 1`, `Community 2`, `Community 4`, `Community 7`, `Community 8`?**
+  _High betweenness centrality (0.145) - this node is a cross-community bridge._
 - **Why does `extract_png()` connect `Community 1` to `Community 0`, `Community 5`?**
-  _High betweenness centrality (0.102) - this node is a cross-community bridge._
+  _High betweenness centrality (0.103) - this node is a cross-community bridge._
 - **Are the 10 inferred relationships involving `build_ui()` (e.g. with `load()` and `scan_directory()`) actually correct?**
   _`build_ui()` has 10 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 6 inferred relationships involving `open()` (e.g. with `scan_directory()` and `write_timing_report()`) actually correct?**
+- **Are the 6 inferred relationships involving `open()` (e.g. with `scan_directory()` and `build_ui()`) actually correct?**
   _`open()` has 6 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 2 inferred relationships involving `build_index_row()` (e.g. with `.extract()` and `generate_hash_thumbnail()`) actually correct?**
   _`build_index_row()` has 2 INFERRED edges - model-reasoned connections that need verification._
