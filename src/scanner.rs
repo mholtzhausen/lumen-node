@@ -24,37 +24,53 @@ const IMAGE_EXTENSIONS: &[&str] = &[
 
 /// Spawns a background thread that scans `dir` for image files.
 ///
-/// `sort_key` determines the order in which files are enriched during phase 2
-/// so that thumbnails appear from the top of the sorted grid downward.
-pub fn scan_directory(dir: PathBuf, sender: Sender<ScanMessage>, sort_key: String) {
+/// `sort_key` determines the order in which files are emitted and enriched so
+/// that list insertion and thumbnail progression both follow visible ordering.
+pub fn scan_directory(
+    dir: PathBuf,
+    sender: Sender<ScanMessage>,
+    sort_key: String,
+    generation: u64,
+) {
     std::thread::spawn(move || {
         let Ok(read_dir) = std::fs::read_dir(&dir) else {
-            let _ = sender.send_blocking(ScanMessage::ScanComplete);
+            let _ = sender.send_blocking(ScanMessage::ScanComplete { generation });
             return;
         };
 
-        // Collect image paths (phase 1: fast enumerate).
+        // Collect image paths, then sort before emitting so filesystem and UI
+        // ordering stay aligned while placeholders are inserted.
         let mut paths: Vec<PathBuf> = Vec::new();
         for entry in read_dir.filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.is_file() && is_image(&path) {
-                let path_str = path.to_string_lossy().into_owned();
-                let _ = sender.send_blocking(ScanMessage::ImageEnumerated { path: path_str });
                 paths.push(path);
             }
         }
 
-        let _ = sender.send_blocking(ScanMessage::EnumerationComplete);
-
-        // Sort paths according to the user's current sort key so that
-        // enrichment (hash + metadata + thumbnail) proceeds top-down.
+        // Sort once and reuse the same order for enumeration and enrichment.
         sort_paths(&mut paths, &sort_key);
+
+        for path in &paths {
+            let path_str = path.to_string_lossy().into_owned();
+            if sender
+                .send_blocking(ScanMessage::ImageEnumerated {
+                    path: path_str,
+                    generation,
+                })
+                .is_err()
+            {
+                return;
+            }
+        }
+
+        let _ = sender.send_blocking(ScanMessage::EnumerationComplete { generation });
 
         // Open (or create) the per-folder database.
         let conn = match db::open(&dir) {
             Ok(c) => c,
             Err(_) => {
-                let _ = sender.send_blocking(ScanMessage::ScanComplete);
+                let _ = sender.send_blocking(ScanMessage::ScanComplete { generation });
                 return;
             }
         };
@@ -74,6 +90,7 @@ pub fn scan_directory(dir: PathBuf, sender: Sender<ScanMessage>, sort_key: Strin
                     path: path_str,
                     hash,
                     meta,
+                    generation,
                 })
                 .is_err()
             {
@@ -87,7 +104,7 @@ pub fn scan_directory(dir: PathBuf, sender: Sender<ScanMessage>, sort_key: Strin
         // Prune DB entries for files that no longer exist on disk.
         let _ = db::prune_missing(&conn);
 
-        let _ = sender.send_blocking(ScanMessage::ScanComplete);
+        let _ = sender.send_blocking(ScanMessage::ScanComplete { generation });
     });
 }
 

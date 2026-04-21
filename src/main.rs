@@ -8,12 +8,13 @@ use metadata::{ImageMetadata, ScanMessage};
 use scanner::scan_directory;
 
 use std::{
+    cell::Cell,
     cell::RefCell,
     collections::HashMap,
     collections::VecDeque,
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use libadwaita as adw;
@@ -36,6 +37,7 @@ static THUMB_UI_CALLBACKS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW: AtomicU64 = AtomicU64::new(0);
 static SCAN_BUFFER_DEPTH: AtomicU64 = AtomicU64::new(0);
 static SCAN_DRAIN_SCHEDULED: AtomicU64 = AtomicU64::new(0);
+static DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE: AtomicU64 = AtomicU64::new(0);
 const SCAN_DRAIN_BATCH_SIZE: u64 = 50;
 
 struct AtomicTaskGuard {
@@ -158,6 +160,32 @@ enum PreviewLoadOutcome {
     StaleOrCancelled,
 }
 
+#[derive(Clone, Default)]
+struct SortFields {
+    filename_lower: String,
+    modified: Option<SystemTime>,
+    size: u64,
+}
+
+fn compute_sort_fields(path_str: &str) -> SortFields {
+    let path = std::path::Path::new(path_str);
+    let filename_lower = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    let (modified, size) = match std::fs::metadata(path) {
+        Ok(meta) => (meta.modified().ok(), meta.len()),
+        Err(_) => (None, 0),
+    };
+
+    SortFields {
+        filename_lower,
+        modified,
+        size,
+    }
+}
+
 fn thumbnail_size_options() -> [i32; 4] {
     let base = thumbnails::THUMB_NORMAL_SIZE;
     [
@@ -185,6 +213,10 @@ fn load_grid_thumbnail(
 ) {
     thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
     unsafe { thumb_image.set_data("bound-path", path_str.clone()); }
+
+    if DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.load(AtomicOrdering::Relaxed) != 0 {
+        return;
+    }
 
     if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0 {
         return;
@@ -261,6 +293,29 @@ fn load_grid_thumbnail(
             None => image.set_icon_name(Some("image-missing-symbolic")),
         }
     });
+}
+
+fn refresh_realized_grid_thumbnails(
+    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
+    thumbnail_size: &Rc<RefCell<i32>>,
+    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+) {
+    let size = *thumbnail_size.borrow();
+    let mut images = realized_thumb_images.borrow_mut();
+    images.retain(|weak| weak.upgrade().is_some());
+    for weak in images.iter() {
+        if let Some(image) = weak.upgrade() {
+            image.set_pixel_size(size);
+            let bound_path = unsafe {
+                image
+                    .data::<String>("bound-path")
+                    .map(|path| path.as_ref().clone())
+            };
+            if let Some(path_str) = bound_path {
+                load_grid_thumbnail(&image, path_str, size, hash_cache.clone());
+            }
+        }
+    }
 }
 
 struct PreviewLoadMetrics {
@@ -548,6 +603,14 @@ fn build_ui(app: &adw::Application) {
     let meta_cache: Rc<RefCell<HashMap<String, ImageMetadata>>> =
         Rc::new(RefCell::new(HashMap::new()));
 
+    // Sort cache: path -> precomputed fields used by UI comparator.
+    let sort_fields_cache: Rc<RefCell<HashMap<String, SortFields>>> =
+        Rc::new(RefCell::new(HashMap::new()));
+
+    // Generation guards stale scan messages after restarts/superseding scans.
+    let active_scan_generation = Rc::new(Cell::new(0_u64));
+    let scan_in_progress = Rc::new(Cell::new(false));
+
     // Sort key: "name_asc" | "name_desc" | "date_asc" | "date_desc" | "size_asc" | "size_desc"
     let sort_key: Rc<RefCell<String>> = Rc::new(RefCell::new(
         app_config.sort_key.clone().unwrap_or_else(|| "name_asc".to_string()),
@@ -561,6 +624,10 @@ fn build_ui(app: &adw::Application) {
     let initial_thumbnail_size =
         normalize_thumbnail_size(app_config.thumbnail_size.unwrap_or(thumbnails::THUMB_NORMAL_SIZE));
     let thumbnail_size: Rc<RefCell<i32>> = Rc::new(RefCell::new(initial_thumbnail_size));
+    let realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>> =
+        Rc::new(RefCell::new(Vec::new()));
 
     // -----------------------------------------------------------------------
     // Receiver task: buffer messages and drain in idle-priority batches
@@ -570,6 +637,11 @@ fn build_ui(app: &adw::Application) {
     let toast_recv = toast_overlay.clone();
     let meta_cache_recv = meta_cache.clone();
     let hash_cache_recv = hash_cache.clone();
+    let sort_fields_cache_recv = sort_fields_cache.clone();
+    let active_scan_generation_recv = active_scan_generation.clone();
+    let scan_in_progress_recv = scan_in_progress.clone();
+    let thumbnail_size_recv = thumbnail_size.clone();
+    let realized_thumb_images_recv = realized_thumb_images.clone();
 
     /// Maximum items drained from the buffer per idle tick.
     const BATCH_SIZE: usize = SCAN_DRAIN_BATCH_SIZE as usize;
@@ -586,6 +658,9 @@ fn build_ui(app: &adw::Application) {
         let list_store_recv = list_store_recv.clone();
         let hash_cache_recv = hash_cache_recv.clone();
         let meta_cache_recv = meta_cache_recv.clone();
+        let sort_fields_cache_recv = sort_fields_cache_recv.clone();
+        let active_scan_generation_recv = active_scan_generation_recv.clone();
+        let scan_in_progress_recv = scan_in_progress_recv.clone();
         let spinner_recv = spinner_recv.clone();
         let toast_recv = toast_recv.clone();
         Rc::new(move || {
@@ -600,8 +675,13 @@ fn build_ui(app: &adw::Application) {
             let list_store_recv = list_store_recv.clone();
             let hash_cache_recv = hash_cache_recv.clone();
             let meta_cache_recv = meta_cache_recv.clone();
+            let sort_fields_cache_recv = sort_fields_cache_recv.clone();
+            let active_scan_generation_recv = active_scan_generation_recv.clone();
+            let scan_in_progress_recv = scan_in_progress_recv.clone();
             let spinner_recv = spinner_recv.clone();
             let toast_recv = toast_recv.clone();
+            let thumbnail_size_recv = thumbnail_size_recv.clone();
+            let realized_thumb_images_recv = realized_thumb_images_recv.clone();
             glib::idle_add_local(move || {
                 *drain_scheduled.borrow_mut() = false;
                 SCAN_DRAIN_SCHEDULED.store(0, AtomicOrdering::Relaxed);
@@ -625,16 +705,36 @@ fn build_ui(app: &adw::Application) {
                 // Collect enumerated paths for batch splice.
                 let mut new_paths: Vec<StringObject> = Vec::new();
                 let mut scan_complete = false;
+                let mut unlock_thumbnail_dispatch = false;
+                let active_generation = active_scan_generation_recv.get();
 
                 for msg in batch {
                     match msg {
-                        ScanMessage::ImageEnumerated { path } => {
+                        ScanMessage::ImageEnumerated { path, generation } => {
+                            if generation != active_generation {
+                                continue;
+                            }
+                            sort_fields_cache_recv
+                                .borrow_mut()
+                                .entry(path.clone())
+                                .or_insert_with(|| compute_sort_fields(&path));
                             new_paths.push(StringObject::new(&path));
                         }
-                        ScanMessage::EnumerationComplete => {
-                            // Nothing special needed on the UI side.
+                        ScanMessage::EnumerationComplete { generation } => {
+                            if generation != active_generation {
+                                continue;
+                            }
+                            unlock_thumbnail_dispatch = true;
                         }
-                        ScanMessage::ImageEnriched { path, hash, meta } => {
+                        ScanMessage::ImageEnriched {
+                            path,
+                            hash,
+                            meta,
+                            generation,
+                        } => {
+                            if generation != active_generation {
+                                continue;
+                            }
                             if !hash.is_empty() {
                                 hash_cache_recv
                                     .borrow_mut()
@@ -642,7 +742,10 @@ fn build_ui(app: &adw::Application) {
                             }
                             meta_cache_recv.borrow_mut().insert(path, meta);
                         }
-                        ScanMessage::ScanComplete => {
+                        ScanMessage::ScanComplete { generation } => {
+                            if generation != active_generation {
+                                continue;
+                            }
                             scan_complete = true;
                         }
                     }
@@ -657,7 +760,20 @@ fn build_ui(app: &adw::Application) {
                     );
                 }
 
+                if unlock_thumbnail_dispatch {
+                    DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE
+                        .store(0, AtomicOrdering::Relaxed);
+                    refresh_realized_grid_thumbnails(
+                        &realized_thumb_images_recv,
+                        &thumbnail_size_recv,
+                        &hash_cache_recv,
+                    );
+                }
+
                 if scan_complete {
+                    DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE
+                        .store(0, AtomicOrdering::Relaxed);
+                    scan_in_progress_recv.set(false);
                     spinner_recv.stop();
                     let n = list_store_recv.n_items();
                     let text = format!(
@@ -801,14 +917,41 @@ fn build_ui(app: &adw::Application) {
 
     let tree_selection = SingleSelection::new(Some(tree_model.clone()));
 
+    let start_scan_for_folder = {
+        let list_store = list_store.clone();
+        let spinner = spinner.clone();
+        let sender = sender.clone();
+        let hash_cache = hash_cache.clone();
+        let meta_cache = meta_cache.clone();
+        let sort_fields_cache = sort_fields_cache.clone();
+        let sort_key = sort_key.clone();
+        let active_scan_generation = active_scan_generation.clone();
+        let scan_in_progress = scan_in_progress.clone();
+        Rc::new(move |folder: std::path::PathBuf| {
+            let generation = active_scan_generation
+                .get()
+                .saturating_add(1);
+            active_scan_generation.set(generation);
+            scan_in_progress.set(true);
+
+            list_store.remove_all();
+            hash_cache.borrow_mut().clear();
+            meta_cache.borrow_mut().clear();
+            sort_fields_cache.borrow_mut().clear();
+            DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.store(1, AtomicOrdering::Relaxed);
+            spinner.start();
+            scan_directory(
+                folder,
+                sender.clone(),
+                sort_key.borrow().clone(),
+                generation,
+            );
+        })
+    };
+
     // Wire tree folder selection → clear grid, start scan.
-    let sender_tree = sender.clone();
-    let list_store_tree = list_store.clone();
-    let spinner_tree = spinner.clone();
     let current_folder_tree = current_folder.clone();
-    let meta_cache_tree = meta_cache.clone();
-    let hash_cache_tree = hash_cache.clone();
-    let sort_key_tree = sort_key.clone();
+    let start_scan_tree = start_scan_for_folder.clone();
     tree_selection.connect_selection_changed(move |model, _, _| {
         let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
             return;
@@ -822,11 +965,7 @@ fn build_ui(app: &adw::Application) {
             return;
         }
         *current_folder_tree.borrow_mut() = Some(path.clone());
-        list_store_tree.remove_all();
-        meta_cache_tree.borrow_mut().clear();
-        hash_cache_tree.borrow_mut().clear();
-        spinner_tree.start();
-        scan_directory(path, sender_tree.clone(), sort_key_tree.borrow().clone());
+        start_scan_tree(path);
     });
 
     let tree_factory = SignalListItemFactory::new();
@@ -922,6 +1061,7 @@ fn build_ui(app: &adw::Application) {
 
     // --- Sort model: wraps filter_model, applies selected sort key ---
     let sort_key_sorter = sort_key.clone();
+    let sort_fields_cache_sorter = sort_fields_cache.clone();
     let sorter = CustomSorter::new(move |a, b| {
         let path_a = a
             .downcast_ref::<StringObject>()
@@ -932,33 +1072,43 @@ fn build_ui(app: &adw::Application) {
             .map(|s| s.string().to_string())
             .unwrap_or_default();
         let key = sort_key_sorter.borrow().clone();
+        let cache = sort_fields_cache_sorter.borrow();
+        let fallback_a;
+        let fallback_b;
+        let fields_a = if let Some(fields) = cache.get(&path_a) {
+            fields
+        } else {
+            fallback_a = compute_sort_fields(&path_a);
+            &fallback_a
+        };
+        let fields_b = if let Some(fields) = cache.get(&path_b) {
+            fields
+        } else {
+            fallback_b = compute_sort_fields(&path_b);
+            &fallback_b
+        };
         let ord = match key.as_str() {
             "name_asc" | "name_desc" => {
-                let na = std::path::Path::new(&path_a)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_lowercase())
-                    .unwrap_or_default();
-                let nb = std::path::Path::new(&path_b)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_lowercase())
-                    .unwrap_or_default();
-                let cmp = na.cmp(&nb);
+                let cmp = fields_a
+                    .filename_lower
+                    .cmp(&fields_b.filename_lower)
+                    .then_with(|| path_a.cmp(&path_b));
                 if key == "name_desc" { cmp.reverse() } else { cmp }
             }
             "date_asc" | "date_desc" => {
-                let mt = |p: &str| {
-                    std::fs::metadata(p)
-                        .and_then(|m| m.modified())
-                        .ok()
-                };
-                let ta = mt(&path_a);
-                let tb = mt(&path_b);
-                let cmp = ta.cmp(&tb);
+                let cmp = fields_a
+                    .modified
+                    .cmp(&fields_b.modified)
+                    .then_with(|| fields_a.filename_lower.cmp(&fields_b.filename_lower))
+                    .then_with(|| path_a.cmp(&path_b));
                 if key == "date_desc" { cmp.reverse() } else { cmp }
             }
             "size_asc" | "size_desc" => {
-                let sz = |p: &str| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-                let cmp = sz(&path_a).cmp(&sz(&path_b));
+                let cmp = fields_a
+                    .size
+                    .cmp(&fields_b.size)
+                    .then_with(|| fields_a.filename_lower.cmp(&fields_b.filename_lower))
+                    .then_with(|| path_a.cmp(&path_b));
                 if key == "size_desc" { cmp.reverse() } else { cmp }
             }
             _ => std::cmp::Ordering::Equal,
@@ -975,10 +1125,6 @@ fn build_ui(app: &adw::Application) {
     let selection_model = SingleSelection::new(Some(sort_model.clone()));
 
     let factory = SignalListItemFactory::new();
-    let realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>> =
-        Rc::new(RefCell::new(Vec::new()));
-    let realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>> =
-        Rc::new(RefCell::new(Vec::new()));
 
     let thumbnail_size_setup = thumbnail_size.clone();
     let realized_thumb_images_setup = realized_thumb_images.clone();
@@ -1307,12 +1453,8 @@ fn build_ui(app: &adw::Application) {
     });
 
     let current_folder_for_actions = current_folder.clone();
-    let list_store_for_actions = list_store.clone();
     let hash_cache_for_actions = hash_cache.clone();
-    let meta_cache_for_actions = meta_cache.clone();
-    let spinner_for_actions = spinner.clone();
-    let sender_for_actions = sender.clone();
-    let sort_key_for_actions = sort_key.clone();
+    let start_scan_for_actions = start_scan_for_folder.clone();
     refresh_folder_thumbs_action.connect_activate(move |_, _| {
         let Some(folder) = current_folder_for_actions.borrow().as_ref().cloned() else {
             return;
@@ -1324,21 +1466,12 @@ fn build_ui(app: &adw::Application) {
         for hash in cached_hashes {
             thumbnails::remove_hash_thumbnail_variants(&hash);
         }
-
-        list_store_for_actions.remove_all();
-        hash_cache_for_actions.borrow_mut().clear();
-        meta_cache_for_actions.borrow_mut().clear();
-        spinner_for_actions.start();
-        scan_directory(folder, sender_for_actions.clone(), sort_key_for_actions.borrow().clone());
+        start_scan_for_actions(folder);
     });
 
     let current_folder_for_actions = current_folder.clone();
     let list_store_for_actions = list_store.clone();
-    let hash_cache_for_actions = hash_cache.clone();
-    let meta_cache_for_actions = meta_cache.clone();
-    let spinner_for_actions = spinner.clone();
-    let sender_for_actions = sender.clone();
-    let sort_key_for_actions = sort_key.clone();
+    let start_scan_for_actions = start_scan_for_folder.clone();
     refresh_folder_meta_action.connect_activate(move |_, _| {
         let Some(folder) = current_folder_for_actions.borrow().as_ref().cloned() else {
             return;
@@ -1356,12 +1489,7 @@ fn build_ui(app: &adw::Application) {
                 let _ = db::refresh_indexed(&conn, p);
             }
         }
-
-        list_store_for_actions.remove_all();
-        hash_cache_for_actions.borrow_mut().clear();
-        meta_cache_for_actions.borrow_mut().clear();
-        spinner_for_actions.start();
-        scan_directory(folder, sender_for_actions.clone(), sort_key_for_actions.borrow().clone());
+        start_scan_for_actions(folder);
     });
 
     action_group.add_action(&copy_prompt_action);
@@ -1652,23 +1780,13 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Wire: open_btn → FileDialog → start scan (quick-jump shortcut)
     // -----------------------------------------------------------------------
-    let sender_btn = sender.clone();
-    let list_store_btn = list_store.clone();
     let window_ref = window.clone();
-    let spinner_btn = spinner.clone();
     let current_folder_btn = current_folder.clone();
-    let meta_cache_btn = meta_cache.clone();
-    let hash_cache_btn = hash_cache.clone();
-    let sort_key_btn = sort_key.clone();
+    let start_scan_open = start_scan_for_folder.clone();
     open_btn.connect_clicked(move |_| {
         let dialog = gtk4::FileDialog::builder().title("Choose a Folder").build();
-        let sender2 = sender_btn.clone();
-        let list_store2 = list_store_btn.clone();
-        let spinner2 = spinner_btn.clone();
         let cf2 = current_folder_btn.clone();
-        let cache2 = meta_cache_btn.clone();
-        let hash2 = hash_cache_btn.clone();
-        let sk2 = sort_key_btn.clone();
+        let start_scan2 = start_scan_open.clone();
         dialog.select_folder(
             Some(&window_ref),
             None::<&gio::Cancellable>,
@@ -1676,11 +1794,7 @@ fn build_ui(app: &adw::Application) {
                 let Ok(file) = result else { return };
                 let Some(path) = file.path() else { return };
                 *cf2.borrow_mut() = Some(path.clone());
-                list_store2.remove_all();
-                cache2.borrow_mut().clear();
-                hash2.borrow_mut().clear();
-                spinner2.start();
-                scan_directory(path, sender2.clone(), sk2.borrow().clone());
+                start_scan2(path);
             },
         );
     });
@@ -1690,6 +1804,9 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     let sort_key_dd = sort_key.clone();
     let sorter_dd = sorter.clone();
+    let current_folder_dd = current_folder.clone();
+    let scan_in_progress_dd = scan_in_progress.clone();
+    let start_scan_dd = start_scan_for_folder.clone();
     sort_dropdown.connect_selected_notify(move |dd| {
         let key = match dd.selected() {
             0 => "name_asc",
@@ -1700,7 +1817,19 @@ fn build_ui(app: &adw::Application) {
             5 => "size_desc",
             _ => "name_asc",
         };
-        *sort_key_dd.borrow_mut() = key.to_string();
+        let new_key = key.to_string();
+        if *sort_key_dd.borrow() == new_key {
+            return;
+        }
+        *sort_key_dd.borrow_mut() = new_key;
+
+        if scan_in_progress_dd.get() {
+            if let Some(folder) = current_folder_dd.borrow().as_ref().cloned() {
+                start_scan_dd(folder);
+                return;
+            }
+        }
+
         sorter_dd.changed(gtk4::SorterChange::Different);
     });
 
@@ -1771,26 +1900,11 @@ fn build_ui(app: &adw::Application) {
             }
 
             {
-                let mut images = realized_thumb_images_toggle.borrow_mut();
-                images.retain(|weak| weak.upgrade().is_some());
-                for weak in images.iter() {
-                    if let Some(image) = weak.upgrade() {
-                        image.set_pixel_size(selected_size);
-                        let bound_path = unsafe {
-                            image
-                                .data::<String>("bound-path")
-                                .map(|path| path.as_ref().clone())
-                        };
-                        if let Some(path_str) = bound_path {
-                            load_grid_thumbnail(
-                                &image,
-                                path_str,
-                                selected_size,
-                                hash_cache_toggle.clone(),
-                            );
-                        }
-                    }
-                }
+                refresh_realized_grid_thumbnails(
+                    &realized_thumb_images_toggle,
+                    &thumbnail_size_toggle,
+                    &hash_cache_toggle,
+                );
             }
 
             grid_view_toggle.queue_resize();
@@ -1906,9 +2020,7 @@ fn build_ui(app: &adw::Application) {
     if let Some(last_folder) = app_config.last_folder {
         if last_folder.is_dir() {
             *current_folder.borrow_mut() = Some(last_folder.clone());
-            list_store.remove_all();
-            spinner.start();
-            scan_directory(last_folder.clone(), sender.clone(), sort_key.borrow().clone());
+            start_scan_for_folder(last_folder.clone());
             sync_tree_to_path(&tree_model, &tree_list_view, &last_folder);
         }
     }

@@ -60,17 +60,18 @@ pub trait MetadataDispatcher: Send + Sync {
 #[derive(Debug)]
 pub enum ScanMessage {
     /// A path was found during the fast enumeration phase (no metadata yet).
-    ImageEnumerated { path: String },
+    ImageEnumerated { path: String, generation: u64 },
     /// Enumeration is done; enrichment phase is starting.
-    EnumerationComplete,
+    EnumerationComplete { generation: u64 },
     /// An image has been fully indexed (hash, metadata, thumbnail).
     ImageEnriched {
         path: String,
         hash: String,
         meta: ImageMetadata,
+        generation: u64,
     },
     /// The directory scan (enumerate + enrich) is finished.
-    ScanComplete,
+    ScanComplete { generation: u64 },
 }
 
 // ---------------------------------------------------------------------------
