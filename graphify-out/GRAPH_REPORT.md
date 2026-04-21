@@ -1,7 +1,7 @@
 # Graph Report - /media/nemesarial/SmallData/code/lumen-node  (2026-04-21)
 
 ## Corpus Check
-- 6 files · ~83,674 words
+- 6 files · ~84,023 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -64,44 +64,44 @@ Cohesion: 0.25
 Nodes (15): build_index_row(), create_schema(), db_path(), ensure_indexed_with_outcome(), favourite_for_path(), file_mtime(), file_size(), get_cached() (+7 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.21
-Nodes (9): build_tree_root(), clamp_f64(), ClickStepTiming, get_mount_points(), pct_to_px(), PreviewLoadMetrics, PreviewLoadOutcome, px_to_pct() (+1 more)
+Cohesion: 0.19
+Nodes (11): build_tree_root(), clamp_f64(), ClickStepTiming, get_mount_points(), normalize_thumbnail_size(), pct_to_px(), PreviewLoadMetrics, PreviewLoadOutcome (+3 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.27
 Nodes (10): apply_text_chunk(), DefaultMetadataDispatcher, extract_comfyui_prompts(), extract_comfyui_summary(), extract_exif(), extract_png(), extract_png_with_exif(), ImageMetadata (+2 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.28
-Nodes (9): attach_context_menu(), build_ui(), extract_seed_from_parameters(), format_generation_command(), monitor_bounds_for_window(), normalize_thumbnail_size(), selected_image_path(), sync_tree_to_path() (+1 more)
+Cohesion: 0.27
+Nodes (10): attach_context_menu(), build_ui(), compute_sort_fields(), extract_seed_from_parameters(), format_generation_command(), format_metadata_text(), load_picture_async(), monitor_bounds_for_window() (+2 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.25
-Nodes (7): compute_sort_fields(), emit_click_report(), emit_full_view_report(), format_metadata_text(), FullViewTrace, load_picture_async(), write_timing_report()
+Nodes (6): ClickTrace, load_metadata_async(), mark_click_step(), populate_metadata_sidebar(), prettify_json_if_valid(), try_finalize_click_trace()
 
 ### Community 6 - "Community 6"
 Cohesion: 0.43
 Nodes (2): ScanProgressState, sync_progress_widgets()
 
 ### Community 7 - "Community 7"
-Cohesion: 0.4
-Nodes (5): load_metadata_async(), mark_click_step(), populate_metadata_sidebar(), prettify_json_if_valid(), try_finalize_click_trace()
-
-### Community 8 - "Community 8"
 Cohesion: 0.6
 Nodes (4): prune_missing(), is_image(), scan_directory(), sort_paths()
 
-### Community 9 - "Community 9"
+### Community 8 - "Community 8"
 Cohesion: 0.6
 Nodes (4): AppConfig, config_path(), load(), save()
+
+### Community 9 - "Community 9"
+Cohesion: 0.67
+Nodes (3): emit_click_report(), emit_full_view_report(), write_timing_report()
 
 ### Community 10 - "Community 10"
 Cohesion: 0.67
 Nodes (1): AtomicTaskGuard
 
 ### Community 11 - "Community 11"
-Cohesion: 0.67
-Nodes (1): ClickTrace
+Cohesion: 1.0
+Nodes (1): FullViewTrace
 
 ### Community 12 - "Community 12"
 Cohesion: 1.0
@@ -110,6 +110,8 @@ Nodes (1): LumenNode UI - Image Gallery with Professional Context
 ## Knowledge Gaps
 - **11 isolated node(s):** `ImageRow`, `IndexOutcome`, `ClickStepTiming`, `PreviewLoadOutcome`, `SortFields` (+6 more)
   These have ≤1 connection - possible missing edges or undocumented components.
+- **Thin community `Community 11`** (2 nodes): `FullViewTrace`, `.total_ms()`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 12`** (1 nodes): `LumenNode UI - Image Gallery with Professional Context`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
@@ -118,9 +120,9 @@ _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `build_ui()` connect `Community 4` to `Community 0`, `Community 1`, `Community 2`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 9`?**
   _High betweenness centrality (0.439) - this node is a cross-community bridge._
-- **Why does `open()` connect `Community 1` to `Community 0`, `Community 3`, `Community 4`, `Community 5`, `Community 8`?**
+- **Why does `open()` connect `Community 1` to `Community 0`, `Community 3`, `Community 4`, `Community 7`, `Community 9`?**
   _High betweenness centrality (0.120) - this node is a cross-community bridge._
-- **Why does `extract_png()` connect `Community 3` to `Community 1`, `Community 5`?**
+- **Why does `extract_png()` connect `Community 3` to `Community 1`, `Community 4`?**
   _High betweenness centrality (0.084) - this node is a cross-community bridge._
 - **Are the 11 inferred relationships involving `build_ui()` (e.g. with `load()` and `scan_directory()`) actually correct?**
   _`build_ui()` has 11 INFERRED edges - model-reasoned connections that need verification._
