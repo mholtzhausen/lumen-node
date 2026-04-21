@@ -171,23 +171,40 @@ pub fn hash_thumb_path(hash: &str) -> PathBuf {
     hash_cache_dir().join(format!("{hash}.png"))
 }
 
-/// Returns the hash-based thumbnail path if it already exists on disk.
-pub fn hash_thumb_if_exists(hash: &str) -> Option<PathBuf> {
-    let p = hash_thumb_path(hash);
+/// Returns the path to a hash-addressed thumbnail for a specific size.
+///
+/// The default 128px thumbnail keeps the existing `{hash}.png` format.
+/// Non-default sizes use `{hash}_{size}.png`.
+pub fn hash_thumb_path_for_size(hash: &str, size: i32) -> PathBuf {
+    if size == THUMB_NORMAL_SIZE {
+        return hash_thumb_path(hash);
+    }
+    hash_cache_dir().join(format!("{hash}_{size}.png"))
+}
+
+/// Returns the size-specific hash-based thumbnail path if it already exists on disk.
+pub fn hash_thumb_if_exists_for_size(hash: &str, size: i32) -> Option<PathBuf> {
+    let p = hash_thumb_path_for_size(hash, size);
     if p.exists() { Some(p) } else { None }
 }
 
 /// Generates and saves a thumbnail keyed by content hash.
 /// Returns the path to the generated thumbnail, or `None` on failure.
 pub fn generate_hash_thumbnail(source: &Path, hash: &str) -> Option<PathBuf> {
-    let thumb = hash_thumb_path(hash);
+    generate_hash_thumbnail_for_size(source, hash, THUMB_NORMAL_SIZE)
+}
+
+/// Generates and saves a size-specific thumbnail keyed by content hash.
+/// Returns the path to the generated thumbnail, or `None` on failure.
+pub fn generate_hash_thumbnail_for_size(source: &Path, hash: &str, size: i32) -> Option<PathBuf> {
+    let thumb = hash_thumb_path_for_size(hash, size);
     if thumb.exists() {
         return Some(thumb);
     }
     let pixbuf = Pixbuf::from_file_at_scale(
         source,
-        THUMB_NORMAL_SIZE,
-        THUMB_NORMAL_SIZE,
+        size,
+        size,
         true,
     )
     .ok()?;
@@ -198,4 +215,23 @@ pub fn generate_hash_thumbnail(source: &Path, hash: &str) -> Option<PathBuf> {
 
     let _ = pixbuf.savev(&thumb, "png", &[]);
     Some(thumb)
+}
+
+/// Removes the default and any size-specific hash thumbnail variants for `hash`.
+pub fn remove_hash_thumbnail_variants(hash: &str) {
+    let _ = std::fs::remove_file(hash_thumb_path(hash));
+
+    let Ok(entries) = std::fs::read_dir(hash_cache_dir()) else {
+        return;
+    };
+    let prefix = format!("{hash}_");
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name.starts_with(&prefix) && name.ends_with(".png") {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }

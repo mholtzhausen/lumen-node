@@ -158,6 +158,111 @@ enum PreviewLoadOutcome {
     StaleOrCancelled,
 }
 
+fn thumbnail_size_options() -> [i32; 4] {
+    let base = thumbnails::THUMB_NORMAL_SIZE;
+    [
+        base,
+        (((base as f64) * 1.3 / 16.0).round() as i32) * 16,
+        (((base as f64) * 1.6 / 16.0).round() as i32) * 16,
+        (((base as f64) * 1.9 / 16.0).round() as i32) * 16,
+    ]
+}
+
+fn normalize_thumbnail_size(size: i32) -> i32 {
+    let options = thumbnail_size_options();
+    options
+        .iter()
+        .copied()
+        .min_by_key(|opt| (opt - size).abs())
+        .unwrap_or(thumbnails::THUMB_NORMAL_SIZE)
+}
+
+fn load_grid_thumbnail(
+    thumb_image: &Image,
+    path_str: String,
+    size: i32,
+    hash_cache: Rc<RefCell<HashMap<String, String>>>,
+) {
+    thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
+    unsafe { thumb_image.set_data("bound-path", path_str.clone()); }
+
+    if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0 {
+        return;
+    }
+
+    let cached_hash = hash_cache.borrow().get(&path_str).cloned();
+    let already_loaded = if let Some(ref hash) = cached_hash {
+        if let Some(thumb) = thumbnails::hash_thumb_if_exists_for_size(hash, size) {
+            if let Ok(pb) = gdk_pixbuf::Pixbuf::from_file(&thumb) {
+                let tex = gdk::Texture::for_pixbuf(&pb);
+                thumb_image.set_paintable(Some(&tex));
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if already_loaded {
+        return;
+    }
+
+    let path_for_thread = std::path::PathBuf::from(&path_str);
+    let cached_hash_for_task = cached_hash.clone();
+    let task = gio::spawn_blocking(move || {
+        let _guard = AtomicTaskGuard::new(&ACTIVE_THUMBNAIL_TASKS);
+
+        if let Some(hash) = cached_hash_for_task {
+            let thumb = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size);
+            return (thumb, Some(hash));
+        }
+
+        if size == thumbnails::THUMB_NORMAL_SIZE {
+            return (thumbnails::ensure_thumbnail(&path_for_thread), None);
+        }
+
+        let Ok(hash) = db::hash_file(&path_for_thread) else {
+            return (None, None);
+        };
+        let thumb = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size);
+        (thumb, Some(hash))
+    });
+
+    let image_weak = thumb_image.downgrade();
+    glib::MainContext::default().spawn_local(async move {
+        THUMB_UI_CALLBACKS_TOTAL.fetch_add(1, AtomicOrdering::Relaxed);
+        let Ok((maybe_cache, resolved_hash)) = task.await else { return };
+        if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0 {
+            THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW.fetch_add(1, AtomicOrdering::Relaxed);
+            return;
+        }
+        let Some(image) = image_weak.upgrade() else { return };
+        let is_current = unsafe {
+            image
+                .data::<String>("bound-path")
+                .map(|p| p.as_ref().as_str() == path_str.as_str())
+                .unwrap_or(false)
+        };
+        if !is_current {
+            return;
+        }
+        if let Some(hash) = resolved_hash {
+            hash_cache.borrow_mut().insert(path_str.clone(), hash);
+        }
+        match maybe_cache.and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok()) {
+            Some(pb) => {
+                let tex = gdk::Texture::for_pixbuf(&pb);
+                image.set_paintable(Some(&tex));
+            }
+            None => image.set_icon_name(Some("image-missing-symbolic")),
+        }
+    });
+}
+
 struct PreviewLoadMetrics {
     outcome: PreviewLoadOutcome,
     queue_wait_ms: f64,
@@ -453,6 +558,10 @@ fn build_ui(app: &adw::Application) {
         app_config.search_text.clone().unwrap_or_default(),
     ));
 
+    let initial_thumbnail_size =
+        normalize_thumbnail_size(app_config.thumbnail_size.unwrap_or(thumbnails::THUMB_NORMAL_SIZE));
+    let thumbnail_size: Rc<RefCell<i32>> = Rc::new(RefCell::new(initial_thumbnail_size));
+
     // -----------------------------------------------------------------------
     // Receiver task: buffer messages and drain in idle-priority batches
     // -----------------------------------------------------------------------
@@ -606,6 +715,22 @@ fn build_ui(app: &adw::Application) {
     let sort_dropdown = gtk4::DropDown::new(Some(sort_options), gtk4::Expression::NONE);
     sort_dropdown.set_tooltip_text(Some("Sort order"));
 
+    // --- Thumbnail size toggles ---
+    let size_options = thumbnail_size_options();
+    let size_selector = gtk4::Box::new(Orientation::Horizontal, 0);
+    size_selector.add_css_class("linked");
+    size_selector.set_tooltip_text(Some("Thumbnail size"));
+    let size_labels = ["1x", "1.3x", "1.6x", "1.9x"];
+    let mut size_buttons_vec = Vec::new();
+    for (idx, px) in size_options.iter().enumerate() {
+        let btn = gtk4::ToggleButton::with_label(size_labels[idx]);
+        btn.set_tooltip_text(Some(&format!("{} px", px)));
+        btn.set_active(*px == initial_thumbnail_size);
+        size_selector.append(&btn);
+        size_buttons_vec.push(btn);
+    }
+    let size_buttons = Rc::new(size_buttons_vec);
+
     // --- Search entry ---
     let search_entry = gtk4::SearchEntry::new();
     search_entry.set_placeholder_text(Some("Search…"));
@@ -619,6 +744,7 @@ fn build_ui(app: &adw::Application) {
     let toolbar_center = gtk4::Box::new(Orientation::Horizontal, 6);
     toolbar_center.set_valign(gtk4::Align::Center);
     toolbar_center.append(&sort_dropdown);
+    toolbar_center.append(&size_selector);
     toolbar_center.append(&search_entry);
     toolbar_center.append(&clear_btn);
     header_bar.set_title_widget(Some(&toolbar_center));
@@ -849,14 +975,24 @@ fn build_ui(app: &adw::Application) {
     let selection_model = SingleSelection::new(Some(sort_model.clone()));
 
     let factory = SignalListItemFactory::new();
+    let realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>> =
+        Rc::new(RefCell::new(Vec::new()));
 
-    factory.connect_setup(|_, obj| {
+    let thumbnail_size_setup = thumbnail_size.clone();
+    let realized_thumb_images_setup = realized_thumb_images.clone();
+    let realized_cell_boxes_setup = realized_cell_boxes.clone();
+    factory.connect_setup(move |_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
         let cell_box = gtk4::Box::new(Orientation::Vertical, 4);
         cell_box.set_halign(gtk4::Align::Center);
-        cell_box.set_size_request(132, 148);
+        let size = *thumbnail_size_setup.borrow();
+        cell_box.set_size_request(size + 4, size + 20);
         let thumb_image = Image::new();
-        thumb_image.set_pixel_size(128);
+        thumb_image.set_pixel_size(size);
+        realized_cell_boxes_setup.borrow_mut().push(cell_box.downgrade());
+        realized_thumb_images_setup.borrow_mut().push(thumb_image.downgrade());
         let name_label = Label::new(None);
         name_label.set_max_width_chars(16);
         name_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
@@ -867,6 +1003,7 @@ fn build_ui(app: &adw::Application) {
     });
 
     let hash_cache_bind = hash_cache.clone();
+    let thumbnail_size_bind = thumbnail_size.clone();
     factory.connect_bind(move |_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
         let path_str = list_item
@@ -878,6 +1015,9 @@ fn build_ui(app: &adw::Application) {
         let cell_box = list_item.child().and_downcast::<gtk4::Box>().unwrap();
         let thumb_image = cell_box.first_child().and_downcast::<Image>().unwrap();
         let name_label = cell_box.last_child().and_downcast::<Label>().unwrap();
+        let size = *thumbnail_size_bind.borrow();
+        cell_box.set_size_request(size + 4, size + 20);
+        thumb_image.set_pixel_size(size);
 
         // Set filename label and placeholder icon synchronously (zero I/O).
         let filename = std::path::Path::new(&path_str)
@@ -885,65 +1025,7 @@ fn build_ui(app: &adw::Application) {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         name_label.set_text(&filename);
-        thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
-
-        // Tag the image widget with the path it's currently bound to.
-        // The async callback uses this to detect stale (recycled) cells.
-        unsafe { thumb_image.set_data("bound-path", path_str.clone()); }
-
-        // While preview loading is in flight, avoid all thumbnail work in bind,
-        // including synchronous cache reads/decodes, to reduce main-thread pressure.
-        if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0 {
-            return;
-        }
-
-        // Try to load hash-based thumbnail synchronously first (instant if cached).
-        let cached_hash = hash_cache_bind.borrow().get(&path_str).cloned();
-        let already_loaded = if let Some(ref hash) = cached_hash {
-            if let Some(thumb) = thumbnails::hash_thumb_if_exists(hash) {
-                if let Ok(pb) = gdk_pixbuf::Pixbuf::from_file(&thumb) {
-                    let tex = gdk::Texture::for_pixbuf(&pb);
-                    thumb_image.set_paintable(Some(&tex));
-                    true
-                } else { false }
-            } else { false }
-        } else { false };
-
-        if !already_loaded {
-            // Fall back to off-thread thumbnail generation via GLib's bounded thread pool.
-            let path_for_thread = std::path::PathBuf::from(&path_str);
-            let task = gio::spawn_blocking(move || {
-                let _guard = AtomicTaskGuard::new(&ACTIVE_THUMBNAIL_TASKS);
-                thumbnails::ensure_thumbnail(&path_for_thread)
-            });
-
-            let image_weak = thumb_image.downgrade();
-            glib::MainContext::default().spawn_local(async move {
-                THUMB_UI_CALLBACKS_TOTAL.fetch_add(1, AtomicOrdering::Relaxed);
-                let Ok(maybe_cache) = task.await else { return };
-                if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0 {
-                    THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW.fetch_add(1, AtomicOrdering::Relaxed);
-                    return;
-                }
-                let Some(image) = image_weak.upgrade() else { return };
-                let is_current = unsafe {
-                    image
-                        .data::<String>("bound-path")
-                        .map(|p| p.as_ref().as_str() == path_str.as_str())
-                        .unwrap_or(false)
-                };
-                if !is_current {
-                    return;
-                }
-                match maybe_cache.and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok()) {
-                    Some(pb) => {
-                        let tex = gdk::Texture::for_pixbuf(&pb);
-                        image.set_paintable(Some(&tex));
-                    }
-                    None => image.set_icon_name(Some("image-missing-symbolic")),
-                }
-            });
-        }
+        load_grid_thumbnail(&thumb_image, path_str, size, hash_cache_bind.clone());
     });
 
     factory.connect_unbind(|_, obj| {
@@ -1165,6 +1247,7 @@ fn build_ui(app: &adw::Application) {
     let selection_for_actions = selection_model.clone();
     let hash_cache_for_actions = hash_cache.clone();
     let toast_overlay_for_actions = toast_overlay.clone();
+    let thumbnail_size_for_actions = thumbnail_size.clone();
     refresh_thumb_action.connect_activate(move |_, _| {
         let Some(path) = selected_image_path(&selection_for_actions) else {
             return;
@@ -1176,9 +1259,12 @@ fn build_ui(app: &adw::Application) {
             .or_else(|| db::hash_file(&path).ok());
         let Some(hash) = hash else { return };
 
-        let thumb_path = thumbnails::hash_thumb_path(&hash);
-        let _ = std::fs::remove_file(&thumb_path);
+        thumbnails::remove_hash_thumbnail_variants(&hash);
         let _ = thumbnails::generate_hash_thumbnail(&path, &hash);
+        let current_size = *thumbnail_size_for_actions.borrow();
+        if current_size != thumbnails::THUMB_NORMAL_SIZE {
+            let _ = thumbnails::generate_hash_thumbnail_for_size(&path, &hash, current_size);
+        }
         hash_cache_for_actions
             .borrow_mut()
             .insert(path.to_string_lossy().to_string(), hash);
@@ -1236,7 +1322,7 @@ fn build_ui(app: &adw::Application) {
         let cached_hashes: Vec<String> =
             hash_cache_for_actions.borrow().values().cloned().collect();
         for hash in cached_hashes {
-            let _ = std::fs::remove_file(thumbnails::hash_thumb_path(&hash));
+            thumbnails::remove_hash_thumbnail_variants(&hash);
         }
 
         list_store_for_actions.remove_all();
@@ -1647,6 +1733,72 @@ fn build_ui(app: &adw::Application) {
     });
 
     // -----------------------------------------------------------------------
+    // Wire: thumbnail size toggles → update size and refresh cell bindings
+    // -----------------------------------------------------------------------
+    let grid_view_toggle = grid_view.clone();
+    let realized_thumb_images_toggle = realized_thumb_images.clone();
+    let realized_cell_boxes_toggle = realized_cell_boxes.clone();
+    let hash_cache_toggle = hash_cache.clone();
+    for (idx, button) in size_buttons.iter().enumerate() {
+        let options = size_options;
+        let buttons = size_buttons.clone();
+        let thumbnail_size_toggle = thumbnail_size.clone();
+        let grid_view_toggle = grid_view_toggle.clone();
+        let realized_thumb_images_toggle = realized_thumb_images_toggle.clone();
+        let realized_cell_boxes_toggle = realized_cell_boxes_toggle.clone();
+        let hash_cache_toggle = hash_cache_toggle.clone();
+        button.connect_clicked(move |_| {
+            let selected_size = options[idx];
+            let was_selected = *thumbnail_size_toggle.borrow() == selected_size;
+            *thumbnail_size_toggle.borrow_mut() = selected_size;
+
+            for (i, btn) in buttons.iter().enumerate() {
+                btn.set_active(i == idx);
+            }
+
+            if was_selected {
+                return;
+            }
+
+            {
+                let mut boxes = realized_cell_boxes_toggle.borrow_mut();
+                boxes.retain(|weak| weak.upgrade().is_some());
+                for weak in boxes.iter() {
+                    if let Some(cell_box) = weak.upgrade() {
+                        cell_box.set_size_request(selected_size + 4, selected_size + 20);
+                    }
+                }
+            }
+
+            {
+                let mut images = realized_thumb_images_toggle.borrow_mut();
+                images.retain(|weak| weak.upgrade().is_some());
+                for weak in images.iter() {
+                    if let Some(image) = weak.upgrade() {
+                        image.set_pixel_size(selected_size);
+                        let bound_path = unsafe {
+                            image
+                                .data::<String>("bound-path")
+                                .map(|path| path.as_ref().clone())
+                        };
+                        if let Some(path_str) = bound_path {
+                            load_grid_thumbnail(
+                                &image,
+                                path_str,
+                                selected_size,
+                                hash_cache_toggle.clone(),
+                            );
+                        }
+                    }
+                }
+            }
+
+            grid_view_toggle.queue_resize();
+            grid_view_toggle.queue_draw();
+        });
+    }
+
+    // -----------------------------------------------------------------------
     // Assemble three-pane layout with resizable Paned dividers
     // -----------------------------------------------------------------------
     // Inner paned: center | right sidebar
@@ -1734,6 +1886,7 @@ fn build_ui(app: &adw::Application) {
     let meta_paned_close = meta_paned.clone();
     let sort_key_close = sort_key.clone();
     let search_text_close = search_text.clone();
+    let thumbnail_size_close = thumbnail_size.clone();
     window.connect_close_request(move |_| {
         config::save(
             cf_close.borrow().as_deref(),
@@ -1742,6 +1895,7 @@ fn build_ui(app: &adw::Application) {
             meta_paned_close.position(),
             &sort_key_close.borrow(),
             &search_text_close.borrow(),
+            *thumbnail_size_close.borrow(),
         );
         glib::Propagation::Proceed
     });

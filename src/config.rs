@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub meta_pane_pos: Option<i32>,
     pub sort_key: Option<String>,
     pub search_text: Option<String>,
+    pub thumbnail_size: Option<i32>,
 }
 
 /// Loads `~/.lumen-node/config.yml`.  Missing file → empty config.
@@ -17,6 +18,7 @@ pub fn load() -> AppConfig {
     let mut meta_pane_pos = None;
     let mut sort_key = None;
     let mut search_text = None;
+    let mut thumbnail_size = None;
     if let Ok(content) = std::fs::read_to_string(config_path()) {
         for line in content.lines() {
             if let Some(val) = line.strip_prefix("last_folder: ") {
@@ -38,10 +40,20 @@ pub fn load() -> AppConfig {
             } else if let Some(val) = line.strip_prefix("search_text: ") {
                 // Value may be empty (empty search = no prefix match, so use raw line remainder)
                 search_text = Some(val.to_string());
+            } else if let Some(val) = line.strip_prefix("thumbnail_size: ") {
+                thumbnail_size = val.trim().parse::<i32>().ok();
             }
         }
     }
-    AppConfig { last_folder, left_pane_pos, right_pane_pos, meta_pane_pos, sort_key, search_text }
+    AppConfig {
+        last_folder,
+        left_pane_pos,
+        right_pane_pos,
+        meta_pane_pos,
+        sort_key,
+        search_text,
+        thumbnail_size,
+    }
 }
 
 /// Writes config to `~/.lumen-node/config.yml`, creating the directory if needed.
@@ -52,6 +64,7 @@ pub fn save(
     meta_pane_pos: i32,
     sort_key: &str,
     search_text: &str,
+    thumbnail_size: i32,
 ) {
     let path = config_path();
     if let Some(parent) = path.parent() {
@@ -61,8 +74,14 @@ pub fn save(
         .map(|p| p.display().to_string())
         .unwrap_or_default();
     let content = format!(
-        "last_folder: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nsort_key: {}\nsearch_text: {}\n",
-        folder_str, left_pane_pos, right_pane_pos, meta_pane_pos, sort_key, search_text,
+        "last_folder: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nsort_key: {}\nsearch_text: {}\nthumbnail_size: {}\n",
+        folder_str,
+        left_pane_pos,
+        right_pane_pos,
+        meta_pane_pos,
+        sort_key,
+        search_text,
+        thumbnail_size,
     );
     let _ = std::fs::write(&path, content);
 }
