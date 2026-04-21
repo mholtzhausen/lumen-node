@@ -20,7 +20,8 @@ use std::{
 use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
-    gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, FilterListModel,
+    gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, EventControllerScroll,
+    EventControllerScrollFlags, FilterListModel,
     GestureClick,
     GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Paned, Picture,
     PopoverMenu, ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
@@ -2600,6 +2601,63 @@ fn build_ui(app: &adw::Application) {
     window.add_controller(key_controller);
 
     // -----------------------------------------------------------------------
+    // Scroll on single-view / meta-preview → navigate images
+    // Accumulate delta so smooth-scroll trackpads don't flood set_selected.
+    // -----------------------------------------------------------------------
+    {
+        let selection = selection_model.clone();
+        let picture = single_picture.clone();
+        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+        scroll.connect_scroll(move |_, _dx, dy| {
+            let count = selection.n_items();
+            if count == 0 {
+                return glib::Propagation::Proceed;
+            }
+            accum.set(accum.get() + dy);
+            let steps = accum.get().trunc() as i32;
+            if steps == 0 {
+                return glib::Propagation::Stop;
+            }
+            accum.set(accum.get().fract());
+            let cur = selection.selected() as i32;
+            let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
+            if next != cur as u32 {
+                selection.set_selected(next);
+                if let Some(item) = selection.selected_item().and_downcast::<StringObject>() {
+                    load_picture_async(&picture, &item.string().to_string(), None, None);
+                }
+            }
+            glib::Propagation::Stop
+        });
+        single_picture.add_controller(scroll);
+    }
+    {
+        let selection = selection_model.clone();
+        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+        scroll.connect_scroll(move |_, _dx, dy| {
+            let count = selection.n_items();
+            if count == 0 {
+                return glib::Propagation::Proceed;
+            }
+            accum.set(accum.get() + dy);
+            let steps = accum.get().trunc() as i32;
+            if steps == 0 {
+                return glib::Propagation::Stop;
+            }
+            accum.set(accum.get().fract());
+            let cur = selection.selected() as i32;
+            let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
+            if next != cur as u32 {
+                selection.set_selected(next);
+            }
+            glib::Propagation::Stop
+        });
+        meta_preview.add_controller(scroll);
+    }
+
+    // -----------------------------------------------------------------------
     // Save config on window close (folder + pane positions)
     // -----------------------------------------------------------------------
     let cf_close = current_folder.clone();
@@ -3140,12 +3198,19 @@ fn load_metadata_async(
         populate_metadata_sidebar(&listbox, &metadata);
 
         // Mark metadata as complete in trace if it's still the current click.
-        if let Some(trace) = trace_state.borrow_mut().as_mut() {
+        let should_finalize = if let Some(trace) = trace_state.borrow_mut().as_mut() {
             if trace.id == click_id && !trace.finished {
                 trace.mark_step("metadata_shown");
                 trace.metadata_done = true;
-                try_finalize_click_trace(&trace_state, click_id);
+                true
+            } else {
+                false
             }
+        } else {
+            false
+        };
+        if should_finalize {
+            try_finalize_click_trace(&trace_state, click_id);
         }
     });
 }
