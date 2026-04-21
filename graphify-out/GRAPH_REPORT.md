@@ -1,7 +1,7 @@
-# Graph Report - /media/nemesarial/SmallData/code/lumen-node  (2026-04-21)
+# Graph Report - /media/nemesarial/SmallData/code/lumen-node  (2026-04-22)
 
 ## Corpus Check
-- 6 files · ~84,178 words
+- 6 files · ~84,063 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
