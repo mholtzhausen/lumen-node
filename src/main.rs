@@ -63,6 +63,33 @@ fn px_to_pct(px: i32, total: i32) -> f64 {
     clamp_f64(((px.max(0) as f64) / total) * 100.0, 0.0, 100.0)
 }
 
+fn prettify_json_if_valid(text: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(json) => serde_json::to_string_pretty(&json).unwrap_or_else(|_| text.to_string()),
+        Err(_) => text.to_string(),
+    }
+}
+
+fn monitor_bounds_for_window(window: &adw::ApplicationWindow) -> (i32, i32) {
+    let display = gtk4::prelude::WidgetExt::display(window);
+    if let Some(surface) = window.surface() {
+        if let Some(monitor) = display.monitor_at_surface(&surface) {
+            let geometry = monitor.geometry();
+            return (geometry.width().max(1), geometry.height().max(1));
+        }
+    }
+
+    let monitors = display.monitors();
+    for i in 0..monitors.n_items() {
+        if let Some(monitor) = monitors.item(i).and_downcast::<gdk::Monitor>() {
+            let geometry = monitor.geometry();
+            return (geometry.width().max(1), geometry.height().max(1));
+        }
+    }
+
+    (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+}
+
 #[derive(Default)]
 struct ScanProgressState {
     generation: u64,
@@ -716,10 +743,23 @@ fn try_finalize_click_trace(trace_state: &Rc<RefCell<Option<ClickTrace>>>, click
 fn build_ui(app: &adw::Application) {
     let window = adw::ApplicationWindow::new(app);
     window.set_title(Some("LumenNode"));
-    window.set_default_size(1280, 800);
 
     // Load persisted config (last folder).
     let app_config = config::load();
+    let (monitor_width, monitor_height) = monitor_bounds_for_window(&window);
+    let min_window_width = MIN_LEFT_PANE_PX + MIN_CENTER_PANE_PX + MIN_RIGHT_PANE_PX;
+    let min_window_height = (MIN_META_SPLIT_PX * 2).max(360);
+    let initial_window_width = app_config
+        .window_width
+        .unwrap_or(DEFAULT_WINDOW_WIDTH)
+        .clamp(min_window_width, monitor_width.max(min_window_width));
+    let initial_window_height = app_config
+        .window_height
+        .unwrap_or(DEFAULT_WINDOW_HEIGHT)
+        .clamp(min_window_height, monitor_height.max(min_window_height));
+    window.set_default_size(initial_window_width, initial_window_height);
+    let configured_right_pane_width_pct = app_config.right_pane_width_pct;
+    let configured_right_pane_pos = app_config.right_pane_pos;
 
     // Tracks the most recently scanned folder for config persistence.
     let current_folder: Rc<RefCell<Option<std::path::PathBuf>>> =
@@ -1396,6 +1436,12 @@ fn build_ui(app: &adw::Application) {
 
     // --- Center: ViewStack with Grid + Single pages ---
     let selection_model = SingleSelection::new(Some(sort_model.clone()));
+    let selection_for_default = selection_model.clone();
+    sort_model.connect_items_changed(move |model, _, _, _| {
+        if model.n_items() > 0 && selection_for_default.selected_item().is_none() {
+            selection_for_default.set_selected(0);
+        }
+    });
 
     let factory = SignalListItemFactory::new();
 
@@ -1531,7 +1577,12 @@ fn build_ui(app: &adw::Application) {
     let right_pane_width_px = app_config
         .right_pane_width_pct
         .map(|pct| pct_to_px(startup_window_width, pct))
-        .unwrap_or_else(|| startup_window_width.saturating_sub(app_config.right_pane_pos.unwrap_or(800)));
+        .or_else(|| {
+            app_config.right_pane_pos.map(|inner_pos| {
+                startup_window_width.saturating_sub(left_pane_start_px + inner_pos)
+            })
+        })
+        .unwrap_or(260);
     let max_right_pane_width_px = startup_window_width
         .saturating_sub(left_pane_start_px + MIN_CENTER_PANE_PX)
         .max(MIN_RIGHT_PANE_PX);
@@ -2318,6 +2369,9 @@ fn build_ui(app: &adw::Application) {
     let stack_for_keys = view_stack.clone();
     let selection_for_keys = selection_model.clone();
     let picture_for_keys = single_picture.clone();
+    let grid_view_for_keys = grid_view.clone();
+    let grid_scroll_for_keys = grid_scroll.clone();
+    let thumbnail_size_for_keys = thumbnail_size.clone();
     let left_toggle_keys = left_toggle.clone();
     let right_toggle_keys = right_toggle.clone();
     key_controller.connect_key_pressed(move |_, key, _, _| {
@@ -2325,6 +2379,54 @@ fn build_ui(app: &adw::Application) {
             stack_for_keys.set_visible_child_name("grid");
             left_toggle_keys.set_active(true);
             right_toggle_keys.set_active(true);
+            return glib::Propagation::Stop;
+        }
+        let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
+        if in_grid
+            && (key == gdk::Key::Page_Up
+                || key == gdk::Key::Page_Down
+                || key == gdk::Key::Home
+                || key == gdk::Key::End)
+        {
+            let count = selection_for_keys.n_items();
+            if count == 0 {
+                return glib::Propagation::Proceed;
+            }
+            let has_selection = selection_for_keys.selected_item().is_some();
+            let cur = selection_for_keys.selected();
+            let thumb_size = (*thumbnail_size_for_keys.borrow()).max(1);
+            let cell_width = (thumb_size + 4).max(1);
+            let cell_height = (thumb_size + 20).max(1);
+            let viewport_width = grid_scroll_for_keys.width().max(cell_width);
+            let viewport_height = grid_scroll_for_keys.height().max(cell_height);
+            let columns = (viewport_width / cell_width).max(1) as u32;
+            let rows = (viewport_height / cell_height).max(1) as u32;
+            let page_step = (columns * rows).max(1);
+
+            let next = match key {
+                gdk::Key::Home => 0,
+                gdk::Key::End => count - 1,
+                gdk::Key::Page_Up => {
+                    if !has_selection {
+                        0
+                    } else {
+                        cur.saturating_sub(page_step)
+                    }
+                }
+                gdk::Key::Page_Down => {
+                    if !has_selection {
+                        0
+                    } else {
+                        cur.saturating_add(page_step).min(count - 1)
+                    }
+                }
+                _ => cur,
+            };
+
+            if !has_selection || next != cur {
+                selection_for_keys.set_selected(next);
+                grid_view_for_keys.scroll_to(next, ListScrollFlags::SELECT, None);
+            }
             return glib::Propagation::Stop;
         }
         let in_single = stack_for_keys.visible_child_name().as_deref() == Some("single");
@@ -2372,7 +2474,9 @@ fn build_ui(app: &adw::Application) {
     let right_toggle_close = right_toggle.clone();
     let window_for_close = window.clone();
     window.connect_close_request(move |_| {
-        let window_width = window_for_close.width().max(DEFAULT_WINDOW_WIDTH);
+        let window_width = window_for_close.width().max(1);
+        let window_height = window_for_close.height().max(1);
+        let window_maximized = window_for_close.is_maximized();
         let left_pos = outer_paned_close.position();
         let inner_pos = inner_paned_close.position();
         let meta_pos = meta_paned_close.position();
@@ -2380,10 +2484,13 @@ fn build_ui(app: &adw::Application) {
             .width()
             .max(window_width.saturating_sub(left_pos));
         let right_width = inner_width.saturating_sub(inner_pos);
-        let meta_total_height = meta_paned_close.height().max(DEFAULT_WINDOW_HEIGHT);
+        let meta_total_height = meta_paned_close.height().max(1);
 
         config::save(
             cf_close.borrow().as_deref(),
+            window_width,
+            window_height,
+            window_maximized,
             left_pos,
             inner_pos,
             meta_pos,
@@ -2433,7 +2540,51 @@ fn build_ui(app: &adw::Application) {
         }
     }
 
+    if app_config.window_maximized.unwrap_or(false) {
+        window.maximize();
+    }
+
     window.present();
+    let window_for_pane_restore = window.clone();
+    let outer_paned_restore = outer_paned.clone();
+    let inner_paned_restore = inner_paned.clone();
+    let pane_restore_attempts = Rc::new(Cell::new(0_u8));
+    let pane_restore_attempts_tick = pane_restore_attempts.clone();
+    glib::timeout_add_local(Duration::from_millis(16), move || {
+        let attempts = pane_restore_attempts_tick.get();
+        if attempts >= 60 {
+            return glib::ControlFlow::Break;
+        }
+        pane_restore_attempts_tick.set(attempts.saturating_add(1));
+
+        let window_width = window_for_pane_restore.width();
+        let inner_width = inner_paned_restore.width();
+        if window_width <= 1 || inner_width <= 1 {
+            return glib::ControlFlow::Continue;
+        }
+
+        let left_limit =
+            (window_width - MIN_CENTER_PANE_PX - MIN_RIGHT_PANE_PX).max(MIN_LEFT_PANE_PX);
+        let left_pos = outer_paned_restore
+            .position()
+            .clamp(MIN_LEFT_PANE_PX, left_limit);
+        let max_right_pane_width_px = window_width
+            .saturating_sub(left_pos + MIN_CENTER_PANE_PX)
+            .max(MIN_RIGHT_PANE_PX);
+        let right_pane_width_px = configured_right_pane_width_pct
+            .map(|pct| pct_to_px(window_width, pct))
+            .or_else(|| {
+                configured_right_pane_pos
+                    .map(|inner_pos| window_width.saturating_sub(left_pos + inner_pos))
+            })
+            .unwrap_or(260)
+            .clamp(MIN_RIGHT_PANE_PX, max_right_pane_width_px);
+        let inner_pane_start_px = window_width
+            .saturating_sub(left_pos + right_pane_width_px)
+            .max(MIN_CENTER_PANE_PX);
+        inner_paned_restore.set_position(inner_pane_start_px);
+        glib::ControlFlow::Break
+    });
 }
 
 fn attach_context_menu<W: IsA<gtk4::Widget>>(widget: &W, menu_model: &gio::Menu) {
@@ -2461,28 +2612,28 @@ fn selected_image_path(selection: &SingleSelection) -> Option<std::path::PathBuf
 fn format_metadata_text(meta: &ImageMetadata) -> String {
     let mut out = Vec::new();
     if let Some(v) = &meta.camera_make {
-        out.push(format!("Make: {v}"));
+        out.push(format!("Make: {}", prettify_json_if_valid(v)));
     }
     if let Some(v) = &meta.camera_model {
-        out.push(format!("Model: {v}"));
+        out.push(format!("Model: {}", prettify_json_if_valid(v)));
     }
     if let Some(v) = &meta.exposure {
-        out.push(format!("Exposure: {v}"));
+        out.push(format!("Exposure: {}", prettify_json_if_valid(v)));
     }
     if let Some(v) = &meta.iso {
-        out.push(format!("ISO: {v}"));
+        out.push(format!("ISO: {}", prettify_json_if_valid(v)));
     }
     if let Some(v) = &meta.prompt {
-        out.push(format!("Prompt: {v}"));
+        out.push(format!("Prompt: {}", prettify_json_if_valid(v)));
     }
     if let Some(v) = &meta.negative_prompt {
-        out.push(format!("Neg. Prompt: {v}"));
+        out.push(format!("Neg. Prompt: {}", prettify_json_if_valid(v)));
     }
     if let Some(v) = &meta.raw_parameters {
-        out.push(format!("Parameters: {v}"));
+        out.push(format!("Parameters: {}", prettify_json_if_valid(v)));
     }
     if let Some(v) = &meta.workflow_json {
-        out.push(format!("Workflow: {v}"));
+        out.push(format!("Workflow: {}", prettify_json_if_valid(v)));
     }
     if out.is_empty() {
         "No metadata found".to_string()
@@ -2750,11 +2901,12 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
 
     for (key, maybe_val) in short_rows {
         let Some(val) = maybe_val else { continue };
+        let display_val = prettify_json_if_valid(val);
         let row = adw::ActionRow::new();
         row.set_title(key);
-        row.set_subtitle(&glib::markup_escape_text(val));
+        row.set_subtitle(&glib::markup_escape_text(&display_val));
         row.set_subtitle_selectable(true);
-        let copy_text = val.to_string();
+        let copy_text = display_val.clone();
         let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
         copy_button.add_css_class("flat");
         copy_button.set_tooltip_text(Some("Copy"));
@@ -2776,6 +2928,7 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
 
     for (key, maybe_val) in long_rows {
         let Some(val) = maybe_val else { continue };
+        let display_val = prettify_json_if_valid(val);
 
         // Outer box acts as a list row container.
         let row_box = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
@@ -2794,7 +2947,7 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
         key_label.set_hexpand(true);
         header_box.append(&key_label);
 
-        let copy_text = val.to_string();
+        let copy_text = display_val.clone();
         let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
         copy_button.add_css_class("flat");
         copy_button.set_tooltip_text(Some("Copy"));
@@ -2812,7 +2965,7 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
         text_view.set_hexpand(true);
         text_view.add_css_class("caption");
         text_view.add_css_class("metadata-text-view");
-        text_view.buffer().set_text(val);
+        text_view.buffer().set_text(&display_val);
         row_box.append(&text_view);
 
         // Wrap in a ListBoxRow.

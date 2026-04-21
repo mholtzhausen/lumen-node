@@ -2,6 +2,9 @@ use std::path::{Path, PathBuf};
 
 pub struct AppConfig {
     pub last_folder: Option<PathBuf>,
+    pub window_width: Option<i32>,
+    pub window_height: Option<i32>,
+    pub window_maximized: Option<bool>,
     pub left_pane_pos: Option<i32>,
     pub right_pane_pos: Option<i32>,
     pub meta_pane_pos: Option<i32>,
@@ -18,6 +21,9 @@ pub struct AppConfig {
 /// Loads `~/.lumen-node/config.yml`.  Missing file → empty config.
 pub fn load() -> AppConfig {
     let mut last_folder = None;
+    let mut window_width = None;
+    let mut window_height = None;
+    let mut window_maximized = None;
     let mut left_pane_pos = None;
     let mut right_pane_pos = None;
     let mut meta_pane_pos = None;
@@ -36,6 +42,12 @@ pub fn load() -> AppConfig {
                 if !val.is_empty() {
                     last_folder = Some(PathBuf::from(val));
                 }
+            } else if let Some(val) = line.strip_prefix("window_width: ") {
+                window_width = val.trim().parse::<i32>().ok();
+            } else if let Some(val) = line.strip_prefix("window_height: ") {
+                window_height = val.trim().parse::<i32>().ok();
+            } else if let Some(val) = line.strip_prefix("window_maximized: ") {
+                window_maximized = val.trim().parse::<bool>().ok();
             } else if let Some(val) = line.strip_prefix("left_pane_pos: ") {
                 left_pane_pos = val.trim().parse::<i32>().ok();
             } else if let Some(val) = line.strip_prefix("right_pane_pos: ") {
@@ -67,6 +79,9 @@ pub fn load() -> AppConfig {
     }
     AppConfig {
         last_folder,
+        window_width,
+        window_height,
+        window_maximized,
         left_pane_pos,
         right_pane_pos,
         meta_pane_pos,
@@ -84,6 +99,9 @@ pub fn load() -> AppConfig {
 /// Writes config to `~/.lumen-node/config.yml`, creating the directory if needed.
 pub fn save(
     last_folder: Option<&Path>,
+    window_width: i32,
+    window_height: i32,
+    window_maximized: bool,
     left_pane_pos: i32,
     right_pane_pos: i32,
     meta_pane_pos: i32,
@@ -104,8 +122,11 @@ pub fn save(
         .map(|p| p.display().to_string())
         .unwrap_or_default();
     let content = format!(
-        "last_folder: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\nsort_key: {}\nsearch_text: {}\nthumbnail_size: {}\n",
+        "last_folder: {}\nwindow_width: {}\nwindow_height: {}\nwindow_maximized: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\nsort_key: {}\nsearch_text: {}\nthumbnail_size: {}\n",
         folder_str,
+        window_width,
+        window_height,
+        window_maximized,
         left_pane_pos,
         right_pane_pos,
         meta_pane_pos,
