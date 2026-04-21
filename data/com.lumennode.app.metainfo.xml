@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.lumennode.app</id>
+  <name>LumenNode</name>
+  <summary>Image gallery viewer</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>A GTK4 desktop image gallery with EXIF metadata support and AI-generated image metadata parsing.</p>
+  </description>
+  <releases>
+    <release version="0.1.0" date="2026-04-22"/>
+  </releases>
+  <url type="homepage">https://github.com/OWNER/lumen-node</url>
+</component>

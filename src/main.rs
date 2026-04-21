@@ -3,6 +3,7 @@ mod db;
 mod metadata;
 mod scanner;
 mod thumbnails;
+mod updater;
 
 use metadata::{ImageMetadata, ScanMessage};
 use scanner::scan_directory;
@@ -20,7 +21,8 @@ use std::{
 use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
-    gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, FilterListModel,
+    gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, EventControllerScroll,
+    EventControllerScrollFlags, FilterListModel,
     GestureClick,
     GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Paned, Picture,
     PopoverMenu, ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
@@ -1167,6 +1169,7 @@ fn build_ui(app: &adw::Application) {
     let search_entry = gtk4::SearchEntry::new();
     search_entry.set_placeholder_text(Some("Search…"));
     search_entry.set_width_request(220);
+    search_entry.set_hexpand(true);
 
     // --- Clear button ---
     let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
@@ -1175,6 +1178,7 @@ fn build_ui(app: &adw::Application) {
     // Center widget: sort + search + clear grouped together.
     let toolbar_center = gtk4::Box::new(Orientation::Horizontal, 6);
     toolbar_center.set_valign(gtk4::Align::Center);
+    toolbar_center.set_hexpand(true);
     toolbar_center.append(&sort_dropdown);
     toolbar_center.append(&size_selector);
     toolbar_center.append(&search_entry);
@@ -1993,11 +1997,15 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Wire: grid item activate → switch to single view
     // -----------------------------------------------------------------------
+    let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let stack_for_grid = view_stack.clone();
     let picture_for_grid = single_picture.clone();
     let selection_for_grid = selection_model.clone();
     let left_toggle_grid = left_toggle.clone();
     let right_toggle_grid = right_toggle.clone();
+    let pre_fullview_left_grid = pre_fullview_left.clone();
+    let pre_fullview_right_grid = pre_fullview_right.clone();
     grid_view.connect_activate(move |_, pos| {
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
             let path_str = item.string().to_string();
@@ -2037,6 +2045,8 @@ fn build_ui(app: &adw::Application) {
                 })),
             );
         }
+        pre_fullview_left_grid.set(left_toggle_grid.is_active());
+        pre_fullview_right_grid.set(right_toggle_grid.is_active());
         stack_for_grid.set_visible_child_name("single");
         left_toggle_grid.set_active(false);
         right_toggle_grid.set_active(false);
@@ -2051,6 +2061,8 @@ fn build_ui(app: &adw::Application) {
         let selection_for_preview = selection_model.clone();
         let left_toggle_preview = left_toggle.clone();
         let right_toggle_preview = right_toggle.clone();
+        let pre_fullview_left_preview = pre_fullview_left.clone();
+        let pre_fullview_right_preview = pre_fullview_right.clone();
         let dbl_click = GestureClick::new();
         dbl_click.connect_pressed(move |_, n_press, _, _| {
             if n_press < 2 {
@@ -2097,6 +2109,8 @@ fn build_ui(app: &adw::Application) {
                     emit_full_view_report(&t);
                 })),
             );
+            pre_fullview_left_preview.set(left_toggle_preview.is_active());
+            pre_fullview_right_preview.set(right_toggle_preview.is_active());
             stack_for_preview.set_visible_child_name("single");
             left_toggle_preview.set_active(false);
             right_toggle_preview.set_active(false);
@@ -2473,9 +2487,14 @@ fn build_ui(app: &adw::Application) {
     status_bar.set_margin_bottom(2);
     status_bar.append(&progress_box);
 
+    let update_banner = adw::Banner::new("");
+    update_banner.set_button_label(Some("View release"));
+    update_banner.set_revealed(false);
+
     let content_with_status = gtk4::Box::new(Orientation::Vertical, 0);
     content_with_status.set_hexpand(true);
     content_with_status.set_vexpand(true);
+    content_with_status.append(&update_banner);
     content_with_status.append(&toast_overlay);
     content_with_status.append(&status_bar);
 
@@ -2484,6 +2503,26 @@ fn build_ui(app: &adw::Application) {
     toolbar_view.set_content(Some(&content_with_status));
 
     window.set_content(Some(&toolbar_view));
+
+    // Check for updates in a background thread; show banner if a newer release exists.
+    let (update_tx, update_rx) = async_channel::bounded::<updater::UpdateInfo>(1);
+    std::thread::spawn(move || {
+        if let Some(info) = updater::check_for_update() {
+            let _ = update_tx.send_blocking(info);
+        }
+    });
+    glib::MainContext::default().spawn_local(async move {
+        if let Ok(info) = update_rx.recv().await {
+            update_banner.set_title(&format!("Version {} available", info.version));
+            update_banner.set_revealed(true);
+            update_banner.connect_button_clicked(move |_| {
+                let _ = gio::AppInfo::launch_default_for_uri(
+                    &info.url,
+                    None::<&gio::AppLaunchContext>,
+                );
+            });
+        }
+    });
 
     // -----------------------------------------------------------------------
     // Keyboard: Escape / Left / Right / Page navigation
@@ -2499,6 +2538,10 @@ fn build_ui(app: &adw::Application) {
     let thumbnail_size_for_keys = thumbnail_size.clone();
     let toast_overlay_for_keys = toast_overlay.clone();
     let window_for_keys = window.clone();
+    let left_toggle_for_keys = left_toggle.clone();
+    let right_toggle_for_keys = right_toggle.clone();
+    let pre_fullview_left_keys = pre_fullview_left.clone();
+    let pre_fullview_right_keys = pre_fullview_right.clone();
     key_controller.connect_key_pressed(move |_, key, _, _| {
         if key == gdk::Key::Escape {
             let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
@@ -2517,6 +2560,8 @@ fn build_ui(app: &adw::Application) {
                 }
             } else {
                 stack_for_keys.set_visible_child_name("grid");
+                left_toggle_for_keys.set_active(pre_fullview_left_keys.get());
+                right_toggle_for_keys.set_active(pre_fullview_right_keys.get());
             }
             return glib::Propagation::Stop;
         }
@@ -2598,6 +2643,63 @@ fn build_ui(app: &adw::Application) {
         glib::Propagation::Proceed
     });
     window.add_controller(key_controller);
+
+    // -----------------------------------------------------------------------
+    // Scroll on single-view / meta-preview → navigate images
+    // Accumulate delta so smooth-scroll trackpads don't flood set_selected.
+    // -----------------------------------------------------------------------
+    {
+        let selection = selection_model.clone();
+        let picture = single_picture.clone();
+        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+        scroll.connect_scroll(move |_, _dx, dy| {
+            let count = selection.n_items();
+            if count == 0 {
+                return glib::Propagation::Proceed;
+            }
+            accum.set(accum.get() + dy);
+            let steps = accum.get().trunc() as i32;
+            if steps == 0 {
+                return glib::Propagation::Stop;
+            }
+            accum.set(accum.get().fract());
+            let cur = selection.selected() as i32;
+            let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
+            if next != cur as u32 {
+                selection.set_selected(next);
+                if let Some(item) = selection.selected_item().and_downcast::<StringObject>() {
+                    load_picture_async(&picture, &item.string().to_string(), None, None);
+                }
+            }
+            glib::Propagation::Stop
+        });
+        single_picture.add_controller(scroll);
+    }
+    {
+        let selection = selection_model.clone();
+        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+        scroll.connect_scroll(move |_, _dx, dy| {
+            let count = selection.n_items();
+            if count == 0 {
+                return glib::Propagation::Proceed;
+            }
+            accum.set(accum.get() + dy);
+            let steps = accum.get().trunc() as i32;
+            if steps == 0 {
+                return glib::Propagation::Stop;
+            }
+            accum.set(accum.get().fract());
+            let cur = selection.selected() as i32;
+            let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
+            if next != cur as u32 {
+                selection.set_selected(next);
+            }
+            glib::Propagation::Stop
+        });
+        meta_preview.add_controller(scroll);
+    }
 
     // -----------------------------------------------------------------------
     // Save config on window close (folder + pane positions)
@@ -3140,12 +3242,19 @@ fn load_metadata_async(
         populate_metadata_sidebar(&listbox, &metadata);
 
         // Mark metadata as complete in trace if it's still the current click.
-        if let Some(trace) = trace_state.borrow_mut().as_mut() {
+        let should_finalize = if let Some(trace) = trace_state.borrow_mut().as_mut() {
             if trace.id == click_id && !trace.finished {
                 trace.mark_step("metadata_shown");
                 trace.metadata_done = true;
-                try_finalize_click_trace(&trace_state, click_id);
+                true
+            } else {
+                false
             }
+        } else {
+            false
+        };
+        if should_finalize {
+            try_finalize_click_trace(&trace_state, click_id);
         }
     });
 }
