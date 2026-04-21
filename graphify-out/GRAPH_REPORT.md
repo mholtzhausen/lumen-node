@@ -1,11 +1,11 @@
 # Graph Report - /media/nemesarial/SmallData/code/lumen-node  (2026-04-21)
 
 ## Corpus Check
-- 6 files · ~81,327 words
+- 6 files · ~82,748 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 103 nodes · 227 edges · 13 communities detected
+- 105 nodes · 231 edges · 14 communities detected
 - Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 35 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
@@ -23,9 +23,10 @@
 - [[_COMMUNITY_Community 10|Community 10]]
 - [[_COMMUNITY_Community 11|Community 11]]
 - [[_COMMUNITY_Community 12|Community 12]]
+- [[_COMMUNITY_Community 13|Community 13]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `build_ui()` - 37 edges
+1. `build_ui()` - 38 edges
 2. `open()` - 10 edges
 3. `build_index_row()` - 9 edges
 4. `load_grid_thumbnail()` - 9 edges
@@ -37,16 +38,16 @@
 10. `hash_thumb_path()` - 6 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `scan_directory()` --calls--> `open()`  [INFERRED]
+  /media/nemesarial/SmallData/code/lumen-node/src/scanner.rs → /media/nemesarial/SmallData/code/lumen-node/src/db.rs
+- `scan_directory()` --calls--> `ensure_indexed_with_outcome()`  [INFERRED]
+  /media/nemesarial/SmallData/code/lumen-node/src/scanner.rs → /media/nemesarial/SmallData/code/lumen-node/src/db.rs
 - `scan_directory()` --calls--> `build_ui()`  [INFERRED]
   /media/nemesarial/SmallData/code/lumen-node/src/scanner.rs → /media/nemesarial/SmallData/code/lumen-node/src/main.rs
 - `open()` --calls--> `build_ui()`  [INFERRED]
   /media/nemesarial/SmallData/code/lumen-node/src/db.rs → /media/nemesarial/SmallData/code/lumen-node/src/main.rs
 - `open()` --calls--> `extract_exif()`  [INFERRED]
   /media/nemesarial/SmallData/code/lumen-node/src/db.rs → /media/nemesarial/SmallData/code/lumen-node/src/metadata.rs
-- `open()` --calls--> `extract_png()`  [INFERRED]
-  /media/nemesarial/SmallData/code/lumen-node/src/db.rs → /media/nemesarial/SmallData/code/lumen-node/src/metadata.rs
-- `open()` --calls--> `is_valid()`  [INFERRED]
-  /media/nemesarial/SmallData/code/lumen-node/src/db.rs → /media/nemesarial/SmallData/code/lumen-node/src/thumbnails.rs
 
 ## Hyperedges (group relationships)
 - **Message-Driven Data Flow Pipeline** — scanner_module, db_module, thumbnails_module, main_module [EXTRACTED 1.00]
@@ -56,24 +57,24 @@
 ## Communities
 
 ### Community 0 - "Community 0"
-Cohesion: 0.19
-Nodes (18): build_index_row(), create_schema(), db_path(), ensure_indexed_with_outcome(), favourite_for_path(), file_mtime(), file_size(), get_cached() (+10 more)
+Cohesion: 0.26
+Nodes (16): load_grid_thumbnail(), refresh_realized_grid_thumbnails(), ensure_thumbnail(), file_uri(), generate_and_cache(), generate_hash_thumbnail_for_size(), hash_cache_dir(), hash_thumb_if_exists_for_size() (+8 more)
 
 ### Community 1 - "Community 1"
-Cohesion: 0.32
-Nodes (13): ensure_thumbnail(), file_uri(), generate_and_cache(), hash_cache_dir(), hash_thumb_if_exists_for_size(), hash_thumb_path(), hash_thumb_path_for_size(), is_valid() (+5 more)
+Cohesion: 0.25
+Nodes (15): build_index_row(), create_schema(), db_path(), ensure_indexed_with_outcome(), favourite_for_path(), file_mtime(), file_size(), get_cached() (+7 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.19
-Nodes (10): build_tree_root(), clamp_f64(), ClickStepTiming, get_mount_points(), pct_to_px(), PreviewLoadMetrics, PreviewLoadOutcome, px_to_pct() (+2 more)
+Cohesion: 0.21
+Nodes (9): build_tree_root(), clamp_f64(), ClickStepTiming, get_mount_points(), pct_to_px(), PreviewLoadMetrics, PreviewLoadOutcome, px_to_pct() (+1 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.27
 Nodes (10): apply_text_chunk(), DefaultMetadataDispatcher, extract_comfyui_prompts(), extract_comfyui_summary(), extract_exif(), extract_png(), extract_png_with_exif(), ImageMetadata (+2 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.31
-Nodes (10): hash_file(), build_ui(), extract_seed_from_parameters(), format_generation_command(), load_grid_thumbnail(), normalize_thumbnail_size(), refresh_realized_grid_thumbnails(), sync_tree_to_path() (+2 more)
+Cohesion: 0.32
+Nodes (8): build_ui(), extract_seed_from_parameters(), format_generation_command(), monitor_bounds_for_window(), normalize_thumbnail_size(), selected_image_path(), sync_tree_to_path(), thumbnail_size_options()
 
 ### Community 5 - "Community 5"
 Cohesion: 0.29
@@ -84,46 +85,48 @@ Cohesion: 0.43
 Nodes (2): ScanProgressState, sync_progress_widgets()
 
 ### Community 7 - "Community 7"
-Cohesion: 0.4
-Nodes (5): emit_click_report(), load_metadata_async(), mark_click_step(), populate_metadata_sidebar(), try_finalize_click_trace()
+Cohesion: 0.6
+Nodes (4): prune_missing(), is_image(), scan_directory(), sort_paths()
 
 ### Community 8 - "Community 8"
+Cohesion: 0.4
+Nodes (2): ClickTrace, mark_click_step()
+
+### Community 9 - "Community 9"
 Cohesion: 0.6
 Nodes (4): AppConfig, config_path(), load(), save()
 
-### Community 9 - "Community 9"
+### Community 10 - "Community 10"
+Cohesion: 0.5
+Nodes (4): emit_click_report(), emit_full_view_report(), try_finalize_click_trace(), write_timing_report()
+
+### Community 11 - "Community 11"
+Cohesion: 0.67
+Nodes (3): load_metadata_async(), populate_metadata_sidebar(), prettify_json_if_valid()
+
+### Community 12 - "Community 12"
 Cohesion: 0.67
 Nodes (1): AtomicTaskGuard
 
-### Community 10 - "Community 10"
-Cohesion: 0.67
-Nodes (1): ClickTrace
-
-### Community 11 - "Community 11"
-Cohesion: 1.0
-Nodes (2): emit_full_view_report(), write_timing_report()
-
-### Community 12 - "Community 12"
+### Community 13 - "Community 13"
 Cohesion: 1.0
 Nodes (1): LumenNode UI - Image Gallery with Professional Context
 
 ## Knowledge Gaps
 - **11 isolated node(s):** `ImageRow`, `IndexOutcome`, `ClickStepTiming`, `PreviewLoadOutcome`, `SortFields` (+6 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Community 11`** (2 nodes): `emit_full_view_report()`, `write_timing_report()`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 12`** (1 nodes): `LumenNode UI - Image Gallery with Professional Context`
+- **Thin community `Community 13`** (1 nodes): `LumenNode UI - Image Gallery with Professional Context`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `build_ui()` connect `Community 4` to `Community 0`, `Community 1`, `Community 2`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 11`?**
-  _High betweenness centrality (0.438) - this node is a cross-community bridge._
-- **Why does `open()` connect `Community 0` to `Community 11`, `Community 1`, `Community 3`, `Community 4`?**
-  _High betweenness centrality (0.122) - this node is a cross-community bridge._
-- **Why does `extract_png()` connect `Community 3` to `Community 0`, `Community 5`?**
-  _High betweenness centrality (0.085) - this node is a cross-community bridge._
+- **Why does `build_ui()` connect `Community 4` to `Community 0`, `Community 1`, `Community 2`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 9`, `Community 10`, `Community 11`?**
+  _High betweenness centrality (0.439) - this node is a cross-community bridge._
+- **Why does `open()` connect `Community 1` to `Community 0`, `Community 3`, `Community 4`, `Community 7`, `Community 10`?**
+  _High betweenness centrality (0.120) - this node is a cross-community bridge._
+- **Why does `extract_png()` connect `Community 3` to `Community 1`, `Community 5`?**
+  _High betweenness centrality (0.084) - this node is a cross-community bridge._
 - **Are the 11 inferred relationships involving `build_ui()` (e.g. with `load()` and `scan_directory()`) actually correct?**
   _`build_ui()` has 11 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 6 inferred relationships involving `open()` (e.g. with `scan_directory()` and `build_ui()`) actually correct?**
