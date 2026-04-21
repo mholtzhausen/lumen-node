@@ -20,6 +20,14 @@
 
 ---
 
+## Why LumenNode Exists
+
+I have a large library of AI-generated images and couldn't find a viewer that actually understood them. Every gallery I tried would show the image, but none of them surfaced the generation metadata — the prompts, seeds, samplers, and workflow details embedded in the PNG chunks. If I wanted to re-run or tweak a generation, I had to dig through raw file properties or keep separate notes.
+
+LumenNode was built to fix that. It's the image viewer I wanted: fast thumbnail browsing with a metadata panel that reads directly from the AI tool that created each image, so the prompt and seed are always one click away.
+
+---
+
 ## TL;DR
 
 > Browse thousands of images without waiting. LumenNode loads thumbnails progressively, caches metadata in a per-folder SQLite database, and surfaces AI-generation prompts, seeds, and workflow details from PNG images — so you can copy a prompt and re-run a generation in one click.
