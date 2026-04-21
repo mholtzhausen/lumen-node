@@ -55,7 +55,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/scanner.rs",
       "source_location": "L1",
       "id": "media_nemesarial_smalldata_code_lumen_node_src_scanner_rs",
-      "community": 7,
+      "community": 8,
       "norm_label": "scanner.rs"
     },
     {
@@ -64,7 +64,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/scanner.rs",
       "source_location": "L29",
       "id": "scanner_scan_directory",
-      "community": 7,
+      "community": 8,
       "norm_label": "scan_directory()"
     },
     {
@@ -73,7 +73,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/scanner.rs",
       "source_location": "L127",
       "id": "scanner_sort_paths",
-      "community": 7,
+      "community": 8,
       "norm_label": "sort_paths()"
     },
     {
@@ -82,7 +82,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/scanner.rs",
       "source_location": "L167",
       "id": "scanner_is_image",
-      "community": 7,
+      "community": 8,
       "norm_label": "is_image()"
     },
     {
@@ -208,7 +208,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/db.rs",
       "source_location": "L244",
       "id": "db_prune_missing",
-      "community": 7,
+      "community": 8,
       "norm_label": "prune_missing()"
     },
     {
@@ -271,7 +271,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L66",
       "id": "main_prettify_json_if_valid",
-      "community": 11,
+      "community": 7,
       "norm_label": "prettify_json_if_valid()"
     },
     {
@@ -361,7 +361,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L204",
       "id": "main_atomictaskguard",
-      "community": 12,
+      "community": 10,
       "norm_label": "atomictaskguard"
     },
     {
@@ -370,7 +370,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L209",
       "id": "main_atomictaskguard_new",
-      "community": 12,
+      "community": 10,
       "norm_label": ".new()"
     },
     {
@@ -379,7 +379,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L216",
       "id": "main_atomictaskguard_drop",
-      "community": 12,
+      "community": 10,
       "norm_label": ".drop()"
     },
     {
@@ -397,7 +397,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L228",
       "id": "main_clicktrace",
-      "community": 8,
+      "community": 11,
       "norm_label": "clicktrace"
     },
     {
@@ -406,7 +406,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L261",
       "id": "main_clicktrace_new",
-      "community": 8,
+      "community": 11,
       "norm_label": ".new()"
     },
     {
@@ -415,7 +415,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L305",
       "id": "main_clicktrace_mark_step",
-      "community": 8,
+      "community": 7,
       "norm_label": ".mark_step()"
     },
     {
@@ -424,7 +424,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L313",
       "id": "main_clicktrace_total_ms",
-      "community": 8,
+      "community": 11,
       "norm_label": ".total_ms()"
     },
     {
@@ -532,7 +532,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L553",
       "id": "main_write_timing_report",
-      "community": 10,
+      "community": 5,
       "norm_label": "write_timing_report()"
     },
     {
@@ -541,7 +541,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L557",
       "id": "main_emit_click_report",
-      "community": 10,
+      "community": 5,
       "norm_label": "emit_click_report()"
     },
     {
@@ -550,7 +550,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L636",
       "id": "main_emit_full_view_report",
-      "community": 10,
+      "community": 5,
       "norm_label": "emit_full_view_report()"
     },
     {
@@ -559,7 +559,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L680",
       "id": "main_mark_click_step",
-      "community": 8,
+      "community": 7,
       "norm_label": "mark_click_step()"
     },
     {
@@ -568,7 +568,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L688",
       "id": "main_try_finalize_click_trace",
-      "community": 10,
+      "community": 7,
       "norm_label": "try_finalize_click_trace()"
     },
     {
@@ -586,7 +586,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L2590",
       "id": "main_attach_context_menu",
-      "community": 5,
+      "community": 4,
       "norm_label": "attach_context_menu()"
     },
     {
@@ -640,7 +640,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L2888",
       "id": "main_populate_metadata_sidebar",
-      "community": 11,
+      "community": 7,
       "norm_label": "populate_metadata_sidebar()"
     },
     {
@@ -649,7 +649,7 @@
       "source_file": "/media/nemesarial/SmallData/code/lumen-node/src/main.rs",
       "source_location": "L2993",
       "id": "main_load_metadata_async",
-      "community": 11,
+      "community": 7,
       "norm_label": "load_metadata_async()"
     },
     {
@@ -994,7 +994,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 13,
+      "community": 12,
       "norm_label": "lumennode ui - image gallery with professional context",
       "id": "lumen_ui_conception"
     }
