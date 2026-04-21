@@ -63,12 +63,6 @@ fn px_to_pct(px: i32, total: i32) -> f64 {
     clamp_f64(((px.max(0) as f64) / total) * 100.0, 0.0, 100.0)
 }
 
-fn prettify_json_if_valid(text: &str) -> String {
-    match serde_json::from_str::<serde_json::Value>(text) {
-        Ok(json) => serde_json::to_string_pretty(&json).unwrap_or_else(|_| text.to_string()),
-        Err(_) => text.to_string(),
-    }
-}
 
 fn monitor_bounds_for_window(window: &adw::ApplicationWindow) -> (i32, i32) {
     let display = gtk4::prelude::WidgetExt::display(window);
@@ -2049,6 +2043,68 @@ fn build_ui(app: &adw::Application) {
     });
 
     // -----------------------------------------------------------------------
+    // Wire: double-click on preview image → switch to single view
+    // -----------------------------------------------------------------------
+    {
+        let stack_for_preview = view_stack.clone();
+        let picture_for_preview = single_picture.clone();
+        let selection_for_preview = selection_model.clone();
+        let left_toggle_preview = left_toggle.clone();
+        let right_toggle_preview = right_toggle.clone();
+        let dbl_click = GestureClick::new();
+        dbl_click.connect_pressed(move |_, n_press, _, _| {
+            if n_press < 2 {
+                return;
+            }
+            let Some(item) = selection_for_preview
+                .selected_item()
+                .and_downcast::<StringObject>()
+            else {
+                return;
+            };
+            let path_str = item.string().to_string();
+            let full_view_id = FULL_VIEW_TRACE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+            let active_thumbnail_jobs_at_activate =
+                ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed);
+            let active_preview_jobs_at_activate =
+                ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed);
+            let trace = Rc::new(RefCell::new(FullViewTrace::new(
+                full_view_id,
+                path_str.clone(),
+                active_thumbnail_jobs_at_activate,
+                active_preview_jobs_at_activate,
+            )));
+            let trace_for_cb = trace.clone();
+            load_picture_async(
+                &picture_for_preview,
+                &path_str,
+                None,
+                Some(Box::new(move |metrics| {
+                    let mut t = trace_for_cb.borrow_mut();
+                    t.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
+                    t.preview_file_open_ms = Some(metrics.file_open_ms);
+                    t.preview_decode_ms = Some(metrics.decode_ms);
+                    t.preview_texture_create_ms = Some(metrics.texture_create_ms);
+                    t.preview_worker_total_ms = Some(metrics.worker_total_ms);
+                    t.preview_main_thread_dispatch_ms = Some(metrics.main_thread_dispatch_ms);
+                    t.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
+                    t.displayed_ms = Some(t.started.elapsed().as_secs_f64() * 1000.0);
+                    t.outcome = match metrics.outcome {
+                        PreviewLoadOutcome::Displayed => "done".to_string(),
+                        PreviewLoadOutcome::Failed => "failed".to_string(),
+                        PreviewLoadOutcome::StaleOrCancelled => "cancelled".to_string(),
+                    };
+                    emit_full_view_report(&t);
+                })),
+            );
+            stack_for_preview.set_visible_child_name("single");
+            left_toggle_preview.set_active(false);
+            right_toggle_preview.set_active(false);
+        });
+        meta_preview.add_controller(dbl_click);
+    }
+
+    // -----------------------------------------------------------------------
     // Wire: selection change → populate metadata sidebar
     // -----------------------------------------------------------------------
     let meta_listbox_sel = meta_listbox.clone();
@@ -2430,22 +2486,38 @@ fn build_ui(app: &adw::Application) {
     window.set_content(Some(&toolbar_view));
 
     // -----------------------------------------------------------------------
-    // Keyboard: Escape → grid; Left/Right (single view) → prev/next image
+    // Keyboard: Escape / Left / Right / Page navigation
     // -----------------------------------------------------------------------
+    let esc_pending: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let key_controller = EventControllerKey::new();
+    key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
     let stack_for_keys = view_stack.clone();
     let selection_for_keys = selection_model.clone();
     let picture_for_keys = single_picture.clone();
     let grid_view_for_keys = grid_view.clone();
     let grid_scroll_for_keys = grid_scroll.clone();
     let thumbnail_size_for_keys = thumbnail_size.clone();
-    let left_toggle_keys = left_toggle.clone();
-    let right_toggle_keys = right_toggle.clone();
+    let toast_overlay_for_keys = toast_overlay.clone();
+    let window_for_keys = window.clone();
     key_controller.connect_key_pressed(move |_, key, _, _| {
         if key == gdk::Key::Escape {
-            stack_for_keys.set_visible_child_name("grid");
-            left_toggle_keys.set_active(true);
-            right_toggle_keys.set_active(true);
+            let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
+            if in_grid {
+                if esc_pending.get() {
+                    window_for_keys.application().unwrap().quit();
+                } else {
+                    esc_pending.set(true);
+                    let toast = adw::Toast::new("Press Escape again to quit");
+                    toast.set_timeout(2);
+                    toast_overlay_for_keys.add_toast(toast);
+                    let esc_pending_clone = esc_pending.clone();
+                    glib::timeout_add_local_once(Duration::from_millis(2000), move || {
+                        esc_pending_clone.set(false);
+                    });
+                }
+            } else {
+                stack_for_keys.set_visible_child_name("grid");
+            }
             return glib::Propagation::Stop;
         }
         let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
@@ -2679,28 +2751,28 @@ fn selected_image_path(selection: &SingleSelection) -> Option<std::path::PathBuf
 fn format_metadata_text(meta: &ImageMetadata) -> String {
     let mut out = Vec::new();
     if let Some(v) = &meta.camera_make {
-        out.push(format!("Make: {}", prettify_json_if_valid(v)));
+        out.push(format!("Make: {}", v.as_str()));
     }
     if let Some(v) = &meta.camera_model {
-        out.push(format!("Model: {}", prettify_json_if_valid(v)));
+        out.push(format!("Model: {}", v.as_str()));
     }
     if let Some(v) = &meta.exposure {
-        out.push(format!("Exposure: {}", prettify_json_if_valid(v)));
+        out.push(format!("Exposure: {}", v.as_str()));
     }
     if let Some(v) = &meta.iso {
-        out.push(format!("ISO: {}", prettify_json_if_valid(v)));
+        out.push(format!("ISO: {}", v.as_str()));
     }
     if let Some(v) = &meta.prompt {
-        out.push(format!("Prompt: {}", prettify_json_if_valid(v)));
+        out.push(format!("Prompt: {}", v.as_str()));
     }
     if let Some(v) = &meta.negative_prompt {
-        out.push(format!("Neg. Prompt: {}", prettify_json_if_valid(v)));
+        out.push(format!("Neg. Prompt: {}", v.as_str()));
     }
     if let Some(v) = &meta.raw_parameters {
-        out.push(format!("Parameters: {}", prettify_json_if_valid(v)));
+        out.push(format!("Parameters: {}", v.as_str()));
     }
     if let Some(v) = &meta.workflow_json {
-        out.push(format!("Workflow: {}", prettify_json_if_valid(v)));
+        out.push(format!("Workflow: {}", v.as_str()));
     }
     if out.is_empty() {
         "No metadata found".to_string()
@@ -2968,7 +3040,7 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
 
     for (key, maybe_val) in short_rows {
         let Some(val) = maybe_val else { continue };
-        let display_val = prettify_json_if_valid(val);
+        let display_val = val.to_string();
         let row = adw::ActionRow::new();
         row.set_title(key);
         row.set_subtitle(&glib::markup_escape_text(&display_val));
@@ -2995,7 +3067,7 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
 
     for (key, maybe_val) in long_rows {
         let Some(val) = maybe_val else { continue };
-        let display_val = prettify_json_if_valid(val);
+        let display_val = val.to_string();
 
         // Outer box acts as a list row container.
         let row_box = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
