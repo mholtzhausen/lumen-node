@@ -15,7 +15,7 @@ use std::{
     collections::VecDeque,
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use libadwaita as adw;
@@ -24,7 +24,7 @@ use gtk4::{
     gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, EventControllerScroll,
     EventControllerScrollFlags, FilterListModel,
     GestureClick,
-    GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Paned, Picture,
+    GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Overlay, Paned, Picture,
     PopoverMenu, ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
     ProgressBar, StringObject, TreeExpander, TreeListModel, TreeListRow,
 };
@@ -341,6 +341,57 @@ fn compute_sort_fields(path_str: &str) -> SortFields {
         modified,
         size,
     }
+}
+
+fn format_sort_flag_date(modified: Option<SystemTime>) -> Option<String> {
+    let modified = modified?;
+    let secs = modified.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+    let dt = glib::DateTime::from_unix_local(secs).ok()?;
+    dt.format("%Y-%m-%d").ok().map(|s| s.to_string())
+}
+
+fn first_filename_character(filename_lower: &str) -> String {
+    let ch = filename_lower
+        .chars()
+        .find(|c| c.is_alphanumeric())
+        .unwrap_or('#');
+    ch.to_uppercase().collect()
+}
+
+fn sort_flag_text_for_path(
+    path: &str,
+    sort_key: &str,
+    sort_fields_cache: &HashMap<String, SortFields>,
+) -> Option<String> {
+    let fallback;
+    let fields = if let Some(fields) = sort_fields_cache.get(path) {
+        fields
+    } else {
+        fallback = compute_sort_fields(path);
+        &fallback
+    };
+
+    if sort_key.starts_with("name_") {
+        let source = if fields.filename_lower.is_empty() {
+            std::path::Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        } else {
+            fields.filename_lower.clone()
+        };
+        return Some(first_filename_character(&source));
+    }
+
+    if sort_key.starts_with("date_") {
+        return format_sort_flag_date(fields.modified);
+    }
+
+    if sort_key.starts_with("size_") {
+        return Some(human_readable_bytes(fields.size));
+    }
+
+    None
 }
 
 fn thumbnail_size_options() -> [i32; 4] {
@@ -765,8 +816,28 @@ fn build_ui(app: &adw::Application) {
         .unwrap_or(DEFAULT_WINDOW_HEIGHT)
         .clamp(min_window_height, monitor_height.max(min_window_height));
     window.set_default_size(initial_window_width, initial_window_height);
+    let css = gtk4::CssProvider::new();
+    css.load_from_data(
+        "
+        .scroll-flag-bubble {
+            background-color: alpha(@theme_bg_color, 0.86);
+            border-radius: 8px;
+            padding: 6px 12px;
+        }
+        .scroll-flag-pointer {
+            color: alpha(@theme_fg_color, 0.95);
+        }
+        ",
+    );
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::prelude::WidgetExt::display(&window),
+        &css,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
     let configured_right_pane_width_pct = app_config.right_pane_width_pct;
     let configured_right_pane_pos = app_config.right_pane_pos;
+    let configured_meta_pane_height_pct = app_config.meta_pane_height_pct;
+    let configured_meta_pane_pos = app_config.meta_pane_pos;
 
     // Tracks the most recently scanned folder for config persistence.
     let current_folder: Rc<RefCell<Option<std::path::PathBuf>>> =
@@ -1559,6 +1630,41 @@ fn build_ui(app: &adw::Application) {
     grid_scroll.set_hexpand(true);
     grid_scroll.set_child(Some(&grid_view));
 
+    let grid_overlay = Overlay::new();
+    grid_overlay.set_hexpand(true);
+    grid_overlay.set_vexpand(true);
+    grid_overlay.set_child(Some(&grid_scroll));
+
+    let scroll_flag_box = gtk4::Box::new(Orientation::Horizontal, 0);
+    scroll_flag_box.set_visible(false);
+    scroll_flag_box.set_halign(gtk4::Align::End);
+    scroll_flag_box.set_valign(gtk4::Align::Start);
+    scroll_flag_box.set_margin_end(12);
+    scroll_flag_box.set_margin_top(12);
+    scroll_flag_box.set_margin_start(12);
+    scroll_flag_box.set_margin_bottom(12);
+
+    let scroll_flag = Label::new(None);
+    scroll_flag.add_css_class("title-4");
+    scroll_flag.add_css_class("scroll-flag-bubble");
+    scroll_flag.set_xalign(0.5);
+    scroll_flag.set_margin_start(10);
+    scroll_flag.set_margin_end(6);
+    scroll_flag.set_margin_top(4);
+    scroll_flag.set_margin_bottom(4);
+
+    let scroll_flag_pointer = Label::new(Some("▶"));
+    scroll_flag_pointer.add_css_class("title-4");
+    scroll_flag_pointer.add_css_class("scroll-flag-pointer");
+    scroll_flag_pointer.set_margin_start(0);
+    scroll_flag_pointer.set_margin_end(0);
+    scroll_flag_pointer.set_margin_top(0);
+    scroll_flag_pointer.set_margin_bottom(0);
+
+    scroll_flag_box.append(&scroll_flag);
+    scroll_flag_box.append(&scroll_flag_pointer);
+    grid_overlay.add_overlay(&scroll_flag_box);
+
     // Scroll-speed gate: suppress thumbnail spawning while scrolling faster than
     // 5 rows/sec, then refresh visible cells 150 ms after scrolling quiets down.
     {
@@ -1570,6 +1676,12 @@ fn build_ui(app: &adw::Application) {
         let thumbnail_size_adj      = thumbnail_size.clone();
         let realized_adj            = realized_thumb_images.clone();
         let hash_cache_adj          = hash_cache.clone();
+        let selection_model_adj     = selection_model.clone();
+        let sort_key_adj            = sort_key.clone();
+        let sort_fields_cache_adj   = sort_fields_cache.clone();
+        let scroll_flag_adj         = scroll_flag.clone();
+        let scroll_flag_box_adj     = scroll_flag_box.clone();
+        let grid_scroll_adj         = grid_scroll.clone();
         adj.connect_value_changed(move |adj| {
             let now = Instant::now();
             let pos = adj.value();
@@ -1595,16 +1707,68 @@ fn build_ui(app: &adw::Application) {
             let hash_cache     = hash_cache_adj.clone();
             let thumbnail_size = thumbnail_size_adj.clone();
             let debounce_gen   = scroll_debounce_gen_adj.clone();
+            let scroll_flag    = scroll_flag_adj.clone();
+            let scroll_flag_box = scroll_flag_box_adj.clone();
+
+            let total_items = selection_model_adj.n_items();
+            if total_items > 0 {
+                let thumb_size = (*thumbnail_size_adj.borrow()).max(1);
+                let cell_width = (thumb_size + 4).max(1);
+                let cell_height = (thumb_size + 20).max(1);
+                let viewport_width = grid_scroll_adj.width().max(cell_width);
+                let columns = (viewport_width / cell_width).max(1) as u32;
+                let row = ((adj.value() / (cell_height as f64)).floor() as u32).saturating_mul(columns);
+                let idx = row.min(total_items.saturating_sub(1));
+
+                let text = selection_model_adj
+                    .item(idx)
+                    .and_downcast::<StringObject>()
+                    .and_then(|obj| {
+                        let path = obj.string().to_string();
+                        sort_flag_text_for_path(
+                            &path,
+                            &sort_key_adj.borrow(),
+                            &sort_fields_cache_adj.borrow(),
+                        )
+                    });
+
+                if let Some(text) = text.filter(|t| !t.is_empty()) {
+                    scroll_flag.set_text(&text);
+                    let viewport_height = grid_scroll_adj.height().max(1) as f64;
+                    let upper = adj.upper().max(1.0);
+                    let page_size = adj.page_size().clamp(1.0, upper);
+                    let range = (upper - page_size).max(1.0);
+                    let ratio = (adj.value() / range).clamp(0.0, 1.0);
+                    let thumb_height = ((page_size / upper) * viewport_height).clamp(18.0, viewport_height);
+                    let thumb_top = ratio * (viewport_height - thumb_height);
+                    let thumb_center = thumb_top + (thumb_height * 0.5);
+                    let flag_height = 32.0;
+                    let y = (thumb_center - (flag_height * 0.5))
+                        .clamp(0.0, (viewport_height - flag_height).max(0.0)) as i32;
+                    scroll_flag_box.set_margin_top(y);
+                    scroll_flag_box.set_visible(true);
+                } else {
+                    scroll_flag_box.set_visible(false);
+                }
+            } else {
+                scroll_flag_box.set_visible(false);
+            }
+
             glib::timeout_add_local_once(Duration::from_millis(150), move || {
                 if debounce_gen.get() != gen { return; }
                 fsa.set(false);
                 refresh_realized_grid_thumbnails(&realized, &thumbnail_size, &hash_cache);
             });
+            let hide_gen = scroll_debounce_gen_adj.clone();
+            glib::timeout_add_local_once(Duration::from_millis(450), move || {
+                if hide_gen.get() != gen { return; }
+                scroll_flag_box.set_visible(false);
+            });
         });
     }
 
     // add_titled returns ViewStackPage — use it to set the page icon.
-    let grid_page = view_stack.add_titled(&grid_scroll, Some("grid"), "Grid");
+    let grid_page = view_stack.add_titled(&grid_overlay, Some("grid"), "Grid");
     grid_page.set_icon_name(Some("view-grid-symbolic"));
 
     let single_picture = Picture::new();
@@ -2721,10 +2885,7 @@ fn build_ui(app: &adw::Application) {
         let left_pos = outer_paned_close.position();
         let inner_pos = inner_paned_close.position();
         let meta_pos = meta_paned_close.position();
-        let inner_width = inner_paned_close
-            .width()
-            .max(window_width.saturating_sub(left_pos));
-        let right_width = inner_width.saturating_sub(inner_pos);
+        let right_width = window_width.saturating_sub(left_pos + inner_pos);
         let meta_total_height = meta_paned_close.height().max(1);
 
         config::save(
@@ -2789,6 +2950,7 @@ fn build_ui(app: &adw::Application) {
     let window_for_pane_restore = window.clone();
     let outer_paned_restore = outer_paned.clone();
     let inner_paned_restore = inner_paned.clone();
+    let meta_paned_restore = meta_paned.clone();
     let pane_restore_attempts = Rc::new(Cell::new(0_u8));
     let pane_restore_attempts_tick = pane_restore_attempts.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -2824,6 +2986,16 @@ fn build_ui(app: &adw::Application) {
             .saturating_sub(left_pos + right_pane_width_px)
             .max(MIN_CENTER_PANE_PX);
         inner_paned_restore.set_position(inner_pane_start_px);
+        let meta_total_height = meta_paned_restore.height().max(1);
+        let meta_pane_start_px = configured_meta_pane_height_pct
+            .map(|pct| pct_to_px(meta_total_height, pct))
+            .or(configured_meta_pane_pos)
+            .unwrap_or(200)
+            .clamp(
+                MIN_META_SPLIT_PX,
+                meta_total_height.saturating_sub(MIN_META_SPLIT_PX),
+            );
+        meta_paned_restore.set_position(meta_pane_start_px);
         glib::ControlFlow::Break
     });
 }
