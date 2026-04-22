@@ -2609,7 +2609,7 @@ fn build_ui(app: &adw::Application) {
 
             if !has_selection || next != cur {
                 selection_for_keys.set_selected(next);
-                grid_view_for_keys.scroll_to(next, ListScrollFlags::SELECT, None);
+                grid_view_for_keys.scroll_to(next, ListScrollFlags::FOCUS | ListScrollFlags::SELECT, None);
             }
             return glib::Propagation::Stop;
         }
