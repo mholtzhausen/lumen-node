@@ -42,9 +42,9 @@ use timing_report::write_timing_report;
 use tree_sidebar::{build_tree_root, reset_tree_root, sync_tree_to_path};
 use ui::actions::install_context_menu;
 use ui::grid::{
-    load_grid_thumbnail, refresh_realized_grid_cell_sizes, refresh_realized_grid_thumbnails,
-    track_realized_grid_widgets, ACTIVE_THUMBNAIL_TASKS, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
-    THUMB_UI_CALLBACKS_TOTAL,
+    apply_thumbnail_size_change, bind_grid_list_item, make_delete_action,
+    make_rename_action, refresh_realized_grid_thumbnails, setup_grid_list_item, unbind_grid_list_item,
+    ACTIVE_THUMBNAIL_TASKS, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE, THUMB_UI_CALLBACKS_TOTAL,
 };
 use ui::preview::{load_picture_async, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
 use ui::sidebar::populate_metadata_sidebar;
@@ -1379,110 +1379,28 @@ fn build_ui(app: &adw::Application) {
     let thumbnail_size_setup = thumbnail_size.clone();
     let realized_thumb_images_setup = realized_thumb_images.clone();
     let realized_cell_boxes_setup = realized_cell_boxes.clone();
-    let window_for_rename = window.clone();
-    let toast_for_rename = toast_overlay.clone();
-    let current_folder_for_rename = current_folder.clone();
-    let start_scan_for_folder_rename = start_scan_for_folder.clone();
-    let window_for_delete = window.clone();
-    let toast_for_delete = toast_overlay.clone();
-    let current_folder_for_delete = current_folder.clone();
-    let start_scan_for_folder_delete = start_scan_for_folder.clone();
+    let on_rename = make_rename_action(
+        window.clone(),
+        toast_overlay.clone(),
+        start_scan_for_folder.clone(),
+        current_folder.clone(),
+    );
+    let on_delete = make_delete_action(
+        window.clone(),
+        toast_overlay.clone(),
+        start_scan_for_folder.clone(),
+        current_folder.clone(),
+    );
     factory.connect_setup(move |_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
-        let cell_box = gtk4::Box::new(Orientation::Vertical, 4);
-        cell_box.add_css_class("thumbnail-card");
-        cell_box.set_halign(gtk4::Align::Center);
-        cell_box.set_margin_top(4);
-        cell_box.set_margin_bottom(4);
-        cell_box.set_margin_start(4);
-        cell_box.set_margin_end(4);
-        let size = *thumbnail_size_setup.borrow();
-        cell_box.set_size_request(size + 12, size + 28);
-        let thumb_image = Image::new();
-        thumb_image.set_pixel_size(size);
-        let generation_token = Rc::new(Cell::new(0_u64));
-        unsafe { thumb_image.set_data("thumb-generation", generation_token); }
-        track_realized_grid_widgets(
+        setup_grid_list_item(
+            list_item,
+            &thumbnail_size_setup,
             &realized_cell_boxes_setup,
             &realized_thumb_images_setup,
-            &cell_box,
-            &thumb_image,
+            on_rename.clone(),
+            on_delete.clone(),
         );
-        let name_label = Label::new(None);
-        name_label.set_max_width_chars(16);
-        name_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        name_label.add_css_class("caption");
-        name_label.set_hexpand(true);
-        name_label.set_halign(gtk4::Align::Start);
-        let rename_btn = gtk4::Button::from_icon_name("document-edit-symbolic");
-        rename_btn.add_css_class("flat");
-        rename_btn.set_tooltip_text(Some("Rename file"));
-        rename_btn.set_opacity(0.0);
-        rename_btn.set_focus_on_click(false);
-        let delete_btn = gtk4::Button::from_icon_name("user-trash-symbolic");
-        delete_btn.add_css_class("flat");
-        delete_btn.add_css_class("destructive-action");
-        delete_btn.set_tooltip_text(Some("Delete file"));
-        delete_btn.set_opacity(0.0);
-        delete_btn.set_focus_on_click(false);
-        let window_for_btn = window_for_rename.clone();
-        let toast_for_btn = toast_for_rename.clone();
-        let current_folder_for_btn = current_folder_for_rename.clone();
-        let start_scan_for_folder_btn: Rc<dyn Fn(std::path::PathBuf)> =
-            start_scan_for_folder_rename.clone();
-        rename_btn.connect_clicked(move |btn| {
-            let path = unsafe { btn.data::<String>("bound-path").map(|s| s.as_ref().clone()) };
-            let Some(path) = path else { return };
-            open_rename_dialog(
-                &window_for_btn,
-                &toast_for_btn,
-                &start_scan_for_folder_btn,
-                &current_folder_for_btn,
-                std::path::PathBuf::from(path),
-                None,
-            );
-        });
-        let window_for_btn = window_for_delete.clone();
-        let toast_for_btn = toast_for_delete.clone();
-        let current_folder_for_btn = current_folder_for_delete.clone();
-        let start_scan_for_folder_btn: Rc<dyn Fn(std::path::PathBuf)> =
-            start_scan_for_folder_delete.clone();
-        delete_btn.connect_clicked(move |btn| {
-            let path = unsafe { btn.data::<String>("bound-path").map(|s| s.as_ref().clone()) };
-            let Some(path) = path else { return };
-            open_delete_dialog(
-                &window_for_btn,
-                &toast_for_btn,
-                &start_scan_for_folder_btn,
-                &current_folder_for_btn,
-                std::path::PathBuf::from(path),
-            );
-        });
-        let name_row = gtk4::Box::new(Orientation::Horizontal, 4);
-        name_row.set_hexpand(true);
-        name_row.set_halign(gtk4::Align::Fill);
-        let action_box = gtk4::Box::new(Orientation::Horizontal, 2);
-        action_box.append(&rename_btn);
-        action_box.append(&delete_btn);
-        name_row.append(&name_label);
-        name_row.append(&action_box);
-        let rename_btn_enter = rename_btn.clone();
-        let rename_btn_leave = rename_btn.clone();
-        let delete_btn_enter = delete_btn.clone();
-        let delete_btn_leave = delete_btn.clone();
-        let motion = EventControllerMotion::new();
-        motion.connect_enter(move |_, _, _| {
-            rename_btn_enter.set_opacity(1.0);
-            delete_btn_enter.set_opacity(1.0);
-        });
-        motion.connect_leave(move |_| {
-            rename_btn_leave.set_opacity(0.0);
-            delete_btn_leave.set_opacity(0.0);
-        });
-        cell_box.add_controller(motion);
-        cell_box.append(&thumb_image);
-        cell_box.append(&name_row);
-        list_item.set_child(Some(&cell_box));
     });
 
     let hash_cache_bind = hash_cache.clone();
@@ -1490,86 +1408,17 @@ fn build_ui(app: &adw::Application) {
     let fast_scroll_active_bind = fast_scroll_active.clone();
     factory.connect_bind(move |_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
-        let path_str = list_item
-            .item()
-            .and_downcast::<StringObject>()
-            .map(|s| s.string().to_string())
-            .unwrap_or_default();
-
-        let cell_box = list_item.child().and_downcast::<gtk4::Box>().unwrap();
-        let thumb_image = cell_box.first_child().and_downcast::<Image>().unwrap();
-        let name_row = cell_box.last_child().and_downcast::<gtk4::Box>().unwrap();
-        let name_label = name_row.first_child().and_downcast::<Label>().unwrap();
-        let action_box = name_row.last_child().and_downcast::<gtk4::Box>().unwrap();
-        let rename_btn = action_box.first_child().and_downcast::<gtk4::Button>().unwrap();
-        let delete_btn = action_box.last_child().and_downcast::<gtk4::Button>().unwrap();
-        let size = *thumbnail_size_bind.borrow();
-        cell_box.set_size_request(size + 12, size + 28);
-        thumb_image.set_pixel_size(size);
-
-        // Set filename label and placeholder icon synchronously (zero I/O).
-        let filename = std::path::Path::new(&path_str)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        name_label.set_text(&filename);
-        unsafe { rename_btn.set_data("bound-path", path_str.clone()); }
-        unsafe { delete_btn.set_data("bound-path", path_str.clone()); }
-        let generation_token = unsafe {
-            thumb_image
-                .data::<Rc<Cell<u64>>>("thumb-generation")
-                .map(|token| token.as_ref().clone())
-        };
-        if let Some(generation_token) = generation_token {
-            let expected_generation = generation_token.get().saturating_add(1);
-            generation_token.set(expected_generation);
-            if fast_scroll_active_bind.get() {
-                // Fast scroll: set placeholder + path so the debounce refresh can find this cell.
-                thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
-                unsafe { thumb_image.set_data("bound-path", path_str); }
-            } else {
-                load_grid_thumbnail(
-                    &thumb_image,
-                    path_str,
-                    size,
-                    hash_cache_bind.clone(),
-                    generation_token,
-                    expected_generation,
-                );
-            }
-        }
+        bind_grid_list_item(
+            list_item,
+            &thumbnail_size_bind,
+            &fast_scroll_active_bind,
+            hash_cache_bind.clone(),
+        );
     });
 
     factory.connect_unbind(|_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
-        if let Some(cell_box) = list_item.child().and_downcast::<gtk4::Box>() {
-            if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
-                let generation_token = unsafe {
-                    image
-                        .data::<Rc<Cell<u64>>>("thumb-generation")
-                        .map(|token| token.as_ref().clone())
-                };
-                if let Some(generation_token) = generation_token {
-                    generation_token.set(generation_token.get().saturating_add(1));
-                }
-                unsafe { image.steal_data::<String>("bound-path"); }
-                if let Some(name_row) = cell_box.last_child().and_downcast::<gtk4::Box>() {
-                    if let Some(action_box) = name_row.last_child().and_downcast::<gtk4::Box>() {
-                        if let Some(rename_btn) =
-                            action_box.first_child().and_downcast::<gtk4::Button>()
-                        {
-                            unsafe { rename_btn.steal_data::<String>("bound-path"); }
-                        }
-                        if let Some(delete_btn) =
-                            action_box.last_child().and_downcast::<gtk4::Button>()
-                        {
-                            unsafe { delete_btn.steal_data::<String>("bound-path"); }
-                        }
-                    }
-                }
-                image.set_icon_name(Some("image-x-generic-symbolic"));
-            }
-        }
+        unbind_grid_list_item(list_item);
     });
 
     let grid_view = GridView::new(Some(selection_model.clone()), Some(factory));
@@ -2482,18 +2331,14 @@ fn build_ui(app: &adw::Application) {
                 );
             }
 
-            refresh_realized_grid_cell_sizes(&realized_cell_boxes_toggle, selected_size);
-
-            {
-                refresh_realized_grid_thumbnails(
-                    &realized_thumb_images_toggle,
-                    &thumbnail_size_toggle,
-                    &hash_cache_toggle,
-                );
-            }
-
-            grid_view_toggle.queue_resize();
-            grid_view_toggle.queue_draw();
+            apply_thumbnail_size_change(
+                selected_size,
+                &realized_cell_boxes_toggle,
+                &realized_thumb_images_toggle,
+                &thumbnail_size_toggle,
+                &hash_cache_toggle,
+                &grid_view_toggle,
+            );
         });
     }
 
