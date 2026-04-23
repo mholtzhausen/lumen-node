@@ -71,7 +71,7 @@ make build && make run    # that's it
 | 📐 | **4 thumbnail sizes** — 128 → 245px, adjustable in one click |
 | 🔍 | **Live search** — filters grid by filename and metadata in real time |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |
-| 💾 | **Session persistence** — last folder, sort, search, pane layout all saved |
+| 💾 | **Session persistence** — last/recent folders and pane layout are global; sort/search/thumbnail size persist per folder |
 
 ### For AI artists
 
@@ -267,7 +267,7 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 
 ## Configuration
 
-Config lives at `~/.lumen-node/config.yml` — a plain-text key=value file you can edit by hand.
+Config lives at `~/.lumen-node/config.yml` — a plain-text `key: value` file you can edit by hand.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -278,11 +278,9 @@ Config lives at `~/.lumen-node/config.yml` — a plain-text key=value file you c
 | `right_pane_width_pct` | 20 | Metadata sidebar width (%) |
 | `left_sidebar_visible` | true | Folder tree visibility |
 | `right_sidebar_visible` | true | Metadata pane visibility |
-| `sort_key` | `name_asc` | One of: `name_asc/desc`, `date_asc/desc`, `size_asc/desc` |
-| `search_text` | — | Last search query |
-| `thumbnail_size` | 165 | Grid thumbnail size in pixels |
+| `recent_folder` | — | Repeated entry for recent folder history |
 
-Per-folder SQLite databases (`.lumen-node.db`) store cached hashes, metadata, and favourite flags alongside your images. They're safe to delete — LumenNode will regenerate them.
+Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites plus folder-scoped UI state (`sort_key`, `search_text`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
 
 ---
 
