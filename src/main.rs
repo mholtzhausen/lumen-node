@@ -53,7 +53,8 @@ use ui::preview::{load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, AC
 use ui::selection::{handle_selection_change_event, ClickTrace};
 use ui::shell::{
     assemble_paned_layout, build_header_controls, create_progress_widgets,
-    create_window_with_defaults, mount_window_content,
+    create_window_with_defaults, install_history_popover_handler, install_open_button_handler,
+    mount_window_content,
 };
 use ui::sidebar::{
     append_meta_paned_to_sidebar, connect_meta_paned_dirty_tracking, connect_sidebar_visibility_toggles,
@@ -80,8 +81,8 @@ use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
     gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, EventControllerScroll,
-    EventControllerMotion, EventControllerScrollFlags, FilterListModel, GestureClick, Image, Label,
-    ListItem, ListScrollFlags, Orientation, ProgressBar, SignalListItemFactory, SingleSelection,
+    EventControllerScrollFlags, FilterListModel, GestureClick, Image, Label, ListItem,
+    ListScrollFlags, ProgressBar, SignalListItemFactory, SingleSelection,
     SortListModel, StringObject, TreeListRow,
 };
 
@@ -1309,107 +1310,21 @@ fn build_ui(app: &adw::Application) {
         }
     });
 
-    let history_list_show = history_list.clone();
-    let history_popover_show = history_popover.clone();
-    let recent_folders_show = recent_folders.clone();
-    let current_folder_history = current_folder.clone();
-    let open_folder_from_history = open_folder_action.clone();
-    history_popover.connect_show(move |_| {
-        while let Some(child) = history_list_show.first_child() {
-            history_list_show.remove(&child);
-        }
+    install_history_popover_handler(
+        &history_popover,
+        &history_list,
+        &recent_folders,
+        &current_folder,
+        open_folder_action.clone(),
+        RECENT_FOLDERS_LIMIT,
+    );
 
-        let folders = recent_folders_show.borrow().clone();
-        if folders.is_empty() {
-            let empty_label = Label::new(Some("No recent folders"));
-            empty_label.set_halign(gtk4::Align::Start);
-            empty_label.add_css_class("dim-label");
-            history_list_show.append(&empty_label);
-            return;
-        }
-
-        for folder in folders.iter().take(RECENT_FOLDERS_LIMIT) {
-            let label = folder.display().to_string();
-            let row = gtk4::Box::new(Orientation::Horizontal, 6);
-            row.set_halign(gtk4::Align::Fill);
-            row.set_hexpand(true);
-
-            let btn = gtk4::Button::new();
-            btn.set_halign(gtk4::Align::Fill);
-            btn.set_hexpand(true);
-            btn.set_tooltip_text(Some(&label));
-            btn.add_css_class("flat");
-            let btn_label = Label::new(Some(&label));
-            btn_label.set_xalign(0.0);
-            btn.set_child(Some(&btn_label));
-
-            let remove_btn = gtk4::Button::from_icon_name("edit-delete-symbolic");
-            remove_btn.add_css_class("flat");
-            remove_btn.set_tooltip_text(Some("Remove from history"));
-            remove_btn.set_visible(false);
-
-            row.append(&btn);
-            row.append(&remove_btn);
-
-            let path = folder.clone();
-            let open_folder = open_folder_from_history.clone();
-            let popover = history_popover_show.clone();
-            btn.connect_clicked(move |_| {
-                open_folder(path.clone(), true);
-                popover.popdown();
-            });
-
-            let motion = EventControllerMotion::new();
-            let remove_btn_enter = remove_btn.clone();
-            motion.connect_enter(move |_, _, _| {
-                remove_btn_enter.set_visible(true);
-            });
-            let remove_btn_leave = remove_btn.clone();
-            motion.connect_leave(move |_| {
-                remove_btn_leave.set_visible(false);
-            });
-            row.add_controller(motion);
-
-            let path = folder.clone();
-            let recent_folders_remove = recent_folders_show.clone();
-            let history_list_remove = history_list_show.clone();
-            let row_remove = row.clone();
-            let current_folder_remove = current_folder_history.clone();
-            remove_btn.connect_clicked(move |_| {
-                recent_folders_remove
-                    .borrow_mut()
-                    .retain(|entry| entry != &path);
-                {
-                    let history = recent_folders_remove.borrow();
-                    config::save_recent_state(current_folder_remove.borrow().as_deref(), &history);
-                }
-                history_list_remove.remove(&row_remove);
-            });
-
-            history_list_show.append(&row);
-        }
-    });
-
-    let window_ref = window.clone();
-    let current_folder_btn = current_folder.clone();
-    let open_folder_btn = open_folder_action.clone();
-    open_btn.connect_clicked(move |_| {
-        let dialog = gtk4::FileDialog::builder().title("Choose a Folder").build();
-        if let Some(folder) = current_folder_btn.borrow().as_ref() {
-            let file = gio::File::for_path(folder);
-            dialog.set_initial_folder(Some(&file));
-        }
-        let open_folder = open_folder_btn.clone();
-        dialog.select_folder(
-            Some(&window_ref),
-            None::<&gio::Cancellable>,
-            move |result| {
-                let Ok(file) = result else { return };
-                let Some(path) = file.path() else { return };
-                open_folder(path, true);
-            },
-        );
-    });
+    install_open_button_handler(
+        &open_btn,
+        &window,
+        &current_folder,
+        open_folder_action.clone(),
+    );
 
     // -----------------------------------------------------------------------
     // Wire: sort dropdown → update sort key and invalidate sorter
