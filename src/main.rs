@@ -641,6 +641,124 @@ fn handle_selection_preview_outcome(
     }
 }
 
+fn get_cached_metadata_for_selection(
+    meta_cache: &Rc<RefCell<HashMap<String, ImageMetadata>>>,
+    item: &StringObject,
+) -> ImageMetadata {
+    let cache = meta_cache.borrow();
+    cache
+        .get(item.string().as_str())
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn begin_selection_preview_load(trace_state: &Rc<RefCell<Option<ClickTrace>>>, click_id: u64) {
+    mark_click_step(trace_state, click_id, "preview_load_dispatched");
+    PREVIEW_REQUEST_PENDING.store(1, AtomicOrdering::Relaxed);
+    SUPPRESS_SIDEBAR_DURING_PREVIEW.store(1, AtomicOrdering::Relaxed);
+}
+
+fn dispatch_selection_preview_load(
+    meta_preview: &gtk4::Picture,
+    path_str: &str,
+    click_trace_state: Rc<RefCell<Option<ClickTrace>>>,
+    click_id: u64,
+    realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
+    thumbnail_size: Rc<RefCell<i32>>,
+    hash_cache: Rc<RefCell<HashMap<String, String>>>,
+) {
+    load_picture_async(
+        meta_preview,
+        path_str,
+        Some(520),
+        Some(Box::new(move |metrics| {
+            handle_selection_preview_outcome(
+                metrics,
+                &click_trace_state,
+                click_id,
+                &realized_thumb_images,
+                &thumbnail_size,
+                &hash_cache,
+            );
+        })),
+    );
+}
+
+fn dispatch_selection_metadata_load(
+    metadata: ImageMetadata,
+    listbox: gtk4::ListBox,
+    meta_expander: gtk4::Expander,
+    meta_paned: gtk4::Paned,
+    meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
+    meta_position_programmatic: Rc<Cell<u32>>,
+    trace_state: Rc<RefCell<Option<ClickTrace>>>,
+    click_id: u64,
+) {
+    load_metadata_async(
+        metadata,
+        listbox,
+        meta_expander,
+        meta_paned,
+        meta_split_before_auto_collapse,
+        meta_position_programmatic,
+        trace_state,
+        click_id,
+    );
+}
+
+fn handle_selection_change_event(
+    item: &StringObject,
+    click_trace_state: &Rc<RefCell<Option<ClickTrace>>>,
+    meta_cache: &Rc<RefCell<HashMap<String, ImageMetadata>>>,
+    meta_listbox: &gtk4::ListBox,
+    meta_expander: &gtk4::Expander,
+    meta_paned: &gtk4::Paned,
+    meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
+    meta_position_programmatic: &Rc<Cell<u32>>,
+    meta_preview: &gtk4::Picture,
+    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
+    thumbnail_size: &Rc<RefCell<i32>>,
+    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+) {
+    let path_str = item.string().to_string();
+    let click_snapshot = capture_click_runtime_snapshot();
+    start_click_trace(click_trace_state, path_str.clone(), &click_snapshot);
+    let click_id = click_snapshot.id;
+
+    mark_click_step(click_trace_state, click_id, "selected_item_resolved");
+
+    // Load the preview image off-thread so the UI stays responsive.
+    // Decode at 2x sidebar width (520px) for fast display on HiDPI.
+    begin_selection_preview_load(click_trace_state, click_id);
+
+    // Load metadata asynchronously (cancellable if user navigates away).
+    mark_click_step(click_trace_state, click_id, "metadata_lookup_started");
+    let meta = get_cached_metadata_for_selection(meta_cache, item);
+    mark_click_step(click_trace_state, click_id, "metadata_lookup_finished");
+    mark_click_step(click_trace_state, click_id, "metadata_render_started");
+
+    // Start metadata + preview load in background (non-blocking).
+    dispatch_selection_metadata_load(
+        meta.clone(),
+        meta_listbox.clone(),
+        meta_expander.clone(),
+        meta_paned.clone(),
+        meta_split_before_auto_collapse.clone(),
+        meta_position_programmatic.clone(),
+        click_trace_state.clone(),
+        click_id,
+    );
+    dispatch_selection_preview_load(
+        meta_preview,
+        &path_str,
+        click_trace_state.clone(),
+        click_id,
+        realized_thumb_images.clone(),
+        thumbnail_size.clone(),
+        hash_cache.clone(),
+    );
+}
+
 fn mark_click_step(trace_state: &Rc<RefCell<Option<ClickTrace>>>, click_id: u64, step: &str) {
     if let Some(trace) = trace_state.borrow_mut().as_mut() {
         if trace.id == click_id && !trace.finished {
@@ -1809,61 +1927,19 @@ fn build_ui(app: &adw::Application) {
         let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
             return;
         };
-        let path_str = item.string().to_string();
-        let click_snapshot = capture_click_runtime_snapshot();
-        start_click_trace(&click_trace_state_sel, path_str.clone(), &click_snapshot);
-        let click_id = click_snapshot.id;
-
-        mark_click_step(&click_trace_state_sel, click_id, "selected_item_resolved");
-
-        // Load the preview image off-thread so the UI stays responsive.
-        // Decode at 2× sidebar width (520px) for fast display on HiDPI.
-        mark_click_step(&click_trace_state_sel, click_id, "preview_load_dispatched");
-        PREVIEW_REQUEST_PENDING.store(1, AtomicOrdering::Relaxed);
-        SUPPRESS_SIDEBAR_DURING_PREVIEW.store(1, AtomicOrdering::Relaxed);
-        
-        // Load metadata asynchronously (cancellable if user navigates away).
-        mark_click_step(&click_trace_state_sel, click_id, "metadata_lookup_started");
-        let cache = meta_cache_sel.borrow();
-        let meta = cache
-            .get(item.string().as_str())
-            .cloned()
-            .unwrap_or_default();
-        mark_click_step(&click_trace_state_sel, click_id, "metadata_lookup_finished");
-        mark_click_step(&click_trace_state_sel, click_id, "metadata_render_started");
-        
-        let click_trace_for_preview = click_trace_state_sel.clone();
-        let meta_listbox_for_metadata = meta_listbox_sel.clone();
-        let click_trace_for_metadata = click_trace_state_sel.clone();
-        let realized_thumb_images_for_preview = realized_thumb_images_sel.clone();
-        let thumbnail_size_for_preview = thumbnail_size_sel.clone();
-        let hash_cache_for_preview = hash_cache_sel.clone();
-        
-        // Start metadata load in background (non-blocking).
-        load_metadata_async(
-            meta.clone(),
-            meta_listbox_for_metadata,
-            meta_expander_sel.clone(),
-            meta_paned_sel.clone(),
-            meta_split_before_auto_collapse_sel.clone(),
-            meta_position_programmatic_sel.clone(),
-            click_trace_for_metadata,
-            click_id,
-        );
-        load_picture_async(
+        handle_selection_change_event(
+            &item,
+            &click_trace_state_sel,
+            &meta_cache_sel,
+            &meta_listbox_sel,
+            &meta_expander_sel,
+            &meta_paned_sel,
+            &meta_split_before_auto_collapse_sel,
+            &meta_position_programmatic_sel,
             &meta_preview_sel,
-            &path_str,
-            Some(520),
-            Some(Box::new(move |metrics| {
-                handle_selection_preview_outcome(
-                    metrics,
-                    &click_trace_for_preview,
-                    click_id,
-                    &realized_thumb_images_for_preview,
-                    &thumbnail_size_for_preview,
-                    &hash_cache_for_preview,
-                );
-            })),
+            &realized_thumb_images_sel,
+            &thumbnail_size_sel,
+            &hash_cache_sel,
         );
     });
 
