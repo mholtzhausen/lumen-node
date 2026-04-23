@@ -4,7 +4,7 @@ export PKG_CONFIG_PATH
 INSTALL_PREFIX := $(HOME)/.local
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 
-.PHONY: build run check clean install uninstall appimage release
+.PHONY: build run check clean install uninstall appimage release release-preflight
 
 build:
 	cargo build
@@ -35,7 +35,10 @@ uninstall:
 appimage:
 	bash packaging/build-appimage.sh
 
-release: appimage
+release-preflight:
+	bash scripts/release-preflight.sh
+
+release: release-preflight appimage
 	@if git tag | grep -q "^v$(VERSION)$$"; then \
 		echo "Tag v$(VERSION) already exists. Skipping tag creation."; \
 	else \

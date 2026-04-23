@@ -1,12 +1,19 @@
 mod config;
 mod db;
 mod metadata;
+mod scan;
 mod scanner;
+mod sort;
 mod thumbnails;
 mod updater;
 
-use metadata::{ImageMetadata, ScanMessage};
+use metadata::ImageMetadata;
+use scan::ScanMessage;
 use scanner::scan_directory;
+use sort::{
+    normalize_sort_key, sort_index_for_key, sort_key_for_index, SORT_KEY_DATE_DESC,
+    SORT_KEY_NAME_ASC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
+};
 
 use std::{
     cell::Cell,
@@ -728,17 +735,6 @@ fn normalize_thumbnail_size(size: i32) -> i32 {
         .unwrap_or(thumbnails::THUMB_NORMAL_SIZE)
 }
 
-fn sort_index_for_key(sort_key: &str) -> u32 {
-    match sort_key {
-        "name_desc" => 1,
-        "date_asc" => 2,
-        "date_desc" => 3,
-        "size_asc" => 4,
-        "size_desc" => 5,
-        _ => 0,
-    }
-}
-
 fn load_grid_thumbnail(
     thumb_image: &Image,
     path_str: String,
@@ -1254,9 +1250,14 @@ fn build_ui(app: &adw::Application) {
     let active_scan_generation = Rc::new(Cell::new(0_u64));
     let scan_in_progress = Rc::new(Cell::new(false));
 
-    // Sort key: "name_asc" | "name_desc" | "date_asc" | "date_desc" | "size_asc" | "size_desc"
+    // Sort key: name/date/size ascending or descending.
     let sort_key: Rc<RefCell<String>> = Rc::new(RefCell::new(
-        app_config.sort_key.clone().unwrap_or_else(|| "name_asc".to_string()),
+        app_config
+            .sort_key
+            .as_deref()
+            .map(normalize_sort_key)
+            .unwrap_or(SORT_KEY_NAME_ASC)
+            .to_string(),
     ));
 
     // Search text.
@@ -1924,13 +1925,13 @@ fn build_ui(app: &adw::Application) {
             fallback_b = compute_sort_fields(&path_b);
             &fallback_b
         };
-        let ord = match key.as_str() {
+        let ord = match normalize_sort_key(key.as_str()) {
             "name_asc" | "name_desc" => {
                 let cmp = fields_a
                     .filename_lower
                     .cmp(&fields_b.filename_lower)
                     .then_with(|| path_a.cmp(&path_b));
-                if key == "name_desc" { cmp.reverse() } else { cmp }
+                if key == SORT_KEY_NAME_DESC { cmp.reverse() } else { cmp }
             }
             "date_asc" | "date_desc" => {
                 let cmp = fields_a
@@ -1938,7 +1939,7 @@ fn build_ui(app: &adw::Application) {
                     .cmp(&fields_b.modified)
                     .then_with(|| fields_a.filename_lower.cmp(&fields_b.filename_lower))
                     .then_with(|| path_a.cmp(&path_b));
-                if key == "date_desc" { cmp.reverse() } else { cmp }
+                if key == SORT_KEY_DATE_DESC { cmp.reverse() } else { cmp }
             }
             "size_asc" | "size_desc" => {
                 let cmp = fields_a
@@ -1946,7 +1947,7 @@ fn build_ui(app: &adw::Application) {
                     .cmp(&fields_b.size)
                     .then_with(|| fields_a.filename_lower.cmp(&fields_b.filename_lower))
                     .then_with(|| path_a.cmp(&path_b));
-                if key == "size_desc" { cmp.reverse() } else { cmp }
+                if key == SORT_KEY_SIZE_DESC { cmp.reverse() } else { cmp }
             }
             _ => std::cmp::Ordering::Equal,
         };
@@ -3212,15 +3213,7 @@ fn build_ui(app: &adw::Application) {
     let scan_in_progress_dd = scan_in_progress.clone();
     let start_scan_dd = start_scan_for_folder.clone();
     sort_dropdown.connect_selected_notify(move |dd| {
-        let key = match dd.selected() {
-            0 => "name_asc",
-            1 => "name_desc",
-            2 => "date_asc",
-            3 => "date_desc",
-            4 => "size_asc",
-            5 => "size_desc",
-            _ => "name_asc",
-        };
+        let key = sort_key_for_index(dd.selected());
         let new_key = key.to_string();
         if *sort_key_dd.borrow() == new_key {
             return;
@@ -3271,7 +3264,7 @@ fn build_ui(app: &adw::Application) {
     let current_folder_clear = current_folder.clone();
     clear_btn.connect_clicked(move |_| {
         *search_text_clear.borrow_mut() = String::new();
-        *sort_key_clear.borrow_mut() = "name_asc".to_string();
+        *sort_key_clear.borrow_mut() = SORT_KEY_NAME_ASC.to_string();
         search_entry_clear.set_text("");
         sort_dropdown_clear.set_selected(0);
         if let Some(folder) = current_folder_clear.borrow().as_ref() {
