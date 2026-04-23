@@ -12,6 +12,7 @@ use libadwaita as adw;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Command;
 use std::rc::Rc;
 
 pub fn install_context_menu(
@@ -30,6 +31,7 @@ pub fn install_context_menu(
     start_scan_for_folder: &Rc<dyn Fn(PathBuf)>,
     list_store: &gio::ListStore,
     refresh_metadata_sidebar: &Rc<dyn Fn(&ImageMetadata)>,
+    external_editor: Option<&PathBuf>,
     grid_view: &GridView,
     single_picture: &Picture,
     meta_preview: &Picture,
@@ -47,6 +49,8 @@ pub fn install_context_menu(
     let refresh_meta_action = gio::SimpleAction::new("refresh-metadata", None);
     let refresh_folder_thumbs_action = gio::SimpleAction::new("refresh-folder-thumbnails", None);
     let refresh_folder_meta_action = gio::SimpleAction::new("refresh-folder-metadata", None);
+    let open_in_file_manager_action = gio::SimpleAction::new("open-in-file-manager", None);
+    let open_in_external_editor_action = gio::SimpleAction::new("open-in-external-editor", None);
 
     let selection_for_actions = selection_model.clone();
     let meta_cache_for_actions = meta_cache.clone();
@@ -292,6 +296,45 @@ pub fn install_context_menu(
         start_scan_for_actions(folder);
     });
 
+    let selection_for_actions = selection_model.clone();
+    let toast_overlay_for_actions = toast_overlay.clone();
+    open_in_file_manager_action.connect_activate(move |_, _| {
+        let Some(path) = selected_image_path(&selection_for_actions) else {
+            return;
+        };
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        let uri = gio::File::for_path(parent).uri();
+        if gio::AppInfo::launch_default_for_uri(&uri, Option::<&gio::AppLaunchContext>::None).is_err()
+        {
+            let toast = adw::Toast::new("Could not open file manager");
+            toast.set_timeout(3);
+            toast_overlay_for_actions.add_toast(toast);
+        }
+    });
+
+    let selection_for_actions = selection_model.clone();
+    let toast_overlay_for_actions = toast_overlay.clone();
+    let external_editor_for_actions = external_editor.cloned();
+    open_in_external_editor_action.connect_activate(move |_, _| {
+        let Some(path) = selected_image_path(&selection_for_actions) else {
+            return;
+        };
+        let failed = if let Some(editor) = external_editor_for_actions.as_ref() {
+            Command::new(editor).arg(&path).spawn().is_err()
+        } else {
+            let uri = gio::File::for_path(&path).uri();
+            gio::AppInfo::launch_default_for_uri(&uri, Option::<&gio::AppLaunchContext>::None)
+                .is_err()
+        };
+        if failed {
+            let toast = adw::Toast::new("Could not open in external editor");
+            toast.set_timeout(3);
+            toast_overlay_for_actions.add_toast(toast);
+        }
+    });
+
     action_group.add_action(&copy_prompt_action);
     action_group.add_action(&copy_negative_prompt_action);
     action_group.add_action(&copy_seed_action);
@@ -303,6 +346,8 @@ pub fn install_context_menu(
     action_group.add_action(&refresh_meta_action);
     action_group.add_action(&refresh_folder_thumbs_action);
     action_group.add_action(&refresh_folder_meta_action);
+    action_group.add_action(&open_in_file_manager_action);
+    action_group.add_action(&open_in_external_editor_action);
     window.insert_action_group("ctx", Some(&action_group));
 
     let menu_model = gio::Menu::new();
@@ -324,6 +369,17 @@ pub fn install_context_menu(
     clipboard_section.append(Some("Copy Path"), Some("ctx.copy-path"));
     clipboard_section.append(Some("Copy Metadata"), Some("ctx.copy-metadata"));
     menu_model.append_section(None, &clipboard_section);
+
+    let open_section = gio::Menu::new();
+    open_section.append(
+        Some("Open in File Manager"),
+        Some("ctx.open-in-file-manager"),
+    );
+    open_section.append(
+        Some("Open in External Editor"),
+        Some("ctx.open-in-external-editor"),
+    );
+    menu_model.append_section(None, &open_section);
 
     let refresh_submenu = gio::Menu::new();
     refresh_submenu.append(Some("Refresh Thumbnail"), Some("ctx.refresh-thumbnail"));

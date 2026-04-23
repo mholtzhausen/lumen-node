@@ -316,6 +316,7 @@ fn build_ui(app: &adw::Application) {
         right: right.clone(),
         min_meta_split_px: MIN_META_SPLIT_PX,
         start_scan_for_folder: start_scan_for_folder.clone(),
+        external_editor: app_config.external_editor.clone(),
     });
 
     // -----------------------------------------------------------------------

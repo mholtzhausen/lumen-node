@@ -27,6 +27,7 @@ pub(crate) struct ContextMenuWiringDeps {
     pub(crate) right: RightSidebarBundle,
     pub(crate) min_meta_split_px: i32,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
+    pub(crate) external_editor: Option<PathBuf>,
 }
 
 pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) {
@@ -51,6 +52,7 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) {
         &start_scan_for_folder,
         &deps.app_state.list_store,
         &refresh_metadata_sidebar,
+        deps.external_editor.as_ref(),
         &deps.center.grid_view,
         &deps.center.single_picture,
         &deps.right.meta_preview,
