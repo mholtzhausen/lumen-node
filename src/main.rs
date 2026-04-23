@@ -22,7 +22,7 @@ use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
     gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, EventControllerScroll,
-    EventControllerScrollFlags, FilterListModel,
+    EventControllerMotion, EventControllerScrollFlags, FilterListModel,
     GestureClick,
     GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Overlay, Paned, Picture,
     PopoverMenu, ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
@@ -2578,10 +2578,26 @@ fn build_ui(app: &adw::Application) {
 
         for folder in folders.iter().take(RECENT_FOLDERS_LIMIT) {
             let label = folder.display().to_string();
-            let btn = gtk4::Button::with_label(&label);
+            let row = gtk4::Box::new(Orientation::Horizontal, 6);
+            row.set_halign(gtk4::Align::Fill);
+            row.set_hexpand(true);
+
+            let btn = gtk4::Button::new();
             btn.set_halign(gtk4::Align::Fill);
+            btn.set_hexpand(true);
             btn.set_tooltip_text(Some(&label));
             btn.add_css_class("flat");
+            let btn_label = Label::new(Some(&label));
+            btn_label.set_xalign(0.0);
+            btn.set_child(Some(&btn_label));
+
+            let remove_btn = gtk4::Button::from_icon_name("edit-delete-symbolic");
+            remove_btn.add_css_class("flat");
+            remove_btn.set_tooltip_text(Some("Remove from history"));
+            remove_btn.set_visible(false);
+
+            row.append(&btn);
+            row.append(&remove_btn);
 
             let path = folder.clone();
             let open_folder = open_folder_from_history.clone();
@@ -2590,7 +2606,30 @@ fn build_ui(app: &adw::Application) {
                 open_folder(path.clone(), true);
                 popover.popdown();
             });
-            history_list_show.append(&btn);
+
+            let motion = EventControllerMotion::new();
+            let remove_btn_enter = remove_btn.clone();
+            motion.connect_enter(move |_, _, _| {
+                remove_btn_enter.set_visible(true);
+            });
+            let remove_btn_leave = remove_btn.clone();
+            motion.connect_leave(move |_| {
+                remove_btn_leave.set_visible(false);
+            });
+            row.add_controller(motion);
+
+            let path = folder.clone();
+            let recent_folders_remove = recent_folders_show.clone();
+            let history_list_remove = history_list_show.clone();
+            let row_remove = row.clone();
+            remove_btn.connect_clicked(move |_| {
+                recent_folders_remove
+                    .borrow_mut()
+                    .retain(|entry| entry != &path);
+                history_list_remove.remove(&row_remove);
+            });
+
+            history_list_show.append(&row);
         }
     });
 
@@ -2675,6 +2714,7 @@ fn build_ui(app: &adw::Application) {
         sort_dropdown_clear.set_selected(0);
         filter_clear.changed(gtk4::FilterChange::LessStrict);
         sorter_clear.changed(gtk4::SorterChange::Different);
+        config::save_filter_state(&sort_key_clear.borrow(), &search_text_clear.borrow());
     });
 
     // -----------------------------------------------------------------------

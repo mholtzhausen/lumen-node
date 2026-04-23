@@ -157,6 +157,44 @@ pub fn save(
     let _ = std::fs::write(&path, content);
 }
 
+/// Updates only persisted sort/search filters while preserving other config values.
+pub fn save_filter_state(sort_key: &str, search_text: &str) {
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<String> = Vec::new();
+    let mut saw_sort_key = false;
+    let mut saw_search_text = false;
+
+    for line in existing.lines() {
+        if line.starts_with("sort_key: ") {
+            lines.push(format!("sort_key: {}", sort_key));
+            saw_sort_key = true;
+        } else if line.starts_with("search_text: ") {
+            lines.push(format!("search_text: {}", search_text));
+            saw_search_text = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+
+    if !saw_sort_key {
+        lines.push(format!("sort_key: {}", sort_key));
+    }
+    if !saw_search_text {
+        lines.push(format!("search_text: {}", search_text));
+    }
+
+    let mut content = lines.join("\n");
+    if !content.is_empty() {
+        content.push('\n');
+    }
+    let _ = std::fs::write(&path, content);
+}
+
 fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/tmp"));
     PathBuf::from(home).join(".lumen-node").join("config.yml")
