@@ -18,6 +18,65 @@ use crate::{
     thumbnails,
 };
 
+pub fn create_grid_view(
+    selection_model: &SingleSelection,
+    factory: &gtk4::SignalListItemFactory,
+) -> GridView {
+    let grid_view = GridView::new(Some(selection_model.clone()), Some(factory.clone()));
+    grid_view.set_max_columns(12);
+    grid_view.set_min_columns(2);
+    grid_view
+}
+
+pub fn create_grid_scroll(grid_view: &GridView) -> ScrolledWindow {
+    let grid_scroll = ScrolledWindow::new();
+    grid_scroll.set_vexpand(true);
+    grid_scroll.set_hexpand(true);
+    grid_scroll.set_child(Some(grid_view));
+    grid_scroll
+}
+
+pub fn create_grid_overlay(grid_scroll: &ScrolledWindow) -> gtk4::Overlay {
+    let grid_overlay = gtk4::Overlay::new();
+    grid_overlay.set_hexpand(true);
+    grid_overlay.set_vexpand(true);
+    grid_overlay.set_child(Some(grid_scroll));
+    grid_overlay
+}
+
+pub fn attach_grid_page(view_stack: &adw::ViewStack, grid_overlay: &gtk4::Overlay) {
+    let grid_page = view_stack.add_titled(grid_overlay, Some("grid"), "Grid");
+    grid_page.set_icon_name(Some("view-grid-symbolic"));
+}
+
+pub fn add_scroll_flag_overlay(grid_overlay: &gtk4::Overlay, scroll_flag_box: &GtkBox) {
+    grid_overlay.add_overlay(scroll_flag_box);
+}
+
+pub fn create_single_picture() -> gtk4::Picture {
+    let single_picture = gtk4::Picture::new();
+    single_picture.set_vexpand(true);
+    single_picture.set_hexpand(true);
+    single_picture.set_can_shrink(true);
+    single_picture
+}
+
+pub fn attach_single_page(view_stack: &adw::ViewStack, single_picture: &gtk4::Picture) {
+    let single_page = view_stack.add_titled(single_picture, Some("single"), "Single");
+    single_page.set_icon_name(Some("view-fullscreen-symbolic"));
+}
+
+pub fn set_default_grid_page(view_stack: &adw::ViewStack) {
+    view_stack.set_visible_child_name("grid");
+}
+
+pub fn create_center_box(view_stack: &adw::ViewStack) -> GtkBox {
+    let center_box = GtkBox::new(Orientation::Vertical, 0);
+    center_box.set_hexpand(true);
+    center_box.append(view_stack);
+    center_box
+}
+
 pub static ACTIVE_THUMBNAIL_TASKS: AtomicU64 = AtomicU64::new(0);
 pub static THUMB_UI_CALLBACKS_TOTAL: AtomicU64 = AtomicU64::new(0);
 pub static DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE: AtomicU64 = AtomicU64::new(0);

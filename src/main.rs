@@ -42,13 +42,18 @@ use timing_report::write_timing_report;
 use tree_sidebar::{build_tree_root, reset_tree_root, sync_tree_to_path};
 use ui::actions::install_context_menu;
 use ui::grid::{
-    apply_thumbnail_size_change, bind_grid_list_item, build_scroll_flag_overlay, install_grid_scroll_speed_gate,
-    make_delete_action, make_rename_action, refresh_realized_grid_thumbnails, setup_grid_list_item,
-    unbind_grid_list_item, ACTIVE_THUMBNAIL_TASKS, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
-    THUMB_UI_CALLBACKS_TOTAL,
+    add_scroll_flag_overlay, apply_thumbnail_size_change, attach_grid_page, attach_single_page,
+    bind_grid_list_item, build_scroll_flag_overlay, create_center_box, create_grid_overlay,
+    create_grid_scroll, create_grid_view, create_single_picture, install_grid_scroll_speed_gate,
+    make_delete_action, make_rename_action, refresh_realized_grid_thumbnails, set_default_grid_page,
+    setup_grid_list_item, unbind_grid_list_item, ACTIVE_THUMBNAIL_TASKS,
+    DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE, THUMB_UI_CALLBACKS_TOTAL,
 };
 use ui::preview::{load_picture_async, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
-use ui::sidebar::populate_metadata_sidebar;
+use ui::sidebar::{
+    create_meta_content_container, create_meta_expander, create_meta_preview_picture, create_meta_scroll_list,
+    create_right_sidebar, populate_metadata_sidebar,
+};
 use view_helpers::selected_image_path;
 use window_math::{monitor_bounds_for_window, pct_to_px, px_to_pct};
 
@@ -66,11 +71,10 @@ use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
     gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, EventControllerScroll,
-    EventControllerMotion, EventControllerScrollFlags, FilterListModel,
-    GestureClick,
-    GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Overlay, Paned, Picture,
-    ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
-    ProgressBar, StringObject, TreeExpander, TreeListModel, TreeListRow, Expander,
+    EventControllerMotion, EventControllerScrollFlags, FilterListModel, GestureClick, Image, Label,
+    ListItem, ListView, ListScrollFlags, Orientation, Paned, ProgressBar, ScrolledWindow,
+    SignalListItemFactory, SingleSelection, SortListModel, StringObject, TreeExpander, TreeListModel,
+    TreeListRow,
 };
 
 static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -1422,22 +1426,12 @@ fn build_ui(app: &adw::Application) {
         unbind_grid_list_item(list_item);
     });
 
-    let grid_view = GridView::new(Some(selection_model.clone()), Some(factory));
-    grid_view.set_max_columns(12);
-    grid_view.set_min_columns(2);
-
-    let grid_scroll = ScrolledWindow::new();
-    grid_scroll.set_vexpand(true);
-    grid_scroll.set_hexpand(true);
-    grid_scroll.set_child(Some(&grid_view));
-
-    let grid_overlay = Overlay::new();
-    grid_overlay.set_hexpand(true);
-    grid_overlay.set_vexpand(true);
-    grid_overlay.set_child(Some(&grid_scroll));
+    let grid_view = create_grid_view(&selection_model, &factory);
+    let grid_scroll = create_grid_scroll(&grid_view);
+    let grid_overlay = create_grid_overlay(&grid_scroll);
 
     let (scroll_flag_box, scroll_flag) = build_scroll_flag_overlay();
-    grid_overlay.add_overlay(&scroll_flag_box);
+    add_scroll_flag_overlay(&grid_overlay, &scroll_flag_box);
 
     // Scroll-speed gate: suppress thumbnail spawning while scrolling faster than
     // 5 rows/sec, then refresh visible cells 150 ms after scrolling quiets down.
@@ -1458,30 +1452,15 @@ fn build_ui(app: &adw::Application) {
         &scroll_flag,
     );
 
-    // add_titled returns ViewStackPage — use it to set the page icon.
-    let grid_page = view_stack.add_titled(&grid_overlay, Some("grid"), "Grid");
-    grid_page.set_icon_name(Some("view-grid-symbolic"));
+    attach_grid_page(&view_stack, &grid_overlay);
 
-    let single_picture = Picture::new();
-    single_picture.set_vexpand(true);
-    single_picture.set_hexpand(true);
-    single_picture.set_can_shrink(true);
-    let single_page = view_stack.add_titled(&single_picture, Some("single"), "Single");
-    single_page.set_icon_name(Some("view-fullscreen-symbolic"));
-    view_stack.set_visible_child_name("grid");
-
-    let center_box = gtk4::Box::new(Orientation::Vertical, 0);
-    center_box.set_hexpand(true);
-    center_box.append(&view_stack);
+    let single_picture = create_single_picture();
+    attach_single_page(&view_stack, &single_picture);
+    set_default_grid_page(&view_stack);
+    let center_box = create_center_box(&view_stack);
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---
-    let right_sidebar = gtk4::Box::new(Orientation::Vertical, 0);
-    right_sidebar.set_width_request(260);
-    right_sidebar.set_visible(initial_right_sidebar_visible);
-    right_sidebar.set_margin_top(0);
-    right_sidebar.set_margin_bottom(0);
-    right_sidebar.set_margin_start(0);
-    right_sidebar.set_margin_end(0);
+    let right_sidebar = create_right_sidebar(initial_right_sidebar_visible);
 
     let startup_window_width = DEFAULT_WINDOW_WIDTH;
     let startup_window_height = DEFAULT_WINDOW_HEIGHT;
@@ -1518,30 +1497,12 @@ fn build_ui(app: &adw::Application) {
         .clamp(MIN_META_SPLIT_PX, startup_window_height - MIN_META_SPLIT_PX);
 
     // Top pane: image preview
-    let meta_preview = Picture::new();
-    meta_preview.set_vexpand(true);
-    meta_preview.set_hexpand(true);
-    meta_preview.set_can_shrink(true);
+    let meta_preview = create_meta_preview_picture();
 
     // Bottom pane: metadata list
-    let meta_content = gtk4::Box::new(Orientation::Vertical, 6);
-    meta_content.set_vexpand(true);
-    meta_content.set_margin_top(12);
-    meta_content.set_margin_bottom(12);
-    meta_content.set_margin_start(4);
-    meta_content.set_margin_end(8);
-
-    let meta_scroll = ScrolledWindow::new();
-    meta_scroll.set_vexpand(true);
-    meta_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
-    let meta_listbox = gtk4::ListBox::new();
-    meta_listbox.add_css_class("boxed-list");
-    meta_listbox.set_selection_mode(gtk4::SelectionMode::None);
-    meta_scroll.set_child(Some(&meta_listbox));
-
-    let meta_expander = Expander::new(Some("Metadata"));
-    meta_expander.set_expanded(true);
-    meta_expander.set_child(Some(&meta_scroll));
+    let meta_content = create_meta_content_container();
+    let (meta_scroll, meta_listbox) = create_meta_scroll_list();
+    let meta_expander = create_meta_expander(&meta_scroll);
     meta_content.append(&meta_expander);
     let meta_split_before_auto_collapse: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
 

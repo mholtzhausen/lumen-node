@@ -5,6 +5,55 @@ use gtk4::{glib, Align};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
+pub fn create_right_sidebar(initial_visible: bool) -> gtk4::Box {
+    let right_sidebar = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    right_sidebar.set_width_request(260);
+    right_sidebar.set_visible(initial_visible);
+    right_sidebar.set_margin_top(0);
+    right_sidebar.set_margin_bottom(0);
+    right_sidebar.set_margin_start(0);
+    right_sidebar.set_margin_end(0);
+    right_sidebar
+}
+
+pub fn create_meta_preview_picture() -> gtk4::Picture {
+    let meta_preview = gtk4::Picture::new();
+    meta_preview.set_vexpand(true);
+    meta_preview.set_hexpand(true);
+    meta_preview.set_can_shrink(true);
+    meta_preview
+}
+
+pub fn create_meta_content_container() -> gtk4::Box {
+    let meta_content = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+    meta_content.set_vexpand(true);
+    meta_content.set_margin_top(12);
+    meta_content.set_margin_bottom(12);
+    meta_content.set_margin_start(4);
+    meta_content.set_margin_end(8);
+    meta_content
+}
+
+pub fn create_meta_scroll_list() -> (gtk4::ScrolledWindow, gtk4::ListBox) {
+    let meta_scroll = gtk4::ScrolledWindow::new();
+    meta_scroll.set_vexpand(true);
+    meta_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
+
+    let meta_listbox = gtk4::ListBox::new();
+    meta_listbox.add_css_class("boxed-list");
+    meta_listbox.set_selection_mode(gtk4::SelectionMode::None);
+    meta_scroll.set_child(Some(&meta_listbox));
+
+    (meta_scroll, meta_listbox)
+}
+
+pub fn create_meta_expander(meta_scroll: &gtk4::ScrolledWindow) -> gtk4::Expander {
+    let meta_expander = gtk4::Expander::new(Some("Metadata"));
+    meta_expander.set_expanded(true);
+    meta_expander.set_child(Some(meta_scroll));
+    meta_expander
+}
+
 pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
     while let Some(child) = listbox.first_child() {
         listbox.remove(&child);
