@@ -7,6 +7,7 @@ pub mod navigation;
 pub mod models;
 pub mod open_folder;
 pub mod preview;
+pub mod right_sidebar;
 pub mod scan_runtime;
 pub mod selection;
 pub mod session;

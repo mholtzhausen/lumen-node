@@ -44,6 +44,7 @@ use ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers,
 use ui::models::{build_model_bundle, ModelAssemblyDeps};
 use ui::navigation::{install_navigation_handlers, NavigationDeps};
 use ui::open_folder::{build_open_folder_action, OpenFolderActionDeps};
+use ui::right_sidebar::{build_right_sidebar, RightSidebarDeps};
 use ui::scan_runtime::{install_scan_runtime, ScanRuntimeDeps};
 use ui::selection::{handle_selection_change_event, ClickTrace};
 use ui::session::{
@@ -56,11 +57,7 @@ use ui::shell::{
     mount_window_content,
 };
 use ui::sidebar::{
-    append_meta_paned_to_sidebar, connect_meta_paned_dirty_tracking, connect_sidebar_visibility_toggles,
-    create_meta_content_container, create_meta_expander, create_meta_paned, create_meta_position_programmatic,
-    create_meta_preview_picture, create_meta_scroll_list, create_meta_split_before_auto_collapse,
-    create_meta_split_dirty_flag, create_pane_restore_complete_flag, create_right_sidebar,
-    initialize_meta_paned_position, populate_metadata_sidebar,
+    connect_sidebar_visibility_toggles, populate_metadata_sidebar,
 };
 use ui::tree::build_tree_widgets;
 use window_math::pct_to_px;
@@ -487,7 +484,6 @@ fn build_ui(app: &adw::Application) {
     let single_picture = center_content.single_picture;
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---
-    let right_sidebar = create_right_sidebar(initial_right_sidebar_visible);
 
     let startup_window_width = DEFAULT_WINDOW_WIDTH;
     let startup_window_height = DEFAULT_WINDOW_HEIGHT;
@@ -523,29 +519,19 @@ fn build_ui(app: &adw::Application) {
         .unwrap_or(200)
         .clamp(MIN_META_SPLIT_PX, startup_window_height - MIN_META_SPLIT_PX);
 
-    // Top pane: image preview
-    let meta_preview = create_meta_preview_picture();
-
-    // Bottom pane: metadata list
-    let meta_content = create_meta_content_container();
-    let (meta_scroll, meta_listbox) = create_meta_scroll_list();
-    let meta_expander = create_meta_expander(&meta_scroll);
-    meta_content.append(&meta_expander);
-    let meta_split_before_auto_collapse = create_meta_split_before_auto_collapse();
-
-    // Vertical paned: preview (top) | metadata (bottom)
-    let meta_paned = create_meta_paned(&meta_preview, &meta_content);
-    let meta_position_programmatic = create_meta_position_programmatic();
-    let meta_split_dirty = create_meta_split_dirty_flag();
-    let pane_restore_complete = create_pane_restore_complete_flag();
-    initialize_meta_paned_position(&meta_paned, &meta_position_programmatic, meta_pane_start_px);
-    connect_meta_paned_dirty_tracking(
-        &meta_paned,
-        &meta_position_programmatic,
-        &meta_split_dirty,
-        &pane_restore_complete,
-    );
-    append_meta_paned_to_sidebar(&right_sidebar, &meta_paned);
+    let right_sidebar_bundle = build_right_sidebar(RightSidebarDeps {
+        initial_right_sidebar_visible,
+        meta_pane_start_px,
+    });
+    let right_sidebar = right_sidebar_bundle.right_sidebar;
+    let meta_preview = right_sidebar_bundle.meta_preview;
+    let meta_listbox = right_sidebar_bundle.meta_listbox;
+    let meta_expander = right_sidebar_bundle.meta_expander;
+    let meta_split_before_auto_collapse = right_sidebar_bundle.meta_split_before_auto_collapse;
+    let meta_paned = right_sidebar_bundle.meta_paned;
+    let meta_position_programmatic = right_sidebar_bundle.meta_position_programmatic;
+    let meta_split_dirty = right_sidebar_bundle.meta_split_dirty;
+    let pane_restore_complete = right_sidebar_bundle.pane_restore_complete;
 
     let refresh_metadata_sidebar_for_actions: Rc<dyn Fn(&ImageMetadata)> = Rc::new({
         let meta_listbox = meta_listbox.clone();
