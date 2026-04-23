@@ -1,3 +1,4 @@
+mod byte_format;
 mod config;
 mod db;
 mod file_name_ops;
@@ -5,13 +6,17 @@ mod image_types;
 mod json_tree;
 mod metadata;
 mod metadata_view;
+mod recent_folders;
 mod scan;
 mod scanner;
 mod sort;
+mod sort_flags;
 mod thumbnails;
+mod thumbnail_sizing;
 mod tree_sidebar;
 mod updater;
 mod view_helpers;
+mod window_math;
 
 use metadata::ImageMetadata;
 use metadata_view::{
@@ -21,14 +26,19 @@ use file_name_ops::{
     build_renamed_target, clipboard_base_name_hint, split_filename,
 };
 use json_tree::build_json_metadata_widget;
+use byte_format::human_readable_bytes;
 use scan::ScanMessage;
+use recent_folders::push_recent_folder_entry;
 use scanner::scan_directory;
+use sort_flags::{compute_sort_fields, sort_flag_text_for_path, SortFields};
 use sort::{
     normalize_sort_key, sort_index_for_key, sort_key_for_index, SORT_KEY_DATE_DESC,
     SORT_KEY_NAME_ASC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
 };
+use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use tree_sidebar::{build_tree_root, reset_tree_root, sync_tree_to_path};
 use view_helpers::{attach_context_menu, selected_image_path};
+use window_math::{monitor_bounds_for_window, pct_to_px, px_to_pct};
 
 use std::{
     cell::Cell,
@@ -37,7 +47,7 @@ use std::{
     collections::VecDeque,
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use libadwaita as adw;
@@ -73,41 +83,6 @@ const RECENT_FOLDERS_LIMIT: usize = 50;
 const ENUM_PHASE_WEIGHT: f64 = 0.10;
 const THUMB_PHASE_WEIGHT: f64 = 0.35;
 const ENRICH_PHASE_WEIGHT: f64 = 0.55;
-
-fn clamp_f64(value: f64, min: f64, max: f64) -> f64 {
-    value.max(min).min(max)
-}
-
-fn pct_to_px(total: i32, pct: f64) -> i32 {
-    let total = total.max(1) as f64;
-    ((clamp_f64(pct, 0.0, 100.0) / 100.0) * total).round() as i32
-}
-
-fn px_to_pct(px: i32, total: i32) -> f64 {
-    let total = total.max(1) as f64;
-    clamp_f64(((px.max(0) as f64) / total) * 100.0, 0.0, 100.0)
-}
-
-
-fn monitor_bounds_for_window(window: &adw::ApplicationWindow) -> (i32, i32) {
-    let display = gtk4::prelude::WidgetExt::display(window);
-    if let Some(surface) = window.surface() {
-        if let Some(monitor) = display.monitor_at_surface(&surface) {
-            let geometry = monitor.geometry();
-            return (geometry.width().max(1), geometry.height().max(1));
-        }
-    }
-
-    let monitors = display.monitors();
-    for i in 0..monitors.n_items() {
-        if let Some(monitor) = monitors.item(i).and_downcast::<gdk::Monitor>() {
-            let geometry = monitor.geometry();
-            return (geometry.width().max(1), geometry.height().max(1));
-        }
-    }
-
-    (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
-}
 
 #[derive(Default)]
 struct ScanProgressState {
@@ -184,21 +159,6 @@ impl ScanProgressState {
             self.enriched_generated,
             self.enriched_cached
         )
-    }
-}
-
-fn human_readable_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit_idx = 0;
-    while value >= 1024.0 && unit_idx < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit_idx += 1;
-    }
-    if unit_idx == 0 {
-        format!("{} {}", bytes, UNITS[unit_idx])
-    } else {
-        format!("{value:.1} {}", UNITS[unit_idx])
     }
 }
 
@@ -397,12 +357,6 @@ fn open_delete_dialog(
     dialog.present();
 }
 
-fn push_recent_folder_entry(history: &mut Vec<std::path::PathBuf>, folder: &std::path::Path) {
-    history.retain(|entry| entry != folder);
-    history.insert(0, folder.to_path_buf());
-    history.truncate(RECENT_FOLDERS_LIMIT);
-}
-
 fn sync_progress_widgets(
     state: &ScanProgressState,
     progress_box: &gtk4::Box,
@@ -546,102 +500,6 @@ enum PreviewLoadOutcome {
     Displayed,
     Failed,
     StaleOrCancelled,
-}
-
-#[derive(Clone, Default)]
-struct SortFields {
-    filename_lower: String,
-    modified: Option<SystemTime>,
-    size: u64,
-}
-
-fn compute_sort_fields(path_str: &str) -> SortFields {
-    let path = std::path::Path::new(path_str);
-    let filename_lower = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-
-    let (modified, size) = match std::fs::metadata(path) {
-        Ok(meta) => (meta.modified().ok(), meta.len()),
-        Err(_) => (None, 0),
-    };
-
-    SortFields {
-        filename_lower,
-        modified,
-        size,
-    }
-}
-
-fn format_sort_flag_date(modified: Option<SystemTime>) -> Option<String> {
-    let modified = modified?;
-    let secs = modified.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
-    let dt = glib::DateTime::from_unix_local(secs).ok()?;
-    dt.format("%Y-%m-%d").ok().map(|s| s.to_string())
-}
-
-fn first_filename_character(filename_lower: &str) -> String {
-    let ch = filename_lower
-        .chars()
-        .find(|c| c.is_alphanumeric())
-        .unwrap_or('#');
-    ch.to_uppercase().collect()
-}
-
-fn sort_flag_text_for_path(
-    path: &str,
-    sort_key: &str,
-    sort_fields_cache: &HashMap<String, SortFields>,
-) -> Option<String> {
-    let fallback;
-    let fields = if let Some(fields) = sort_fields_cache.get(path) {
-        fields
-    } else {
-        fallback = compute_sort_fields(path);
-        &fallback
-    };
-
-    if sort_key.starts_with("name_") {
-        let source = if fields.filename_lower.is_empty() {
-            std::path::Path::new(path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default()
-        } else {
-            fields.filename_lower.clone()
-        };
-        return Some(first_filename_character(&source));
-    }
-
-    if sort_key.starts_with("date_") {
-        return format_sort_flag_date(fields.modified);
-    }
-
-    if sort_key.starts_with("size_") {
-        return Some(human_readable_bytes(fields.size));
-    }
-
-    None
-}
-
-fn thumbnail_size_options() -> [i32; 4] {
-    let base = thumbnails::THUMB_NORMAL_SIZE;
-    [
-        base,
-        (((base as f64) * 1.3 / 16.0).round() as i32) * 16,
-        (((base as f64) * 1.6 / 16.0).round() as i32) * 16,
-        (((base as f64) * 1.9 / 16.0).round() as i32) * 16,
-    ]
-}
-
-fn normalize_thumbnail_size(size: i32) -> i32 {
-    let options = thumbnail_size_options();
-    options
-        .iter()
-        .copied()
-        .min_by_key(|opt| (opt - size).abs())
-        .unwrap_or(thumbnails::THUMB_NORMAL_SIZE)
 }
 
 fn load_grid_thumbnail(
@@ -1684,7 +1542,7 @@ fn build_ui(app: &adw::Application) {
         progress_state_tree.borrow_mut().current_folder_path = path.display().to_string();
         {
             let mut history = recent_folders_tree.borrow_mut();
-            push_recent_folder_entry(&mut history, path.as_path());
+            push_recent_folder_entry(&mut history, path.as_path(), RECENT_FOLDERS_LIMIT);
             config::save_recent_state(Some(path.as_path()), &history);
         }
         reset_tree_root(&tree_root_tree, path.as_path());
@@ -3001,7 +2859,7 @@ fn build_ui(app: &adw::Application) {
         progress_state_open_action.borrow_mut().current_folder_path = path.display().to_string();
         {
             let mut history = recent_folders_open_action.borrow_mut();
-            push_recent_folder_entry(&mut history, path.as_path());
+            push_recent_folder_entry(&mut history, path.as_path(), RECENT_FOLDERS_LIMIT);
             config::save_recent_state(Some(path.as_path()), &history);
         }
         reset_tree_root(&tree_root_open_action, path.as_path());
