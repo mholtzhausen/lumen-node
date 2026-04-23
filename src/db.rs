@@ -33,6 +33,27 @@ pub enum IndexOutcome {
     Generated,
 }
 
+#[derive(Debug, Clone)]
+pub struct UiState {
+    pub sort_key: String,
+    pub search_text: String,
+    pub thumbnail_size: i32,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            sort_key: "name_asc".to_string(),
+            search_text: String::new(),
+            thumbnail_size: crate::thumbnails::THUMB_NORMAL_SIZE,
+        }
+    }
+}
+
+const UI_STATE_SORT_KEY: &str = "sort_key";
+const UI_STATE_SEARCH_TEXT: &str = "search_text";
+const UI_STATE_THUMBNAIL_SIZE: &str = "thumbnail_size";
+
 // ---------------------------------------------------------------------------
 // Database path & connection
 // ---------------------------------------------------------------------------
@@ -84,6 +105,10 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
             raw_parameters  TEXT,
             workflow_json   TEXT
         );
+        CREATE TABLE IF NOT EXISTS ui_state (
+            key             TEXT PRIMARY KEY,
+            value           TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_images_hash ON images(hash);",
     )?;
 
@@ -99,6 +124,75 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
         )?;
     }
 
+    Ok(())
+}
+
+pub fn load_ui_state(folder: &Path) -> Option<UiState> {
+    let conn = open(folder).ok()?;
+    let mut stmt = conn.prepare("SELECT key, value FROM ui_state").ok()?;
+    let rows = stmt
+        .query_map([], |row| {
+            let key: String = row.get(0)?;
+            let value: String = row.get(1)?;
+            Ok((key, value))
+        })
+        .ok()?;
+
+    let mut state = UiState::default();
+    let mut has_any_value = false;
+    for row in rows {
+        let Ok((key, value)) = row else { continue };
+        has_any_value = true;
+        match key.as_str() {
+            UI_STATE_SORT_KEY => {
+                if !value.trim().is_empty() {
+                    state.sort_key = value;
+                }
+            }
+            UI_STATE_SEARCH_TEXT => {
+                state.search_text = value;
+            }
+            UI_STATE_THUMBNAIL_SIZE => {
+                if let Ok(parsed) = value.trim().parse::<i32>() {
+                    state.thumbnail_size = parsed;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if has_any_value { Some(state) } else { None }
+}
+
+pub fn save_ui_state(folder: &Path, state: &UiState) -> rusqlite::Result<()> {
+    let conn = open(folder)?;
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO ui_state(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![UI_STATE_SORT_KEY, state.sort_key.as_str()],
+    )?;
+    tx.execute(
+        "INSERT INTO ui_state(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![UI_STATE_SEARCH_TEXT, state.search_text.as_str()],
+    )?;
+    tx.execute(
+        "INSERT INTO ui_state(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![UI_STATE_THUMBNAIL_SIZE, state.thumbnail_size.to_string()],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn set_ui_state_value(folder: &Path, key: &str, value: &str) -> rusqlite::Result<()> {
+    let conn = open(folder)?;
+    conn.execute(
+        "INSERT INTO ui_state(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
     Ok(())
 }
 

@@ -721,6 +721,17 @@ fn normalize_thumbnail_size(size: i32) -> i32 {
         .unwrap_or(thumbnails::THUMB_NORMAL_SIZE)
 }
 
+fn sort_index_for_key(sort_key: &str) -> u32 {
+    match sort_key {
+        "name_desc" => 1,
+        "date_asc" => 2,
+        "date_desc" => 3,
+        "size_asc" => 4,
+        "size_desc" => 5,
+        _ => 0,
+    }
+}
+
 fn load_grid_thumbnail(
     thumb_image: &Image,
     path_str: String,
@@ -1709,6 +1720,12 @@ fn build_ui(app: &adw::Application) {
     let current_folder_tree = current_folder.clone();
     let start_scan_tree = start_scan_for_folder.clone();
     let recent_folders_tree = recent_folders.clone();
+    let sort_key_tree = sort_key.clone();
+    let search_text_tree = search_text.clone();
+    let thumbnail_size_tree = thumbnail_size.clone();
+    let sort_dropdown_tree = sort_dropdown.clone();
+    let search_entry_tree = search_entry.clone();
+    let size_buttons_tree = size_buttons.clone();
     tree_selection.connect_selection_changed(move |model, _, _| {
         let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
             return;
@@ -1721,10 +1738,34 @@ fn build_ui(app: &adw::Application) {
         if current_folder_tree.borrow().as_deref() == Some(path.as_path()) {
             return;
         }
+
+        if let Some(saved_ui_state) = db::load_ui_state(path.as_path()) {
+            let selected_sort = sort_index_for_key(&saved_ui_state.sort_key);
+            *sort_key_tree.borrow_mut() = saved_ui_state.sort_key;
+            *search_text_tree.borrow_mut() = saved_ui_state.search_text.clone();
+            *thumbnail_size_tree.borrow_mut() = normalize_thumbnail_size(saved_ui_state.thumbnail_size);
+
+            if sort_dropdown_tree.selected() != selected_sort {
+                sort_dropdown_tree.set_selected(selected_sort);
+            }
+            search_entry_tree.set_text(&saved_ui_state.search_text);
+            for (i, btn) in size_buttons_tree.iter().enumerate() {
+                btn.set_active(thumbnail_size_options()[i] == *thumbnail_size_tree.borrow());
+            }
+        } else {
+            let seeded_state = db::UiState {
+                sort_key: sort_key_tree.borrow().clone(),
+                search_text: search_text_tree.borrow().clone(),
+                thumbnail_size: *thumbnail_size_tree.borrow(),
+            };
+            let _ = db::save_ui_state(path.as_path(), &seeded_state);
+        }
+
         *current_folder_tree.borrow_mut() = Some(path.clone());
         {
             let mut history = recent_folders_tree.borrow_mut();
             push_recent_folder_entry(&mut history, path.as_path());
+            config::save_recent_state(Some(path.as_path()), &history);
         }
         start_scan_tree(path);
     });
@@ -2971,14 +3012,49 @@ fn build_ui(app: &adw::Application) {
     let tree_model_open_action = tree_model.clone();
     let tree_list_view_open_action = tree_list_view.clone();
     let recent_folders_open_action = recent_folders.clone();
+    let sort_key_open_action = sort_key.clone();
+    let search_text_open_action = search_text.clone();
+    let thumbnail_size_open_action = thumbnail_size.clone();
+    let sort_dropdown_open_action = sort_dropdown.clone();
+    let search_entry_open_action = search_entry.clone();
+    let filter_open_action = filter.clone();
+    let sorter_open_action = sorter.clone();
+    let size_buttons_open_action = size_buttons.clone();
     let open_folder_action = Rc::new(move |path: std::path::PathBuf, sync_tree: bool| {
         if current_folder_open_action.borrow().as_deref() == Some(path.as_path()) {
             return;
         }
+
+        if let Some(saved_ui_state) = db::load_ui_state(path.as_path()) {
+            let selected_sort = sort_index_for_key(&saved_ui_state.sort_key);
+            *sort_key_open_action.borrow_mut() = saved_ui_state.sort_key;
+            *search_text_open_action.borrow_mut() = saved_ui_state.search_text.clone();
+            *thumbnail_size_open_action.borrow_mut() =
+                normalize_thumbnail_size(saved_ui_state.thumbnail_size);
+
+            if sort_dropdown_open_action.selected() != selected_sort {
+                sort_dropdown_open_action.set_selected(selected_sort);
+            }
+            search_entry_open_action.set_text(&saved_ui_state.search_text);
+            filter_open_action.changed(gtk4::FilterChange::Different);
+            sorter_open_action.changed(gtk4::SorterChange::Different);
+            for (i, btn) in size_buttons_open_action.iter().enumerate() {
+                btn.set_active(thumbnail_size_options()[i] == *thumbnail_size_open_action.borrow());
+            }
+        } else {
+            let seeded_state = db::UiState {
+                sort_key: sort_key_open_action.borrow().clone(),
+                search_text: search_text_open_action.borrow().clone(),
+                thumbnail_size: *thumbnail_size_open_action.borrow(),
+            };
+            let _ = db::save_ui_state(path.as_path(), &seeded_state);
+        }
+
         *current_folder_open_action.borrow_mut() = Some(path.clone());
         {
             let mut history = recent_folders_open_action.borrow_mut();
             push_recent_folder_entry(&mut history, path.as_path());
+            config::save_recent_state(Some(path.as_path()), &history);
         }
         start_scan_open_action(path.clone());
         if sync_tree {
@@ -2989,6 +3065,7 @@ fn build_ui(app: &adw::Application) {
     let history_list_show = history_list.clone();
     let history_popover_show = history_popover.clone();
     let recent_folders_show = recent_folders.clone();
+    let current_folder_history = current_folder.clone();
     let open_folder_from_history = open_folder_action.clone();
     history_popover.connect_show(move |_| {
         while let Some(child) = history_list_show.first_child() {
@@ -3050,10 +3127,15 @@ fn build_ui(app: &adw::Application) {
             let recent_folders_remove = recent_folders_show.clone();
             let history_list_remove = history_list_show.clone();
             let row_remove = row.clone();
+            let current_folder_remove = current_folder_history.clone();
             remove_btn.connect_clicked(move |_| {
                 recent_folders_remove
                     .borrow_mut()
                     .retain(|entry| entry != &path);
+                {
+                    let history = recent_folders_remove.borrow();
+                    config::save_recent_state(current_folder_remove.borrow().as_deref(), &history);
+                }
                 history_list_remove.remove(&row_remove);
             });
 
@@ -3105,6 +3187,9 @@ fn build_ui(app: &adw::Application) {
             return;
         }
         *sort_key_dd.borrow_mut() = new_key;
+        if let Some(folder) = current_folder_dd.borrow().as_ref() {
+            let _ = db::set_ui_state_value(folder.as_path(), "sort_key", &sort_key_dd.borrow());
+        }
 
         if scan_in_progress_dd.get() {
             if let Some(folder) = current_folder_dd.borrow().as_ref().cloned() {
@@ -3121,8 +3206,16 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     let search_text_entry = search_text.clone();
     let filter_entry = filter.clone();
+    let current_folder_search = current_folder.clone();
     search_entry.connect_search_changed(move |entry| {
         *search_text_entry.borrow_mut() = entry.text().to_lowercase();
+        if let Some(folder) = current_folder_search.borrow().as_ref() {
+            let _ = db::set_ui_state_value(
+                folder.as_path(),
+                "search_text",
+                &search_text_entry.borrow(),
+            );
+        }
         filter_entry.changed(gtk4::FilterChange::Different);
     });
 
@@ -3135,14 +3228,25 @@ fn build_ui(app: &adw::Application) {
     let sorter_clear = sorter.clone();
     let search_entry_clear = search_entry.clone();
     let sort_dropdown_clear = sort_dropdown.clone();
+    let thumbnail_size_clear = thumbnail_size.clone();
+    let current_folder_clear = current_folder.clone();
     clear_btn.connect_clicked(move |_| {
         *search_text_clear.borrow_mut() = String::new();
         *sort_key_clear.borrow_mut() = "name_asc".to_string();
         search_entry_clear.set_text("");
         sort_dropdown_clear.set_selected(0);
+        if let Some(folder) = current_folder_clear.borrow().as_ref() {
+            let _ = db::save_ui_state(
+                folder.as_path(),
+                &db::UiState {
+                    sort_key: sort_key_clear.borrow().clone(),
+                    search_text: search_text_clear.borrow().clone(),
+                    thumbnail_size: *thumbnail_size_clear.borrow(),
+                },
+            );
+        }
         filter_clear.changed(gtk4::FilterChange::LessStrict);
         sorter_clear.changed(gtk4::SorterChange::Different);
-        config::save_filter_state(&sort_key_clear.borrow(), &search_text_clear.borrow());
     });
 
     // -----------------------------------------------------------------------
@@ -3160,6 +3264,7 @@ fn build_ui(app: &adw::Application) {
         let realized_thumb_images_toggle = realized_thumb_images_toggle.clone();
         let realized_cell_boxes_toggle = realized_cell_boxes_toggle.clone();
         let hash_cache_toggle = hash_cache_toggle.clone();
+        let current_folder_toggle = current_folder.clone();
         button.connect_clicked(move |_| {
             let selected_size = options[idx];
             let was_selected = *thumbnail_size_toggle.borrow() == selected_size;
@@ -3171,6 +3276,13 @@ fn build_ui(app: &adw::Application) {
 
             if was_selected {
                 return;
+            }
+            if let Some(folder) = current_folder_toggle.borrow().as_ref() {
+                let _ = db::set_ui_state_value(
+                    folder.as_path(),
+                    "thumbnail_size",
+                    &selected_size.to_string(),
+                );
             }
 
             {
@@ -3570,10 +3682,17 @@ fn build_ui(app: &adw::Application) {
             px_to_pct(meta_pos, meta_total_height),
             left_toggle_close.is_active(),
             right_toggle_close.is_active(),
-            &sort_key_close.borrow(),
-            &search_text_close.borrow(),
-            *thumbnail_size_close.borrow(),
         );
+        if let Some(folder) = cf_close.borrow().as_ref() {
+            let _ = db::save_ui_state(
+                folder.as_path(),
+                &db::UiState {
+                    sort_key: sort_key_close.borrow().clone(),
+                    search_text: search_text_close.borrow().clone(),
+                    thumbnail_size: *thumbnail_size_close.borrow(),
+                },
+            );
+        }
         glib::Propagation::Proceed
     });
 
@@ -3590,14 +3709,7 @@ fn build_ui(app: &adw::Application) {
     // Restore persisted sort + search state into the UI controls
     // -----------------------------------------------------------------------
     {
-        let initial_sort_idx: u32 = match sort_key.borrow().as_str() {
-            "name_desc" => 1,
-            "date_asc"  => 2,
-            "date_desc" => 3,
-            "size_asc"  => 4,
-            "size_desc" => 5,
-            _           => 0,
-        };
+        let initial_sort_idx: u32 = sort_index_for_key(sort_key.borrow().as_str());
         if initial_sort_idx != 0 {
             // fires connect_selected_notify → updates sort_key + calls sorter.changed()
             sort_dropdown.set_selected(initial_sort_idx);

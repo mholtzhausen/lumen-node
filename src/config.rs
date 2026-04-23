@@ -119,9 +119,6 @@ pub fn save(
     meta_pane_height_pct: f64,
     left_sidebar_visible: bool,
     right_sidebar_visible: bool,
-    sort_key: &str,
-    search_text: &str,
-    thumbnail_size: i32,
 ) {
     let path = config_path();
     if let Some(parent) = path.parent() {
@@ -136,7 +133,7 @@ pub fn save(
         .collect::<Vec<_>>()
         .join("\n");
     let content = format!(
-        "last_folder: {}\n{}\nwindow_width: {}\nwindow_height: {}\nwindow_maximized: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\nsort_key: {}\nsearch_text: {}\nthumbnail_size: {}\n",
+        "last_folder: {}\n{}\nwindow_width: {}\nwindow_height: {}\nwindow_maximized: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\n",
         folder_str,
         recent_folder_lines,
         window_width,
@@ -150,48 +147,39 @@ pub fn save(
         meta_pane_height_pct,
         left_sidebar_visible,
         right_sidebar_visible,
-        sort_key,
-        search_text,
-        thumbnail_size,
     );
     let _ = std::fs::write(&path, content);
 }
 
-/// Updates only persisted sort/search filters while preserving other config values.
-pub fn save_filter_state(sort_key: &str, search_text: &str) {
+/// Updates persisted folder history without changing other config keys.
+pub fn save_recent_state(last_folder: Option<&Path>, recent_folders: &[PathBuf]) {
     let path = config_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
 
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut lines: Vec<String> = Vec::new();
-    let mut saw_sort_key = false;
-    let mut saw_search_text = false;
+    let folder_str = last_folder
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let recent_folder_lines = recent_folders
+        .iter()
+        .map(|p| format!("recent_folder: {}", p.display()))
+        .collect::<Vec<_>>()
+        .join("\n");
 
+    let mut lines: Vec<String> = Vec::new();
     for line in existing.lines() {
-        if line.starts_with("sort_key: ") {
-            lines.push(format!("sort_key: {}", sort_key));
-            saw_sort_key = true;
-        } else if line.starts_with("search_text: ") {
-            lines.push(format!("search_text: {}", search_text));
-            saw_search_text = true;
-        } else {
+        if !line.starts_with("last_folder: ") && !line.starts_with("recent_folder: ") {
             lines.push(line.to_string());
         }
     }
-
-    if !saw_sort_key {
-        lines.push(format!("sort_key: {}", sort_key));
-    }
-    if !saw_search_text {
-        lines.push(format!("search_text: {}", search_text));
-    }
-
-    let mut content = lines.join("\n");
-    if !content.is_empty() {
-        content.push('\n');
-    }
+    let suffix = lines.join("\n");
+    let content = if suffix.is_empty() {
+        format!("last_folder: {}\n{}\n", folder_str, recent_folder_lines)
+    } else {
+        format!("last_folder: {}\n{}\n{}\n", folder_str, recent_folder_lines, suffix)
+    };
     let _ = std::fs::write(&path, content);
 }
 
