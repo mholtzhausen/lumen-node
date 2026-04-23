@@ -1,3 +1,15 @@
+## 1.0.0 (baf519d)
+### Features and Improvements
+- Large-scale modularization: scan runtime and coordination, app state, layout, navigation, open-folder flow, tree and header controls, center grid, preview loading, metadata and JSON tree views, dialogs, and keyboard/UI wiring.
+- Session persistence and restoration improvements for window and browsing state.
+- Selection-driven metadata and preview loading, click tracing, and runtime snapshot support.
+- Grid enhancements including scroll overlay and speed tuning, thumbnail rename/delete actions, and improved trash dialog and shortcuts.
+- External editor support from the context menu and configuration.
+- Supporting modules for recent folders, sort flags, thumbnail sizing, window layout math, image typing, filename helpers, and related utilities.
+
+### Deprecations
+- Removed handoff/resume shell command files in favor of in-app session persistence.
+
 ## 0.2.0 (c458607)
 ### Features and Improvements
 - Added current folder path tracking in scan progress and status bar.
