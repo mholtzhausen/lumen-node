@@ -44,15 +44,19 @@ use ui::actions::install_context_menu;
 use ui::grid::{
     add_scroll_flag_overlay, apply_thumbnail_size_change, attach_grid_page, attach_single_page,
     bind_grid_list_item, build_scroll_flag_overlay, create_center_box, create_grid_overlay,
-    create_grid_scroll, create_grid_view, create_single_picture, install_grid_scroll_speed_gate,
-    make_delete_action, make_rename_action, refresh_realized_grid_thumbnails, set_default_grid_page,
-    setup_grid_list_item, unbind_grid_list_item, ACTIVE_THUMBNAIL_TASKS,
+    create_grid_scroll, create_grid_view, create_single_picture, enter_single_view_mode,
+    install_grid_scroll_speed_gate, make_delete_action, make_rename_action,
+    refresh_realized_grid_thumbnails, set_default_grid_page, setup_grid_list_item,
+    unbind_grid_list_item, ACTIVE_THUMBNAIL_TASKS,
     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE, THUMB_UI_CALLBACKS_TOTAL,
 };
-use ui::preview::{load_picture_async, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
+use ui::preview::{load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
 use ui::sidebar::{
-    create_meta_content_container, create_meta_expander, create_meta_preview_picture, create_meta_scroll_list,
-    create_right_sidebar, populate_metadata_sidebar,
+    append_meta_paned_to_sidebar, connect_meta_paned_dirty_tracking, connect_sidebar_visibility_toggles,
+    create_meta_content_container, create_meta_expander, create_meta_paned, create_meta_position_programmatic,
+    create_meta_preview_picture, create_meta_scroll_list, create_meta_split_before_auto_collapse,
+    create_meta_split_dirty_flag, create_pane_restore_complete_flag, create_right_sidebar,
+    initialize_meta_paned_position, populate_metadata_sidebar,
 };
 use view_helpers::selected_image_path;
 use window_math::{monitor_bounds_for_window, pct_to_px, px_to_pct};
@@ -464,6 +468,52 @@ fn emit_full_view_report(trace: &FullViewTrace) {
     report.push_str(&format!("TOTAL {:>8.3}ms\n\n", trace.total_ms()));
 
     write_timing_report(&report);
+}
+
+fn new_full_view_trace(path_str: String) -> Rc<RefCell<FullViewTrace>> {
+    let full_view_id = FULL_VIEW_TRACE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+    let active_thumbnail_jobs_at_activate = ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed);
+    let active_preview_jobs_at_activate = ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed);
+    Rc::new(RefCell::new(FullViewTrace::new(
+        full_view_id,
+        path_str,
+        active_thumbnail_jobs_at_activate,
+        active_preview_jobs_at_activate,
+    )))
+}
+
+fn apply_full_view_metrics(trace: &Rc<RefCell<FullViewTrace>>, metrics: PreviewLoadMetrics) {
+    let mut t = trace.borrow_mut();
+    t.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
+    t.preview_file_open_ms = Some(metrics.file_open_ms);
+    t.preview_decode_ms = Some(metrics.decode_ms);
+    t.preview_texture_create_ms = Some(metrics.texture_create_ms);
+    t.preview_worker_total_ms = Some(metrics.worker_total_ms);
+    t.preview_main_thread_dispatch_ms = Some(metrics.main_thread_dispatch_ms);
+    t.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
+    t.displayed_ms = Some(t.started.elapsed().as_secs_f64() * 1000.0);
+    t.outcome = match metrics.outcome {
+        PreviewLoadOutcome::Displayed => "done".to_string(),
+        PreviewLoadOutcome::Failed => "failed".to_string(),
+        PreviewLoadOutcome::StaleOrCancelled => "cancelled".to_string(),
+    };
+    emit_full_view_report(&t);
+}
+
+fn dispatch_full_view_load(
+    picture: &gtk4::Picture,
+    path_str: &str,
+    trace: Rc<RefCell<FullViewTrace>>,
+) {
+    let trace_for_cb = trace.clone();
+    load_picture_async(
+        picture,
+        path_str,
+        None,
+        Some(Box::new(move |metrics| {
+            apply_full_view_metrics(&trace_for_cb, metrics);
+        })),
+    );
 }
 
 fn mark_click_step(trace_state: &Rc<RefCell<Option<ClickTrace>>>, click_id: u64, step: &str) {
@@ -1504,38 +1554,21 @@ fn build_ui(app: &adw::Application) {
     let (meta_scroll, meta_listbox) = create_meta_scroll_list();
     let meta_expander = create_meta_expander(&meta_scroll);
     meta_content.append(&meta_expander);
-    let meta_split_before_auto_collapse: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
+    let meta_split_before_auto_collapse = create_meta_split_before_auto_collapse();
 
     // Vertical paned: preview (top) | metadata (bottom)
-    let meta_paned = Paned::new(Orientation::Vertical);
-    meta_paned.set_vexpand(true);
-    meta_paned.set_start_child(Some(&meta_preview));
-    meta_paned.set_end_child(Some(&meta_content));
-    meta_paned.set_resize_start_child(true);
-    meta_paned.set_resize_end_child(true);
-    meta_paned.set_shrink_start_child(false);
-    meta_paned.set_shrink_end_child(false);
-    let meta_position_programmatic = Rc::new(Cell::new(0_u32));
-    let meta_split_dirty = Rc::new(Cell::new(false));
-    let pane_restore_complete = Rc::new(Cell::new(false));
-    meta_position_programmatic.set(meta_position_programmatic.get().saturating_add(1));
-    meta_paned.set_position(meta_pane_start_px);
-    meta_position_programmatic.set(meta_position_programmatic.get().saturating_sub(1));
-    {
-        let meta_position_programmatic = meta_position_programmatic.clone();
-        let meta_split_dirty = meta_split_dirty.clone();
-        let pane_restore_complete = pane_restore_complete.clone();
-        meta_paned.connect_notify_local(Some("position"), move |_, _| {
-            if !pane_restore_complete.get() {
-                return;
-            }
-            if meta_position_programmatic.get() != 0 {
-                return;
-            }
-            meta_split_dirty.set(true);
-        });
-    }
-    right_sidebar.append(&meta_paned);
+    let meta_paned = create_meta_paned(&meta_preview, &meta_content);
+    let meta_position_programmatic = create_meta_position_programmatic();
+    let meta_split_dirty = create_meta_split_dirty_flag();
+    let pane_restore_complete = create_pane_restore_complete_flag();
+    initialize_meta_paned_position(&meta_paned, &meta_position_programmatic, meta_pane_start_px);
+    connect_meta_paned_dirty_tracking(
+        &meta_paned,
+        &meta_position_programmatic,
+        &meta_split_dirty,
+        &pane_restore_complete,
+    );
+    append_meta_paned_to_sidebar(&right_sidebar, &meta_paned);
 
     let refresh_metadata_sidebar_for_actions: Rc<dyn Fn(&ImageMetadata)> = Rc::new({
         let meta_listbox = meta_listbox.clone();
@@ -1567,15 +1600,7 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Wire: sidebar toggle buttons → show/hide panels
     // -----------------------------------------------------------------------
-    let left_sidebar_toggle = left_sidebar.clone();
-    left_toggle.connect_toggled(move |btn| {
-        left_sidebar_toggle.set_visible(btn.is_active());
-    });
-
-    let right_sidebar_toggle = right_sidebar.clone();
-    right_toggle.connect_toggled(move |btn| {
-        right_sidebar_toggle.set_visible(btn.is_active());
-    });
+    connect_sidebar_visibility_toggles(&left_toggle, &left_sidebar, &right_toggle, &right_sidebar);
 
     // -----------------------------------------------------------------------
     // Wire: grid item activate → switch to single view
@@ -1592,47 +1617,16 @@ fn build_ui(app: &adw::Application) {
     grid_view.connect_activate(move |_, pos| {
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
             let path_str = item.string().to_string();
-            let full_view_id = FULL_VIEW_TRACE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
-            let active_thumbnail_jobs_at_activate =
-                ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed);
-            let active_preview_jobs_at_activate =
-                ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed);
-            let trace = Rc::new(RefCell::new(FullViewTrace::new(
-                full_view_id,
-                path_str.clone(),
-                active_thumbnail_jobs_at_activate,
-                active_preview_jobs_at_activate,
-            )));
-            let trace_for_cb = trace.clone();
-
-            load_picture_async(
-                &picture_for_grid,
-                &path_str,
-                None,
-                Some(Box::new(move |metrics| {
-                    let mut t = trace_for_cb.borrow_mut();
-                    t.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
-                    t.preview_file_open_ms = Some(metrics.file_open_ms);
-                    t.preview_decode_ms = Some(metrics.decode_ms);
-                    t.preview_texture_create_ms = Some(metrics.texture_create_ms);
-                    t.preview_worker_total_ms = Some(metrics.worker_total_ms);
-                    t.preview_main_thread_dispatch_ms = Some(metrics.main_thread_dispatch_ms);
-                    t.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
-                    t.displayed_ms = Some(t.started.elapsed().as_secs_f64() * 1000.0);
-                    t.outcome = match metrics.outcome {
-                        PreviewLoadOutcome::Displayed => "done".to_string(),
-                        PreviewLoadOutcome::Failed => "failed".to_string(),
-                        PreviewLoadOutcome::StaleOrCancelled => "cancelled".to_string(),
-                    };
-                    emit_full_view_report(&t);
-                })),
-            );
+            let trace = new_full_view_trace(path_str.clone());
+            dispatch_full_view_load(&picture_for_grid, &path_str, trace);
         }
-        pre_fullview_left_grid.set(left_toggle_grid.is_active());
-        pre_fullview_right_grid.set(right_toggle_grid.is_active());
-        stack_for_grid.set_visible_child_name("single");
-        left_toggle_grid.set_active(false);
-        right_toggle_grid.set_active(false);
+        enter_single_view_mode(
+            &stack_for_grid,
+            &left_toggle_grid,
+            &right_toggle_grid,
+            &pre_fullview_left_grid,
+            &pre_fullview_right_grid,
+        );
     });
 
     // -----------------------------------------------------------------------
@@ -1658,45 +1652,15 @@ fn build_ui(app: &adw::Application) {
                 return;
             };
             let path_str = item.string().to_string();
-            let full_view_id = FULL_VIEW_TRACE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
-            let active_thumbnail_jobs_at_activate =
-                ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed);
-            let active_preview_jobs_at_activate =
-                ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed);
-            let trace = Rc::new(RefCell::new(FullViewTrace::new(
-                full_view_id,
-                path_str.clone(),
-                active_thumbnail_jobs_at_activate,
-                active_preview_jobs_at_activate,
-            )));
-            let trace_for_cb = trace.clone();
-            load_picture_async(
-                &picture_for_preview,
-                &path_str,
-                None,
-                Some(Box::new(move |metrics| {
-                    let mut t = trace_for_cb.borrow_mut();
-                    t.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
-                    t.preview_file_open_ms = Some(metrics.file_open_ms);
-                    t.preview_decode_ms = Some(metrics.decode_ms);
-                    t.preview_texture_create_ms = Some(metrics.texture_create_ms);
-                    t.preview_worker_total_ms = Some(metrics.worker_total_ms);
-                    t.preview_main_thread_dispatch_ms = Some(metrics.main_thread_dispatch_ms);
-                    t.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
-                    t.displayed_ms = Some(t.started.elapsed().as_secs_f64() * 1000.0);
-                    t.outcome = match metrics.outcome {
-                        PreviewLoadOutcome::Displayed => "done".to_string(),
-                        PreviewLoadOutcome::Failed => "failed".to_string(),
-                        PreviewLoadOutcome::StaleOrCancelled => "cancelled".to_string(),
-                    };
-                    emit_full_view_report(&t);
-                })),
+            let trace = new_full_view_trace(path_str.clone());
+            dispatch_full_view_load(&picture_for_preview, &path_str, trace);
+            enter_single_view_mode(
+                &stack_for_preview,
+                &left_toggle_preview,
+                &right_toggle_preview,
+                &pre_fullview_left_preview,
+                &pre_fullview_right_preview,
             );
-            pre_fullview_left_preview.set(left_toggle_preview.is_active());
-            pre_fullview_right_preview.set(right_toggle_preview.is_active());
-            stack_for_preview.set_visible_child_name("single");
-            left_toggle_preview.set_active(false);
-            right_toggle_preview.set_active(false);
         });
         meta_preview.add_controller(dbl_click);
     }

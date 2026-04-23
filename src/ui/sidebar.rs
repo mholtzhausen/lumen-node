@@ -54,6 +54,88 @@ pub fn create_meta_expander(meta_scroll: &gtk4::ScrolledWindow) -> gtk4::Expande
     meta_expander
 }
 
+pub fn create_meta_split_before_auto_collapse() -> std::rc::Rc<std::cell::Cell<Option<i32>>> {
+    std::rc::Rc::new(std::cell::Cell::new(None))
+}
+
+pub fn create_meta_position_programmatic() -> std::rc::Rc<std::cell::Cell<u32>> {
+    std::rc::Rc::new(std::cell::Cell::new(0_u32))
+}
+
+pub fn create_meta_split_dirty_flag() -> std::rc::Rc<std::cell::Cell<bool>> {
+    std::rc::Rc::new(std::cell::Cell::new(false))
+}
+
+pub fn create_pane_restore_complete_flag() -> std::rc::Rc<std::cell::Cell<bool>> {
+    std::rc::Rc::new(std::cell::Cell::new(false))
+}
+
+pub fn create_meta_paned(
+    meta_preview: &gtk4::Picture,
+    meta_content: &gtk4::Box,
+) -> gtk4::Paned {
+    let meta_paned = gtk4::Paned::new(gtk4::Orientation::Vertical);
+    meta_paned.set_vexpand(true);
+    meta_paned.set_start_child(Some(meta_preview));
+    meta_paned.set_end_child(Some(meta_content));
+    meta_paned.set_resize_start_child(true);
+    meta_paned.set_resize_end_child(true);
+    meta_paned.set_shrink_start_child(false);
+    meta_paned.set_shrink_end_child(false);
+    meta_paned
+}
+
+pub fn initialize_meta_paned_position(
+    meta_paned: &gtk4::Paned,
+    meta_position_programmatic: &std::rc::Rc<std::cell::Cell<u32>>,
+    meta_pane_start_px: i32,
+) {
+    meta_position_programmatic.set(meta_position_programmatic.get().saturating_add(1));
+    meta_paned.set_position(meta_pane_start_px);
+    meta_position_programmatic.set(meta_position_programmatic.get().saturating_sub(1));
+}
+
+pub fn connect_meta_paned_dirty_tracking(
+    meta_paned: &gtk4::Paned,
+    meta_position_programmatic: &std::rc::Rc<std::cell::Cell<u32>>,
+    meta_split_dirty: &std::rc::Rc<std::cell::Cell<bool>>,
+    pane_restore_complete: &std::rc::Rc<std::cell::Cell<bool>>,
+) {
+    let meta_position_programmatic = meta_position_programmatic.clone();
+    let meta_split_dirty = meta_split_dirty.clone();
+    let pane_restore_complete = pane_restore_complete.clone();
+    meta_paned.connect_notify_local(Some("position"), move |_, _| {
+        if !pane_restore_complete.get() {
+            return;
+        }
+        if meta_position_programmatic.get() != 0 {
+            return;
+        }
+        meta_split_dirty.set(true);
+    });
+}
+
+pub fn append_meta_paned_to_sidebar(right_sidebar: &gtk4::Box, meta_paned: &gtk4::Paned) {
+    right_sidebar.append(meta_paned);
+}
+
+pub fn connect_sidebar_visibility_toggles(
+    left_toggle: &gtk4::ToggleButton,
+    left_sidebar: &gtk4::Box,
+    right_toggle: &gtk4::ToggleButton,
+    right_sidebar: &gtk4::Box,
+) {
+    let left_sidebar_toggle = left_sidebar.clone();
+    left_toggle.connect_toggled(move |btn| {
+        left_sidebar_toggle.set_visible(btn.is_active());
+    });
+
+    let right_sidebar_toggle = right_sidebar.clone();
+    right_toggle.connect_toggled(move |btn| {
+        right_sidebar_toggle.set_visible(btn.is_active());
+    });
+}
+
 pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
     while let Some(child) = listbox.first_child() {
         listbox.remove(&child);

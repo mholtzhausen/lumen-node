@@ -77,6 +77,20 @@ pub fn create_center_box(view_stack: &adw::ViewStack) -> GtkBox {
     center_box
 }
 
+pub fn enter_single_view_mode(
+    view_stack: &adw::ViewStack,
+    left_toggle: &gtk4::ToggleButton,
+    right_toggle: &gtk4::ToggleButton,
+    pre_fullview_left: &Rc<Cell<bool>>,
+    pre_fullview_right: &Rc<Cell<bool>>,
+) {
+    pre_fullview_left.set(left_toggle.is_active());
+    pre_fullview_right.set(right_toggle.is_active());
+    view_stack.set_visible_child_name("single");
+    left_toggle.set_active(false);
+    right_toggle.set_active(false);
+}
+
 pub static ACTIVE_THUMBNAIL_TASKS: AtomicU64 = AtomicU64::new(0);
 pub static THUMB_UI_CALLBACKS_TOTAL: AtomicU64 = AtomicU64::new(0);
 pub static DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE: AtomicU64 = AtomicU64::new(0);
