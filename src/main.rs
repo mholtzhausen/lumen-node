@@ -10,6 +10,7 @@ mod scanner;
 mod sort;
 mod thumbnails;
 mod updater;
+mod view_helpers;
 
 use metadata::ImageMetadata;
 use metadata_view::{
@@ -25,6 +26,7 @@ use sort::{
     normalize_sort_key, sort_index_for_key, sort_key_for_index, SORT_KEY_DATE_DESC,
     SORT_KEY_NAME_ASC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
 };
+use view_helpers::{attach_context_menu, selected_image_path};
 
 use std::{
     cell::Cell,
@@ -43,7 +45,7 @@ use gtk4::{
     EventControllerMotion, EventControllerScrollFlags, FilterListModel,
     GestureClick,
     GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Overlay, Paned, Picture,
-    PopoverMenu, ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
+    ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
     ProgressBar, StringObject, TreeExpander, TreeListModel, TreeListRow, Expander,
 };
 
@@ -3717,28 +3719,6 @@ fn build_ui(app: &adw::Application) {
         meta_paned_restore.set_position(meta_pane_start_px);
         glib::ControlFlow::Break
     });
-}
-
-fn attach_context_menu<W: IsA<gtk4::Widget>>(widget: &W, menu_model: &gio::Menu) {
-    let widget_obj = widget.as_ref().clone();
-    let menu_model = menu_model.clone();
-    let click = GestureClick::new();
-    click.set_button(3);
-    click.connect_pressed(move |_, _, x, y| {
-        let pop = PopoverMenu::from_model(Some(&menu_model));
-        pop.set_parent(&widget_obj);
-        pop.set_has_arrow(true);
-        pop.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-        pop.popup();
-    });
-    widget.add_controller(click);
-}
-
-fn selected_image_path(selection: &SingleSelection) -> Option<std::path::PathBuf> {
-    selection
-        .selected_item()
-        .and_downcast::<StringObject>()
-        .map(|s| std::path::PathBuf::from(s.string().as_str()))
 }
 
 // ---------------------------------------------------------------------------
