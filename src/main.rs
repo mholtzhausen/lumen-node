@@ -99,6 +99,7 @@ struct ScanProgressState {
     enriched_cached: u32,
     folder_image_count: u32,
     folder_total_size_bytes: u64,
+    current_folder_path: String,
     visible: bool,
 }
 
@@ -139,10 +140,16 @@ impl ScanProgressState {
 
     fn status_text(&self) -> String {
         if !self.visible {
+            let location_text = if self.current_folder_path.is_empty() {
+                "Folder location unknown".to_string()
+            } else {
+                format!("Location {}", self.current_folder_path)
+            };
             return format!(
-                "Images {} | Folder size {}",
+                "Images {} | Folder size {} | {}",
                 self.folder_image_count,
-                human_readable_bytes(self.folder_total_size_bytes)
+                human_readable_bytes(self.folder_total_size_bytes),
+                location_text
             );
         }
         format!(
@@ -1727,6 +1734,7 @@ fn build_ui(app: &adw::Application) {
     let sort_dropdown_tree = sort_dropdown.clone();
     let search_entry_tree = search_entry.clone();
     let size_buttons_tree = size_buttons.clone();
+    let progress_state_tree = progress_state.clone();
     tree_selection.connect_selection_changed(move |model, _, _| {
         let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
             return;
@@ -1763,12 +1771,13 @@ fn build_ui(app: &adw::Application) {
         }
 
         *current_folder_tree.borrow_mut() = Some(path.clone());
+        progress_state_tree.borrow_mut().current_folder_path = path.display().to_string();
         {
             let mut history = recent_folders_tree.borrow_mut();
             push_recent_folder_entry(&mut history, path.as_path());
             config::save_recent_state(Some(path.as_path()), &history);
         }
-        reset_tree_root_deferred(tree_root_tree.clone(), path.clone());
+        reset_tree_root(&tree_root_tree, path.as_path());
         start_scan_tree(path);
     });
 
@@ -3047,6 +3056,7 @@ fn build_ui(app: &adw::Application) {
     let filter_open_action = filter.clone();
     let sorter_open_action = sorter.clone();
     let size_buttons_open_action = size_buttons.clone();
+    let progress_state_open_action = progress_state.clone();
     let open_folder_action = Rc::new(move |path: std::path::PathBuf, sync_tree: bool| {
         if current_folder_open_action.borrow().as_deref() == Some(path.as_path()) {
             return;
@@ -3078,12 +3088,13 @@ fn build_ui(app: &adw::Application) {
         }
 
         *current_folder_open_action.borrow_mut() = Some(path.clone());
+        progress_state_open_action.borrow_mut().current_folder_path = path.display().to_string();
         {
             let mut history = recent_folders_open_action.borrow_mut();
             push_recent_folder_entry(&mut history, path.as_path());
             config::save_recent_state(Some(path.as_path()), &history);
         }
-        reset_tree_root_deferred(tree_root_open_action.clone(), path.clone());
+        reset_tree_root(&tree_root_open_action, path.as_path());
         start_scan_open_action(path.clone());
         if sync_tree {
             sync_tree_to_path(&tree_model_open_action, &tree_list_view_open_action, &path);
@@ -4505,14 +4516,6 @@ fn sync_tree_to_path(
 fn reset_tree_root(tree_root: &gio::ListStore, root_path: &std::path::Path) {
     tree_root.remove_all();
     tree_root.append(&gio::File::for_path(root_path));
-}
-
-/// Schedules root replacement on the next main-loop tick to avoid mutating
-/// the tree model while GTK is dispatching selection/model-change signals.
-fn reset_tree_root_deferred(tree_root: gio::ListStore, root_path: std::path::PathBuf) {
-    glib::timeout_add_local_once(Duration::from_millis(0), move || {
-        reset_tree_root(&tree_root, root_path.as_path());
-    });
 }
 
 /// Builds the root `ListStore` for the file tree.
