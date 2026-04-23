@@ -33,7 +33,7 @@ use sort::{
     SORT_KEY_NAME_ASC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
 };
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
-use tree_sidebar::{reset_tree_root, sync_tree_to_path};
+use tree_sidebar::reset_tree_root;
 use ui::actions::install_context_menu;
 use ui::controls::{
     install_clear_button_handler, install_search_entry_handler, install_sort_dropdown_handler,
@@ -50,6 +50,7 @@ use ui::grid::{
 };
 use ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps};
 use ui::navigation::{install_navigation_handlers, NavigationDeps};
+use ui::open_folder::{build_open_folder_action, OpenFolderActionDeps};
 use ui::selection::{handle_selection_change_event, ClickTrace};
 use ui::session::{
     install_close_persistence_handler, restore_session_state, ClosePersistenceDeps,
@@ -1066,63 +1067,24 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Wire: open_btn → FileDialog → start scan (quick-jump shortcut)
     // -----------------------------------------------------------------------
-    let current_folder_open_action = current_folder.clone();
-    let start_scan_open_action = start_scan_for_folder.clone();
-    let tree_root_open_action = tree_root.clone();
-    let tree_model_open_action = tree_model.clone();
-    let tree_list_view_open_action = tree_list_view.clone();
-    let recent_folders_open_action = recent_folders.clone();
-    let sort_key_open_action = sort_key.clone();
-    let search_text_open_action = search_text.clone();
-    let thumbnail_size_open_action = thumbnail_size.clone();
-    let sort_dropdown_open_action = sort_dropdown.clone();
-    let search_entry_open_action = search_entry.clone();
-    let filter_open_action = filter.clone();
-    let sorter_open_action = sorter.clone();
-    let size_buttons_open_action = size_buttons.clone();
-    let progress_state_open_action = progress_state.clone();
-    let open_folder_action = Rc::new(move |path: std::path::PathBuf, sync_tree: bool| {
-        if current_folder_open_action.borrow().as_deref() == Some(path.as_path()) {
-            return;
-        }
-
-        if let Some(saved_ui_state) = db::load_ui_state(path.as_path()) {
-            let selected_sort = sort_index_for_key(&saved_ui_state.sort_key);
-            *sort_key_open_action.borrow_mut() = saved_ui_state.sort_key;
-            *search_text_open_action.borrow_mut() = saved_ui_state.search_text.clone();
-            *thumbnail_size_open_action.borrow_mut() =
-                normalize_thumbnail_size(saved_ui_state.thumbnail_size);
-
-            if sort_dropdown_open_action.selected() != selected_sort {
-                sort_dropdown_open_action.set_selected(selected_sort);
-            }
-            search_entry_open_action.set_text(&saved_ui_state.search_text);
-            filter_open_action.changed(gtk4::FilterChange::Different);
-            sorter_open_action.changed(gtk4::SorterChange::Different);
-            for (i, btn) in size_buttons_open_action.iter().enumerate() {
-                btn.set_active(thumbnail_size_options()[i] == *thumbnail_size_open_action.borrow());
-            }
-        } else {
-            let seeded_state = db::UiState {
-                sort_key: sort_key_open_action.borrow().clone(),
-                search_text: search_text_open_action.borrow().clone(),
-                thumbnail_size: *thumbnail_size_open_action.borrow(),
-            };
-            let _ = db::save_ui_state(path.as_path(), &seeded_state);
-        }
-
-        *current_folder_open_action.borrow_mut() = Some(path.clone());
-        progress_state_open_action.borrow_mut().current_folder_path = path.display().to_string();
-        {
-            let mut history = recent_folders_open_action.borrow_mut();
-            push_recent_folder_entry(&mut history, path.as_path(), RECENT_FOLDERS_LIMIT);
-            config::save_recent_state(Some(path.as_path()), &history);
-        }
-        reset_tree_root(&tree_root_open_action, path.as_path());
-        start_scan_open_action(path.clone());
-        if sync_tree {
-            sync_tree_to_path(&tree_model_open_action, &tree_list_view_open_action, &path);
-        }
+    let start_scan_for_folder_open_action: Rc<dyn Fn(std::path::PathBuf)> = start_scan_for_folder.clone();
+    let open_folder_action = build_open_folder_action(OpenFolderActionDeps {
+        current_folder: current_folder.clone(),
+        start_scan_for_folder: start_scan_for_folder_open_action,
+        tree_root: tree_root.clone(),
+        tree_model: tree_model.clone(),
+        tree_list_view: tree_list_view.clone(),
+        recent_folders: recent_folders.clone(),
+        sort_key: sort_key.clone(),
+        search_text: search_text.clone(),
+        thumbnail_size: thumbnail_size.clone(),
+        sort_dropdown: sort_dropdown.clone(),
+        search_entry: search_entry.clone(),
+        filter: filter.clone(),
+        sorter: sorter.clone(),
+        size_buttons: size_buttons.clone(),
+        progress_state: progress_state.clone(),
+        recent_folders_limit: RECENT_FOLDERS_LIMIT,
     });
 
     install_history_popover_handler(
