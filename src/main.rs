@@ -23,25 +23,25 @@ mod view_helpers;
 mod window_math;
 
 use metadata::ImageMetadata;
-use dialogs::{open_delete_dialog, open_rename_dialog};
-use file_name_ops::{
-    clipboard_base_name_hint,
-};
 use byte_format::human_readable_bytes;
 use scan::ScanMessage;
 use recent_folders::push_recent_folder_entry;
 use scanner::scan_directory;
 use sort_flags::{compute_sort_fields, SortFields};
 use sort::{
-    normalize_sort_key, sort_index_for_key, sort_key_for_index, SORT_KEY_DATE_DESC,
+    normalize_sort_key, sort_index_for_key, SORT_KEY_DATE_DESC,
     SORT_KEY_NAME_ASC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
 };
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use timing_report::write_timing_report;
 use tree_sidebar::{reset_tree_root, sync_tree_to_path};
 use ui::actions::install_context_menu;
+use ui::controls::{
+    install_clear_button_handler, install_search_entry_handler, install_sort_dropdown_handler,
+    install_thumbnail_size_handlers,
+};
 use ui::grid::{
-    add_scroll_flag_overlay, apply_thumbnail_size_change, attach_grid_page, attach_single_page,
+    add_scroll_flag_overlay, attach_grid_page, attach_single_page,
     bind_grid_list_item, build_scroll_flag_overlay, create_center_box, create_grid_overlay,
     create_grid_scroll, create_grid_view, create_single_picture, enter_single_view_mode,
     install_grid_scroll_speed_gate, make_delete_action, make_rename_action,
@@ -49,6 +49,7 @@ use ui::grid::{
     unbind_grid_list_item, ACTIVE_THUMBNAIL_TASKS,
     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
 };
+use ui::keyboard::{install_keyboard_handler, KeyboardDeps};
 use ui::preview::{load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
 use ui::selection::{handle_selection_change_event, ClickTrace};
 use ui::shell::{
@@ -64,7 +65,6 @@ use ui::sidebar::{
     initialize_meta_paned_position, populate_metadata_sidebar,
 };
 use ui::tree::build_tree_widgets;
-use view_helpers::selected_image_path;
 use window_math::{pct_to_px, px_to_pct};
 
 use std::{
@@ -80,9 +80,8 @@ use std::{
 use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
-    gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, EventControllerScroll,
-    EventControllerScrollFlags, FilterListModel, GestureClick, Image, Label, ListItem,
-    ListScrollFlags, ProgressBar, SignalListItemFactory, SingleSelection,
+    gio, glib, CustomFilter, CustomSorter, EventControllerScroll, EventControllerScrollFlags,
+    FilterListModel, GestureClick, Image, Label, ListItem, ProgressBar, SignalListItemFactory, SingleSelection,
     SortListModel, StringObject, TreeListRow,
 };
 
@@ -750,7 +749,6 @@ fn build_ui(app: &adw::Application) {
     let history_popover = header_controls.history_popover;
     let initial_left_sidebar_visible = header_controls.initial_left_sidebar_visible;
     let initial_right_sidebar_visible = header_controls.initial_right_sidebar_visible;
-    let size_options = thumbnail_size_options();
 
     // -----------------------------------------------------------------------
     // Three-pane layout: [left sidebar] | [center] | [right sidebar]
@@ -1327,128 +1325,39 @@ fn build_ui(app: &adw::Application) {
     );
 
     // -----------------------------------------------------------------------
-    // Wire: sort dropdown → update sort key and invalidate sorter
+    // Wire: sort/search/clear/thumbnail-size controls
     // -----------------------------------------------------------------------
-    let sort_key_dd = sort_key.clone();
-    let sorter_dd = sorter.clone();
-    let current_folder_dd = current_folder.clone();
-    let scan_in_progress_dd = scan_in_progress.clone();
-    let start_scan_dd = start_scan_for_folder.clone();
-    sort_dropdown.connect_selected_notify(move |dd| {
-        let key = sort_key_for_index(dd.selected());
-        let new_key = key.to_string();
-        if *sort_key_dd.borrow() == new_key {
-            return;
-        }
-        *sort_key_dd.borrow_mut() = new_key;
-        if let Some(folder) = current_folder_dd.borrow().as_ref() {
-            let _ = db::set_ui_state_value(folder.as_path(), "sort_key", &sort_key_dd.borrow());
-        }
-
-        if scan_in_progress_dd.get() {
-            if let Some(folder) = current_folder_dd.borrow().as_ref().cloned() {
-                start_scan_dd(folder);
-                return;
-            }
-        }
-
-        sorter_dd.changed(gtk4::SorterChange::Different);
-    });
-
-    // -----------------------------------------------------------------------
-    // Wire: search entry → update search text and invalidate filter
-    // -----------------------------------------------------------------------
-    let search_text_entry = search_text.clone();
-    let filter_entry = filter.clone();
-    let current_folder_search = current_folder.clone();
-    search_entry.connect_search_changed(move |entry| {
-        *search_text_entry.borrow_mut() = entry.text().to_lowercase();
-        if let Some(folder) = current_folder_search.borrow().as_ref() {
-            let _ = db::set_ui_state_value(
-                folder.as_path(),
-                "search_text",
-                &search_text_entry.borrow(),
-            );
-        }
-        filter_entry.changed(gtk4::FilterChange::Different);
-    });
-
-    // -----------------------------------------------------------------------
-    // Wire: clear button → reset search and sort
-    // -----------------------------------------------------------------------
-    let search_text_clear = search_text.clone();
-    let sort_key_clear = sort_key.clone();
-    let filter_clear = filter.clone();
-    let sorter_clear = sorter.clone();
-    let search_entry_clear = search_entry.clone();
-    let sort_dropdown_clear = sort_dropdown.clone();
-    let thumbnail_size_clear = thumbnail_size.clone();
-    let current_folder_clear = current_folder.clone();
-    clear_btn.connect_clicked(move |_| {
-        *search_text_clear.borrow_mut() = String::new();
-        *sort_key_clear.borrow_mut() = SORT_KEY_NAME_ASC.to_string();
-        search_entry_clear.set_text("");
-        sort_dropdown_clear.set_selected(0);
-        if let Some(folder) = current_folder_clear.borrow().as_ref() {
-            let _ = db::save_ui_state(
-                folder.as_path(),
-                &db::UiState {
-                    sort_key: sort_key_clear.borrow().clone(),
-                    search_text: search_text_clear.borrow().clone(),
-                    thumbnail_size: *thumbnail_size_clear.borrow(),
-                },
-            );
-        }
-        filter_clear.changed(gtk4::FilterChange::LessStrict);
-        sorter_clear.changed(gtk4::SorterChange::Different);
-    });
-
-    // -----------------------------------------------------------------------
-    // Wire: thumbnail size toggles → update size and refresh cell bindings
-    // -----------------------------------------------------------------------
-    let grid_view_toggle = grid_view.clone();
-    let realized_thumb_images_toggle = realized_thumb_images.clone();
-    let realized_cell_boxes_toggle = realized_cell_boxes.clone();
-    let hash_cache_toggle = hash_cache.clone();
-    for (idx, button) in size_buttons.iter().enumerate() {
-        let options = size_options;
-        let buttons = size_buttons.clone();
-        let thumbnail_size_toggle = thumbnail_size.clone();
-        let grid_view_toggle = grid_view_toggle.clone();
-        let realized_thumb_images_toggle = realized_thumb_images_toggle.clone();
-        let realized_cell_boxes_toggle = realized_cell_boxes_toggle.clone();
-        let hash_cache_toggle = hash_cache_toggle.clone();
-        let current_folder_toggle = current_folder.clone();
-        button.connect_clicked(move |_| {
-            let selected_size = options[idx];
-            let was_selected = *thumbnail_size_toggle.borrow() == selected_size;
-            *thumbnail_size_toggle.borrow_mut() = selected_size;
-
-            for (i, btn) in buttons.iter().enumerate() {
-                btn.set_active(i == idx);
-            }
-
-            if was_selected {
-                return;
-            }
-            if let Some(folder) = current_folder_toggle.borrow().as_ref() {
-                let _ = db::set_ui_state_value(
-                    folder.as_path(),
-                    "thumbnail_size",
-                    &selected_size.to_string(),
-                );
-            }
-
-            apply_thumbnail_size_change(
-                selected_size,
-                &realized_cell_boxes_toggle,
-                &realized_thumb_images_toggle,
-                &thumbnail_size_toggle,
-                &hash_cache_toggle,
-                &grid_view_toggle,
-            );
-        });
-    }
+    let start_scan_for_folder_controls: Rc<dyn Fn(std::path::PathBuf)> = start_scan_for_folder.clone();
+    install_sort_dropdown_handler(
+        &sort_dropdown,
+        &sort_key,
+        &sorter,
+        &current_folder,
+        &scan_in_progress,
+        &start_scan_for_folder_controls,
+    );
+    install_search_entry_handler(&search_entry, &search_text, &filter, &current_folder);
+    install_clear_button_handler(
+        &clear_btn,
+        &search_text,
+        &sort_key,
+        &filter,
+        &sorter,
+        &search_entry,
+        &sort_dropdown,
+        &thumbnail_size,
+        &current_folder,
+    );
+    install_thumbnail_size_handlers(
+        &size_buttons,
+        thumbnail_size_options(),
+        &thumbnail_size,
+        &grid_view,
+        &realized_thumb_images,
+        &realized_cell_boxes,
+        &hash_cache,
+        &current_folder,
+    );
 
     // -----------------------------------------------------------------------
     // Assemble three-pane layout with resizable Paned dividers
@@ -1499,203 +1408,23 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Keyboard: Escape / Left / Right / Page navigation
     // -----------------------------------------------------------------------
-    let esc_pending: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-    let key_controller = EventControllerKey::new();
-    key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
-    let stack_for_keys = view_stack.clone();
-    let selection_for_keys = selection_model.clone();
-    let picture_for_keys = single_picture.clone();
-    let grid_view_for_keys = grid_view.clone();
-    let grid_scroll_for_keys = grid_scroll.clone();
-    let thumbnail_size_for_keys = thumbnail_size.clone();
-    let toast_overlay_for_keys = toast_overlay.clone();
-    let window_for_keys = window.clone();
-    let current_folder_for_keys = current_folder.clone();
     let start_scan_for_folder_keys: Rc<dyn Fn(std::path::PathBuf)> = start_scan_for_folder.clone();
-    let left_toggle_for_keys = left_toggle.clone();
-    let right_toggle_for_keys = right_toggle.clone();
-    let pre_fullview_left_keys = pre_fullview_left.clone();
-    let pre_fullview_right_keys = pre_fullview_right.clone();
-    key_controller.connect_key_pressed(move |_, key, _, state| {
-        let ctrl_pressed = state.contains(gdk::ModifierType::CONTROL_MASK);
-        if ctrl_pressed && key == gdk::Key::c {
-            let Some(path) = selected_image_path(&selection_for_keys) else {
-                return glib::Propagation::Stop;
-            };
-            let file = gio::File::for_path(&path);
-            if let Ok(texture) = gdk::Texture::from_file(&file) {
-                gtk4::prelude::WidgetExt::display(&window_for_keys)
-                    .clipboard()
-                    .set_texture(&texture);
-                let toast = adw::Toast::new("Image copied to clipboard");
-                toast.set_timeout(2);
-                toast_overlay_for_keys.add_toast(toast);
-            }
-            return glib::Propagation::Stop;
-        }
-        if ctrl_pressed && key == gdk::Key::v {
-            let Some(folder) = current_folder_for_keys.borrow().as_ref().cloned() else {
-                let toast = adw::Toast::new("Open a folder before pasting");
-                toast.set_timeout(2);
-                toast_overlay_for_keys.add_toast(toast);
-                return glib::Propagation::Stop;
-            };
-            let display = gtk4::prelude::WidgetExt::display(&window_for_keys);
-            let clipboard = display.clipboard();
-            let toast_overlay = toast_overlay_for_keys.clone();
-            let window = window_for_keys.clone();
-            let current_folder = current_folder_for_keys.clone();
-            let start_scan_for_folder = start_scan_for_folder_keys.clone();
-            glib::MainContext::default().spawn_local(async move {
-                let Ok(Some(texture)) = clipboard.read_texture_future().await else {
-                    let toast = adw::Toast::new("Clipboard does not contain an image");
-                    toast.set_timeout(2);
-                    toast_overlay.add_toast(toast);
-                    return;
-                };
-                let suggested_name = clipboard
-                    .read_text_future()
-                    .await
-                    .ok()
-                    .flatten()
-                    .as_ref()
-                    .and_then(|text| clipboard_base_name_hint(text.as_str()));
-                let uuid_base = glib::uuid_string_random().to_string();
-                let target_path = folder.join(format!("{uuid_base}.png"));
-                match texture.save_to_png(&target_path) {
-                    Ok(()) => {
-                        start_scan_for_folder(folder.clone());
-                        open_rename_dialog(
-                            &window,
-                            &toast_overlay,
-                            &start_scan_for_folder,
-                            &current_folder,
-                            target_path,
-                            Some(suggested_name.unwrap_or(uuid_base)),
-                        );
-                    }
-                    Err(err) => {
-                        let toast = adw::Toast::new(&format!("Paste failed: {}", err));
-                        toast.set_timeout(3);
-                        toast_overlay.add_toast(toast);
-                    }
-                }
-            });
-            return glib::Propagation::Stop;
-        }
-        if key == gdk::Key::Delete {
-            let Some(path) = selected_image_path(&selection_for_keys) else {
-                return glib::Propagation::Stop;
-            };
-            open_delete_dialog(
-                &window_for_keys,
-                &toast_overlay_for_keys,
-                &start_scan_for_folder_keys,
-                &current_folder_for_keys,
-                path,
-            );
-            return glib::Propagation::Stop;
-        }
-        if key == gdk::Key::Escape {
-            let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
-            if in_grid {
-                if esc_pending.get() {
-                    window_for_keys.application().unwrap().quit();
-                } else {
-                    esc_pending.set(true);
-                    let toast = adw::Toast::new("Press Escape again to quit");
-                    toast.set_timeout(2);
-                    toast_overlay_for_keys.add_toast(toast);
-                    let esc_pending_clone = esc_pending.clone();
-                    glib::timeout_add_local_once(Duration::from_millis(2000), move || {
-                        esc_pending_clone.set(false);
-                    });
-                }
-            } else {
-                stack_for_keys.set_visible_child_name("grid");
-                left_toggle_for_keys.set_active(pre_fullview_left_keys.get());
-                right_toggle_for_keys.set_active(pre_fullview_right_keys.get());
-            }
-            return glib::Propagation::Stop;
-        }
-        let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
-        if in_grid
-            && (key == gdk::Key::Page_Up
-                || key == gdk::Key::Page_Down
-                || key == gdk::Key::Home
-                || key == gdk::Key::End)
-        {
-            let count = selection_for_keys.n_items();
-            if count == 0 {
-                return glib::Propagation::Proceed;
-            }
-            let has_selection = selection_for_keys.selected_item().is_some();
-            let cur = selection_for_keys.selected();
-            let thumb_size = (*thumbnail_size_for_keys.borrow()).max(1);
-            let cell_width = (thumb_size + 4).max(1);
-            let cell_height = (thumb_size + 20).max(1);
-            let viewport_width = grid_scroll_for_keys.width().max(cell_width);
-            let viewport_height = grid_scroll_for_keys.height().max(cell_height);
-            let columns = (viewport_width / cell_width).max(1) as u32;
-            let rows = (viewport_height / cell_height).max(1) as u32;
-            let page_step = (columns * rows).max(1);
-
-            let next = match key {
-                gdk::Key::Home => 0,
-                gdk::Key::End => count - 1,
-                gdk::Key::Page_Up => {
-                    if !has_selection {
-                        0
-                    } else {
-                        cur.saturating_sub(page_step)
-                    }
-                }
-                gdk::Key::Page_Down => {
-                    if !has_selection {
-                        0
-                    } else {
-                        cur.saturating_add(page_step).min(count - 1)
-                    }
-                }
-                _ => cur,
-            };
-
-            if !has_selection || next != cur {
-                selection_for_keys.set_selected(next);
-                grid_view_for_keys.scroll_to(next, ListScrollFlags::FOCUS | ListScrollFlags::SELECT, None);
-            }
-            return glib::Propagation::Stop;
-        }
-        let in_single = stack_for_keys.visible_child_name().as_deref() == Some("single");
-        if in_single && (key == gdk::Key::Left || key == gdk::Key::Right) {
-            let count = selection_for_keys.n_items();
-            if count == 0 {
-                return glib::Propagation::Proceed;
-            }
-            let cur = selection_for_keys.selected();
-            let next = if key == gdk::Key::Left {
-                cur.saturating_sub(1)
-            } else {
-                (cur + 1).min(count - 1)
-            };
-            if next != cur {
-                selection_for_keys.set_selected(next);
-                if let Some(item) =
-                    selection_for_keys.selected_item().and_downcast::<StringObject>()
-                {
-                    load_picture_async(
-                        &picture_for_keys,
-                        &item.string().to_string(),
-                        None,
-                        None,
-                    );
-                }
-            }
-            return glib::Propagation::Stop;
-        }
-        glib::Propagation::Proceed
+    install_keyboard_handler(KeyboardDeps {
+        window: window.clone(),
+        view_stack: view_stack.clone(),
+        selection_model: selection_model.clone(),
+        single_picture: single_picture.clone(),
+        grid_view: grid_view.clone(),
+        grid_scroll: grid_scroll.clone(),
+        thumbnail_size: thumbnail_size.clone(),
+        toast_overlay: toast_overlay.clone(),
+        current_folder: current_folder.clone(),
+        start_scan_for_folder: start_scan_for_folder_keys,
+        left_toggle: left_toggle.clone(),
+        right_toggle: right_toggle.clone(),
+        pre_fullview_left: pre_fullview_left.clone(),
+        pre_fullview_right: pre_fullview_right.clone(),
     });
-    window.add_controller(key_controller);
 
     // -----------------------------------------------------------------------
     // Scroll on single-view / meta-preview → navigate images
