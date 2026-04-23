@@ -38,7 +38,7 @@ use sort::{
 };
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use timing_report::write_timing_report;
-use tree_sidebar::{build_tree_root, reset_tree_root, sync_tree_to_path};
+use tree_sidebar::{reset_tree_root, sync_tree_to_path};
 use ui::actions::install_context_menu;
 use ui::grid::{
     add_scroll_flag_overlay, apply_thumbnail_size_change, attach_grid_page, attach_single_page,
@@ -52,8 +52,8 @@ use ui::grid::{
 use ui::preview::{load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
 use ui::selection::{handle_selection_change_event, ClickTrace};
 use ui::shell::{
-    assemble_paned_layout, create_progress_widgets, create_window_with_defaults,
-    mount_window_content,
+    assemble_paned_layout, build_header_controls, create_progress_widgets,
+    create_window_with_defaults, mount_window_content,
 };
 use ui::sidebar::{
     append_meta_paned_to_sidebar, connect_meta_paned_dirty_tracking, connect_sidebar_visibility_toggles,
@@ -62,6 +62,7 @@ use ui::sidebar::{
     create_meta_split_dirty_flag, create_pane_restore_complete_flag, create_right_sidebar,
     initialize_meta_paned_position, populate_metadata_sidebar,
 };
+use ui::tree::build_tree_widgets;
 use view_helpers::selected_image_path;
 use window_math::{pct_to_px, px_to_pct};
 
@@ -80,9 +81,8 @@ use adw::prelude::*;
 use gtk4::{
     gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, EventControllerScroll,
     EventControllerMotion, EventControllerScrollFlags, FilterListModel, GestureClick, Image, Label,
-    ListItem, ListView, ListScrollFlags, Orientation, ProgressBar, ScrolledWindow,
-    SignalListItemFactory, SingleSelection, SortListModel, StringObject, TreeExpander, TreeListModel,
-    TreeListRow,
+    ListItem, ListScrollFlags, Orientation, ProgressBar, SignalListItemFactory, SingleSelection,
+    SortListModel, StringObject, TreeListRow,
 };
 
 pub(crate) static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -736,125 +736,34 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // AdwHeaderBar — window chrome
     // -----------------------------------------------------------------------
-    let header_bar = adw::HeaderBar::new();
-
-    // --- Sort dropdown ---
-    let sort_options = gtk4::StringList::new(&[
-        "Name ↑",
-        "Name ↓",
-        "Date ↑",
-        "Date ↓",
-        "Size ↑",
-        "Size ↓",
-    ]);
-    let sort_dropdown = gtk4::DropDown::new(Some(sort_options), gtk4::Expression::NONE);
-    sort_dropdown.set_tooltip_text(Some("Sort order"));
-
-    // --- Thumbnail size toggles ---
+    let header_controls = build_header_controls(&app_config, initial_thumbnail_size);
+    let header_bar = header_controls.header_bar;
+    let sort_dropdown = header_controls.sort_dropdown;
+    let size_buttons = header_controls.size_buttons;
+    let search_entry = header_controls.search_entry;
+    let clear_btn = header_controls.clear_btn;
+    let left_toggle = header_controls.left_toggle;
+    let right_toggle = header_controls.right_toggle;
+    let open_btn = header_controls.open_btn;
+    let history_list = header_controls.history_list;
+    let history_popover = header_controls.history_popover;
+    let initial_left_sidebar_visible = header_controls.initial_left_sidebar_visible;
+    let initial_right_sidebar_visible = header_controls.initial_right_sidebar_visible;
     let size_options = thumbnail_size_options();
-    let size_selector = gtk4::Box::new(Orientation::Horizontal, 0);
-    size_selector.add_css_class("linked");
-    size_selector.set_tooltip_text(Some("Thumbnail size"));
-    let size_labels = ["1x", "1.3x", "1.6x", "1.9x"];
-    let mut size_buttons_vec = Vec::new();
-    for (idx, px) in size_options.iter().enumerate() {
-        let btn = gtk4::ToggleButton::with_label(size_labels[idx]);
-        btn.set_tooltip_text(Some(&format!("{} px", px)));
-        btn.set_active(*px == initial_thumbnail_size);
-        size_selector.append(&btn);
-        size_buttons_vec.push(btn);
-    }
-    let size_buttons = Rc::new(size_buttons_vec);
-
-    // --- Search entry ---
-    let search_entry = gtk4::SearchEntry::new();
-    search_entry.set_placeholder_text(Some("Search…"));
-    search_entry.set_width_request(220);
-    search_entry.set_hexpand(true);
-
-    // --- Clear button ---
-    let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
-    clear_btn.set_tooltip_text(Some("Clear filters"));
-
-    // Center widget: sort + search + clear grouped together.
-    let toolbar_center = gtk4::Box::new(Orientation::Horizontal, 6);
-    toolbar_center.set_valign(gtk4::Align::Center);
-    toolbar_center.set_hexpand(true);
-    toolbar_center.append(&sort_dropdown);
-    toolbar_center.append(&size_selector);
-    toolbar_center.append(&search_entry);
-    toolbar_center.append(&clear_btn);
-    header_bar.set_title_widget(Some(&toolbar_center));
-
-    // Sidebar toggle buttons — collapse/expand left and right panels.
-    let left_toggle = gtk4::ToggleButton::new();
-    left_toggle.set_icon_name("sidebar-show-symbolic");
-    let initial_left_sidebar_visible = app_config.left_sidebar_visible.unwrap_or(false);
-    left_toggle.set_active(initial_left_sidebar_visible);
-    left_toggle.set_tooltip_text(Some("Toggle left panel"));
-    header_bar.pack_start(&left_toggle);
-
-    // "Open Folder" button in the start slot.
-    let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
-    open_btn.set_tooltip_text(Some("Open Folder…"));
-    header_bar.pack_start(&open_btn);
-
-    let history_btn = gtk4::MenuButton::new();
-    history_btn.set_icon_name("document-open-recent-symbolic");
-    history_btn.set_tooltip_text(Some("Recent folders"));
-    let history_popover = gtk4::Popover::new();
-    let history_list = gtk4::Box::new(Orientation::Vertical, 0);
-    history_list.set_margin_top(6);
-    history_list.set_margin_bottom(6);
-    history_list.set_margin_start(6);
-    history_list.set_margin_end(6);
-    history_popover.set_child(Some(&history_list));
-    history_btn.set_popover(Some(&history_popover));
-    header_bar.pack_start(&history_btn);
-
-    let right_toggle = gtk4::ToggleButton::new();
-    right_toggle.set_icon_name("sidebar-show-right-symbolic");
-    let initial_right_sidebar_visible = app_config.right_sidebar_visible.unwrap_or(true);
-    right_toggle.set_active(initial_right_sidebar_visible);
-    right_toggle.set_tooltip_text(Some("Toggle right panel"));
-    header_bar.pack_end(&right_toggle);
 
     // -----------------------------------------------------------------------
     // Three-pane layout: [left sidebar] | [center] | [right sidebar]
     // -----------------------------------------------------------------------
     // --- Left sidebar: file system tree ---
-    let left_sidebar = gtk4::Box::new(Orientation::Vertical, 0);
-    left_sidebar.set_width_request(200);
-    left_sidebar.set_visible(initial_left_sidebar_visible);
-
-    // Root item: currently selected folder (fallback to home until selection).
-    let tree_root = build_tree_root(app_config.last_folder.as_ref());
-
-    // TreeListModel lazily loads subdirectories when a node is expanded.
-    let tree_model = TreeListModel::new(tree_root.clone(), false, false, move |item: &glib::Object| -> Option<gio::ListModel> {
-        let file = item.downcast_ref::<gio::File>()?;
-        let store = gio::ListStore::new::<gio::File>();
-        if let Ok(enumerator) = file.enumerate_children(
-            "standard::name,standard::type",
-            gio::FileQueryInfoFlags::NONE,
-            None::<&gio::Cancellable>,
-        ) {
-            let mut children: Vec<gio::FileInfo> = enumerator
-                .filter_map(|r| r.ok())
-                .filter(|info| {
-                    info.file_type() == gio::FileType::Directory
-                        && !info.name().to_string_lossy().starts_with('.')
-                })
-                .collect();
-            children.sort_by_key(|info| info.name().to_string_lossy().to_lowercase().to_string());
-            for info in children {
-                store.append(&file.child(info.name()));
-            }
-        }
-        if store.n_items() > 0 { Some(store.upcast::<gio::ListModel>()) } else { None }
-    });
-
-    let tree_selection = SingleSelection::new(Some(tree_model.clone()));
+    let tree_widgets = build_tree_widgets(
+        app_config.last_folder.as_ref(),
+        initial_left_sidebar_visible,
+    );
+    let left_sidebar = tree_widgets.left_sidebar;
+    let tree_root = tree_widgets.tree_root;
+    let tree_model = tree_widgets.tree_model;
+    let tree_selection = tree_widgets.tree_selection;
+    let tree_list_view = tree_widgets.tree_list_view;
 
     let start_scan_for_folder = {
         let list_store = list_store.clone();
@@ -952,78 +861,6 @@ fn build_ui(app: &adw::Application) {
         reset_tree_root(&tree_root_tree, path.as_path());
         start_scan_tree(path);
     });
-
-    let tree_factory = SignalListItemFactory::new();
-    tree_factory.connect_setup(|_, obj| {
-        let Some(list_item) = obj.downcast_ref::<ListItem>() else {
-            return;
-        };
-        let expander = TreeExpander::new();
-        let row_box = gtk4::Box::new(Orientation::Horizontal, 4);
-        row_box.set_margin_top(3);
-        row_box.set_margin_bottom(3);
-        let icon = Image::from_icon_name("folder-symbolic");
-        let label = Label::new(None);
-        label.set_halign(gtk4::Align::Start);
-        label.set_hexpand(true);
-        label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
-        row_box.append(&icon);
-        row_box.append(&label);
-        expander.set_child(Some(&row_box));
-        list_item.set_child(Some(&expander));
-    });
-    tree_factory.connect_bind(|_, obj| {
-        let Some(list_item) = obj.downcast_ref::<ListItem>() else {
-            return;
-        };
-        let Some(expander) = list_item.child().and_downcast::<TreeExpander>() else {
-            return;
-        };
-        let Some(row) = list_item.item().and_downcast::<TreeListRow>() else {
-            expander.set_list_row(None::<&TreeListRow>);
-            return;
-        };
-        expander.set_list_row(Some(&row));
-        let Some(file) = row.item().and_downcast::<gio::File>() else {
-            return;
-        };
-        let Some(row_box) = expander.child().and_downcast::<gtk4::Box>() else {
-            return;
-        };
-        let Some(label) = row_box.last_child().and_downcast::<Label>() else {
-            return;
-        };
-        let name = if let Some(p) = file.path() {
-            p.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| p.to_string_lossy().into_owned())
-        } else {
-            file.uri().to_string()
-        };
-        label.set_text(&name);
-    });
-    tree_factory.connect_unbind(|_, obj| {
-        let Some(list_item) = obj.downcast_ref::<ListItem>() else {
-            return;
-        };
-        let Some(expander) = list_item.child().and_downcast::<TreeExpander>() else {
-            return;
-        };
-        expander.set_list_row(None::<&TreeListRow>);
-    });
-
-    let tree_list_view = ListView::new(Some(tree_selection), Some(tree_factory));
-    tree_list_view.add_css_class("navigation-sidebar");
-    // Disable natural-width propagation so the ScrolledWindow can clip the
-    // ListView and show a horizontal scrollbar for deeply-nested long names.
-    tree_list_view.set_hexpand(false);
-
-    let tree_scroll = ScrolledWindow::new();
-    tree_scroll.set_vexpand(true);
-    tree_scroll.set_hscrollbar_policy(gtk4::PolicyType::Automatic);
-    tree_scroll.set_propagate_natural_width(false);
-    tree_scroll.set_child(Some(&tree_list_view));
-    left_sidebar.append(&tree_scroll);
 
     // --- Filter model: wraps list_store, applies search text ---
     let meta_cache_filter = meta_cache.clone();

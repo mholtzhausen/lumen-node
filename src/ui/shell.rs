@@ -15,6 +15,112 @@ pub(crate) struct PanedLayout {
     pub(crate) outer_split_dirty: Rc<Cell<bool>>,
 }
 
+pub(crate) struct HeaderControls {
+    pub(crate) header_bar: adw::HeaderBar,
+    pub(crate) sort_dropdown: gtk4::DropDown,
+    pub(crate) size_buttons: Rc<Vec<gtk4::ToggleButton>>,
+    pub(crate) search_entry: gtk4::SearchEntry,
+    pub(crate) clear_btn: gtk4::Button,
+    pub(crate) left_toggle: gtk4::ToggleButton,
+    pub(crate) right_toggle: gtk4::ToggleButton,
+    pub(crate) open_btn: gtk4::Button,
+    pub(crate) history_list: gtk4::Box,
+    pub(crate) history_popover: gtk4::Popover,
+    pub(crate) initial_left_sidebar_visible: bool,
+    pub(crate) initial_right_sidebar_visible: bool,
+}
+
+pub(crate) fn build_header_controls(
+    app_config: &AppConfig,
+    initial_thumbnail_size: i32,
+) -> HeaderControls {
+    let header_bar = adw::HeaderBar::new();
+
+    let sort_options = gtk4::StringList::new(&[
+        "Name ↑", "Name ↓", "Date ↑", "Date ↓", "Size ↑", "Size ↓",
+    ]);
+    let sort_dropdown = gtk4::DropDown::new(Some(sort_options), gtk4::Expression::NONE);
+    sort_dropdown.set_tooltip_text(Some("Sort order"));
+
+    let size_options = crate::thumbnail_sizing::thumbnail_size_options();
+    let size_selector = gtk4::Box::new(Orientation::Horizontal, 0);
+    size_selector.add_css_class("linked");
+    size_selector.set_tooltip_text(Some("Thumbnail size"));
+    let size_labels = ["1x", "1.3x", "1.6x", "1.9x"];
+    let mut size_buttons_vec = Vec::new();
+    for (idx, px) in size_options.iter().enumerate() {
+        let btn = gtk4::ToggleButton::with_label(size_labels[idx]);
+        btn.set_tooltip_text(Some(&format!("{} px", px)));
+        btn.set_active(*px == initial_thumbnail_size);
+        size_selector.append(&btn);
+        size_buttons_vec.push(btn);
+    }
+    let size_buttons = Rc::new(size_buttons_vec);
+
+    let search_entry = gtk4::SearchEntry::new();
+    search_entry.set_placeholder_text(Some("Search..."));
+    search_entry.set_width_request(220);
+    search_entry.set_hexpand(true);
+
+    let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
+    clear_btn.set_tooltip_text(Some("Clear filters"));
+
+    let toolbar_center = gtk4::Box::new(Orientation::Horizontal, 6);
+    toolbar_center.set_valign(gtk4::Align::Center);
+    toolbar_center.set_hexpand(true);
+    toolbar_center.append(&sort_dropdown);
+    toolbar_center.append(&size_selector);
+    toolbar_center.append(&search_entry);
+    toolbar_center.append(&clear_btn);
+    header_bar.set_title_widget(Some(&toolbar_center));
+
+    let left_toggle = gtk4::ToggleButton::new();
+    left_toggle.set_icon_name("sidebar-show-symbolic");
+    let initial_left_sidebar_visible = app_config.left_sidebar_visible.unwrap_or(false);
+    left_toggle.set_active(initial_left_sidebar_visible);
+    left_toggle.set_tooltip_text(Some("Toggle left panel"));
+    header_bar.pack_start(&left_toggle);
+
+    let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
+    open_btn.set_tooltip_text(Some("Open Folder..."));
+    header_bar.pack_start(&open_btn);
+
+    let history_btn = gtk4::MenuButton::new();
+    history_btn.set_icon_name("document-open-recent-symbolic");
+    history_btn.set_tooltip_text(Some("Recent folders"));
+    let history_popover = gtk4::Popover::new();
+    let history_list = gtk4::Box::new(Orientation::Vertical, 0);
+    history_list.set_margin_top(6);
+    history_list.set_margin_bottom(6);
+    history_list.set_margin_start(6);
+    history_list.set_margin_end(6);
+    history_popover.set_child(Some(&history_list));
+    history_btn.set_popover(Some(&history_popover));
+    header_bar.pack_start(&history_btn);
+
+    let right_toggle = gtk4::ToggleButton::new();
+    right_toggle.set_icon_name("sidebar-show-right-symbolic");
+    let initial_right_sidebar_visible = app_config.right_sidebar_visible.unwrap_or(true);
+    right_toggle.set_active(initial_right_sidebar_visible);
+    right_toggle.set_tooltip_text(Some("Toggle right panel"));
+    header_bar.pack_end(&right_toggle);
+
+    HeaderControls {
+        header_bar,
+        sort_dropdown,
+        size_buttons,
+        search_entry,
+        clear_btn,
+        left_toggle,
+        right_toggle,
+        open_btn,
+        history_list,
+        history_popover,
+        initial_left_sidebar_visible,
+        initial_right_sidebar_visible,
+    }
+}
+
 pub(crate) fn create_window_with_defaults(
     app: &adw::Application,
     app_config: &AppConfig,
