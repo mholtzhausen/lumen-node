@@ -41,6 +41,11 @@ use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use timing_report::write_timing_report;
 use tree_sidebar::{build_tree_root, reset_tree_root, sync_tree_to_path};
 use ui::actions::install_context_menu;
+use ui::grid::{
+    load_grid_thumbnail, refresh_realized_grid_cell_sizes, refresh_realized_grid_thumbnails,
+    track_realized_grid_widgets, ACTIVE_THUMBNAIL_TASKS, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
+    THUMB_UI_CALLBACKS_TOTAL,
+};
 use ui::preview::{load_picture_async, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
 use ui::sidebar::populate_metadata_sidebar;
 use view_helpers::selected_image_path;
@@ -69,14 +74,11 @@ use gtk4::{
 
 static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 static FULL_VIEW_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
-static ACTIVE_THUMBNAIL_TASKS: AtomicU64 = AtomicU64::new(0);
 static PREVIEW_REQUEST_PENDING: AtomicU64 = AtomicU64::new(0);
 static SUPPRESS_SIDEBAR_DURING_PREVIEW: AtomicU64 = AtomicU64::new(0);
-static THUMB_UI_CALLBACKS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW: AtomicU64 = AtomicU64::new(0);
 static SCAN_BUFFER_DEPTH: AtomicU64 = AtomicU64::new(0);
 static SCAN_DRAIN_SCHEDULED: AtomicU64 = AtomicU64::new(0);
-static DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE: AtomicU64 = AtomicU64::new(0);
 const SCAN_DRAIN_BATCH_SIZE: u64 = 50;
 const DEFAULT_WINDOW_WIDTH: i32 = 1280;
 const DEFAULT_WINDOW_HEIGHT: i32 = 800;
@@ -192,23 +194,6 @@ fn sync_progress_widgets(
     progress_bar.set_text(Some(&format!("{:.0}%", fraction * 100.0)));
 }
 
-struct AtomicTaskGuard {
-    counter: &'static AtomicU64,
-}
-
-impl AtomicTaskGuard {
-    fn new(counter: &'static AtomicU64) -> Self {
-        counter.fetch_add(1, AtomicOrdering::Relaxed);
-        Self { counter }
-    }
-}
-
-impl Drop for AtomicTaskGuard {
-    fn drop(&mut self) {
-        self.counter.fetch_sub(1, AtomicOrdering::Relaxed);
-    }
-}
-
 #[derive(Clone)]
 struct ClickStepTiming {
     name: String,
@@ -303,142 +288,6 @@ impl ClickTrace {
 
     fn total_ms(&self) -> f64 {
         self.started.elapsed().as_secs_f64() * 1000.0
-    }
-}
-
-fn load_grid_thumbnail(
-    thumb_image: &Image,
-    path_str: String,
-    size: i32,
-    hash_cache: Rc<RefCell<HashMap<String, String>>>,
-    generation_token: Rc<Cell<u64>>,
-    expected_generation: u64,
-) {
-    thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
-    unsafe { thumb_image.set_data("bound-path", path_str.clone()); }
-
-    if DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.load(AtomicOrdering::Relaxed) != 0 {
-        return;
-    }
-
-    let cached_hash = hash_cache.borrow().get(&path_str).cloned();
-    let already_loaded = if let Some(ref hash) = cached_hash {
-        if let Some(thumb) = thumbnails::hash_thumb_if_exists_for_size(hash, size) {
-            if let Ok(pb) = gdk_pixbuf::Pixbuf::from_file(&thumb) {
-                let tex = gdk::Texture::for_pixbuf(&pb);
-                thumb_image.set_paintable(Some(&tex));
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    if already_loaded {
-        return;
-    }
-
-    // Count the task before spawning so ACTIVE_THUMBNAIL_TASKS reflects queued+running
-    // tasks, not just running ones. Without this, the counter stays near zero during
-    // fast scrolling because tasks pile up in the thread pool queue before any start.
-    // Cap at 64: enough to cover a full viewport refresh without allowing the
-    // unbounded backlog that causes the direction-change lag.
-    const MAX_THUMBNAIL_TASKS: u64 = 64;
-    if ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed) >= MAX_THUMBNAIL_TASKS {
-        return;
-    }
-    let task_guard = AtomicTaskGuard::new(&ACTIVE_THUMBNAIL_TASKS);
-
-    let path_for_thread = std::path::PathBuf::from(&path_str);
-    let cached_hash_for_task = cached_hash.clone();
-    let task = gio::spawn_blocking(move || {
-        let _guard = task_guard; // moves in; drops (decrements) when closure ends
-
-        if let Some(hash) = cached_hash_for_task {
-            let thumb = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size);
-            return (thumb, Some(hash));
-        }
-
-        if size == thumbnails::THUMB_NORMAL_SIZE {
-            return (thumbnails::ensure_thumbnail(&path_for_thread), None);
-        }
-
-        let Ok(hash) = db::hash_file(&path_for_thread) else {
-            return (None, None);
-        };
-        let thumb = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size);
-        (thumb, Some(hash))
-    });
-
-    let image_weak = thumb_image.downgrade();
-    glib::MainContext::default().spawn_local(async move {
-        THUMB_UI_CALLBACKS_TOTAL.fetch_add(1, AtomicOrdering::Relaxed);
-        let Ok((maybe_cache, resolved_hash)) = task.await else { return };
-        if generation_token.get() != expected_generation {
-            return;
-        }
-        let Some(image) = image_weak.upgrade() else { return };
-        let is_current = unsafe {
-            image
-                .data::<String>("bound-path")
-                .map(|p| p.as_ref().as_str() == path_str.as_str())
-                .unwrap_or(false)
-        };
-        if !is_current {
-            return;
-        }
-        if let Some(hash) = resolved_hash {
-            hash_cache.borrow_mut().insert(path_str.clone(), hash);
-        }
-        match maybe_cache.and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok()) {
-            Some(pb) => {
-                let tex = gdk::Texture::for_pixbuf(&pb);
-                image.set_paintable(Some(&tex));
-            }
-            None => image.set_icon_name(Some("image-missing-symbolic")),
-        }
-    });
-}
-
-fn refresh_realized_grid_thumbnails(
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
-) {
-    let size = *thumbnail_size.borrow();
-    let mut images = realized_thumb_images.borrow_mut();
-    images.retain(|weak| weak.upgrade().is_some());
-    for weak in images.iter() {
-        if let Some(image) = weak.upgrade() {
-            image.set_pixel_size(size);
-            let bound_path = unsafe {
-                image
-                    .data::<String>("bound-path")
-                    .map(|path| path.as_ref().clone())
-            };
-            if let Some(path_str) = bound_path {
-                let generation_token = unsafe {
-                    image
-                        .data::<Rc<Cell<u64>>>("thumb-generation")
-                        .map(|token| token.as_ref().clone())
-                };
-                if let Some(generation_token) = generation_token {
-                    let expected_generation = generation_token.get();
-                    load_grid_thumbnail(
-                        &image,
-                        path_str,
-                        size,
-                        hash_cache.clone(),
-                        generation_token,
-                        expected_generation,
-                    );
-                }
-            }
-        }
     }
 }
 
@@ -1553,8 +1402,12 @@ fn build_ui(app: &adw::Application) {
         thumb_image.set_pixel_size(size);
         let generation_token = Rc::new(Cell::new(0_u64));
         unsafe { thumb_image.set_data("thumb-generation", generation_token); }
-        realized_cell_boxes_setup.borrow_mut().push(cell_box.downgrade());
-        realized_thumb_images_setup.borrow_mut().push(thumb_image.downgrade());
+        track_realized_grid_widgets(
+            &realized_cell_boxes_setup,
+            &realized_thumb_images_setup,
+            &cell_box,
+            &thumb_image,
+        );
         let name_label = Label::new(None);
         name_label.set_max_width_chars(16);
         name_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
@@ -2629,15 +2482,7 @@ fn build_ui(app: &adw::Application) {
                 );
             }
 
-            {
-                let mut boxes = realized_cell_boxes_toggle.borrow_mut();
-                boxes.retain(|weak| weak.upgrade().is_some());
-                for weak in boxes.iter() {
-                    if let Some(cell_box) = weak.upgrade() {
-                        cell_box.set_size_request(selected_size + 4, selected_size + 20);
-                    }
-                }
-            }
+            refresh_realized_grid_cell_sizes(&realized_cell_boxes_toggle, selected_size);
 
             {
                 refresh_realized_grid_thumbnails(
