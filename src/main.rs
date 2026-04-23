@@ -32,7 +32,7 @@ use byte_format::human_readable_bytes;
 use scan::ScanMessage;
 use recent_folders::push_recent_folder_entry;
 use scanner::scan_directory;
-use sort_flags::{compute_sort_fields, sort_flag_text_for_path, SortFields};
+use sort_flags::{compute_sort_fields, SortFields};
 use sort::{
     normalize_sort_key, sort_index_for_key, sort_key_for_index, SORT_KEY_DATE_DESC,
     SORT_KEY_NAME_ASC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
@@ -42,9 +42,10 @@ use timing_report::write_timing_report;
 use tree_sidebar::{build_tree_root, reset_tree_root, sync_tree_to_path};
 use ui::actions::install_context_menu;
 use ui::grid::{
-    apply_thumbnail_size_change, bind_grid_list_item, make_delete_action,
-    make_rename_action, refresh_realized_grid_thumbnails, setup_grid_list_item, unbind_grid_list_item,
-    ACTIVE_THUMBNAIL_TASKS, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE, THUMB_UI_CALLBACKS_TOTAL,
+    apply_thumbnail_size_change, bind_grid_list_item, build_scroll_flag_overlay, install_grid_scroll_speed_gate,
+    make_delete_action, make_rename_action, refresh_realized_grid_thumbnails, setup_grid_list_item,
+    unbind_grid_list_item, ACTIVE_THUMBNAIL_TASKS, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
+    THUMB_UI_CALLBACKS_TOTAL,
 };
 use ui::preview::{load_picture_async, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
 use ui::sidebar::populate_metadata_sidebar;
@@ -1435,137 +1436,27 @@ fn build_ui(app: &adw::Application) {
     grid_overlay.set_vexpand(true);
     grid_overlay.set_child(Some(&grid_scroll));
 
-    let scroll_flag_box = gtk4::Box::new(Orientation::Horizontal, 0);
-    scroll_flag_box.set_visible(false);
-    scroll_flag_box.set_halign(gtk4::Align::End);
-    scroll_flag_box.set_valign(gtk4::Align::Start);
-    scroll_flag_box.set_margin_end(12);
-    scroll_flag_box.set_margin_top(12);
-    scroll_flag_box.set_margin_start(12);
-    scroll_flag_box.set_margin_bottom(12);
-
-    let scroll_flag = Label::new(None);
-    scroll_flag.add_css_class("title-4");
-    scroll_flag.add_css_class("scroll-flag-bubble");
-    scroll_flag.set_xalign(0.5);
-    scroll_flag.set_margin_start(10);
-    scroll_flag.set_margin_end(6);
-    scroll_flag.set_margin_top(4);
-    scroll_flag.set_margin_bottom(4);
-
-    let scroll_flag_pointer = Label::new(Some("▶"));
-    scroll_flag_pointer.add_css_class("title-4");
-    scroll_flag_pointer.add_css_class("scroll-flag-pointer");
-    scroll_flag_pointer.set_margin_start(0);
-    scroll_flag_pointer.set_margin_end(0);
-    scroll_flag_pointer.set_margin_top(0);
-    scroll_flag_pointer.set_margin_bottom(0);
-
-    scroll_flag_box.append(&scroll_flag);
-    scroll_flag_box.append(&scroll_flag_pointer);
+    let (scroll_flag_box, scroll_flag) = build_scroll_flag_overlay();
     grid_overlay.add_overlay(&scroll_flag_box);
 
     // Scroll-speed gate: suppress thumbnail spawning while scrolling faster than
     // 5 rows/sec, then refresh visible cells 150 ms after scrolling quiets down.
-    {
-        let adj = grid_scroll.vadjustment();
-        let fast_scroll_active_adj = fast_scroll_active.clone();
-        let scroll_last_pos_adj    = scroll_last_pos.clone();
-        let scroll_last_time_adj   = scroll_last_time.clone();
-        let scroll_debounce_gen_adj = scroll_debounce_gen.clone();
-        let thumbnail_size_adj      = thumbnail_size.clone();
-        let realized_adj            = realized_thumb_images.clone();
-        let hash_cache_adj          = hash_cache.clone();
-        let selection_model_adj     = selection_model.clone();
-        let sort_key_adj            = sort_key.clone();
-        let sort_fields_cache_adj   = sort_fields_cache.clone();
-        let scroll_flag_adj         = scroll_flag.clone();
-        let scroll_flag_box_adj     = scroll_flag_box.clone();
-        let grid_scroll_adj         = grid_scroll.clone();
-        adj.connect_value_changed(move |adj| {
-            let now = Instant::now();
-            let pos = adj.value();
-            let cell_height = (*thumbnail_size_adj.borrow() + 24) as f64;
-            let rows_per_sec = scroll_last_time_adj.get()
-                .map(|last| {
-                    let dt = now.duration_since(last).as_secs_f64();
-                    if dt > 0.001 { (pos - scroll_last_pos_adj.get()).abs() / cell_height / dt }
-                    else          { f64::INFINITY }
-                })
-                .unwrap_or(0.0);
-            scroll_last_pos_adj.set(pos);
-            scroll_last_time_adj.set(Some(now));
-            fast_scroll_active_adj.set(rows_per_sec > 5.0);
-
-            // Bump the generation so any previous pending timeout becomes a no-op.
-            // We never cancel the old SourceId because one-shot timers are removed
-            // by GLib when they fire, making SourceId::remove() panic on the stale id.
-            let gen = scroll_debounce_gen_adj.get().wrapping_add(1);
-            scroll_debounce_gen_adj.set(gen);
-            let fsa            = fast_scroll_active_adj.clone();
-            let realized       = realized_adj.clone();
-            let hash_cache     = hash_cache_adj.clone();
-            let thumbnail_size = thumbnail_size_adj.clone();
-            let debounce_gen   = scroll_debounce_gen_adj.clone();
-            let scroll_flag    = scroll_flag_adj.clone();
-            let scroll_flag_box = scroll_flag_box_adj.clone();
-
-            let total_items = selection_model_adj.n_items();
-            if total_items > 0 {
-                let thumb_size = (*thumbnail_size_adj.borrow()).max(1);
-                let cell_width = (thumb_size + 4).max(1);
-                let cell_height = (thumb_size + 20).max(1);
-                let viewport_width = grid_scroll_adj.width().max(cell_width);
-                let columns = (viewport_width / cell_width).max(1) as u32;
-                let row = ((adj.value() / (cell_height as f64)).floor() as u32).saturating_mul(columns);
-                let idx = row.min(total_items.saturating_sub(1));
-
-                let text = selection_model_adj
-                    .item(idx)
-                    .and_downcast::<StringObject>()
-                    .and_then(|obj| {
-                        let path = obj.string().to_string();
-                        sort_flag_text_for_path(
-                            &path,
-                            &sort_key_adj.borrow(),
-                            &sort_fields_cache_adj.borrow(),
-                        )
-                    });
-
-                if let Some(text) = text.filter(|t| !t.is_empty()) {
-                    scroll_flag.set_text(&text);
-                    let viewport_height = grid_scroll_adj.height().max(1) as f64;
-                    let upper = adj.upper().max(1.0);
-                    let page_size = adj.page_size().clamp(1.0, upper);
-                    let range = (upper - page_size).max(1.0);
-                    let ratio = (adj.value() / range).clamp(0.0, 1.0);
-                    let thumb_height = ((page_size / upper) * viewport_height).clamp(18.0, viewport_height);
-                    let thumb_top = ratio * (viewport_height - thumb_height);
-                    let thumb_center = thumb_top + (thumb_height * 0.5);
-                    let flag_height = 32.0;
-                    let y = (thumb_center - (flag_height * 0.5))
-                        .clamp(0.0, (viewport_height - flag_height).max(0.0)) as i32;
-                    scroll_flag_box.set_margin_top(y);
-                    scroll_flag_box.set_visible(true);
-                } else {
-                    scroll_flag_box.set_visible(false);
-                }
-            } else {
-                scroll_flag_box.set_visible(false);
-            }
-
-            glib::timeout_add_local_once(Duration::from_millis(150), move || {
-                if debounce_gen.get() != gen { return; }
-                fsa.set(false);
-                refresh_realized_grid_thumbnails(&realized, &thumbnail_size, &hash_cache);
-            });
-            let hide_gen = scroll_debounce_gen_adj.clone();
-            glib::timeout_add_local_once(Duration::from_millis(450), move || {
-                if hide_gen.get() != gen { return; }
-                scroll_flag_box.set_visible(false);
-            });
-        });
-    }
+    install_grid_scroll_speed_gate(
+        &grid_scroll,
+        &grid_view,
+        &fast_scroll_active,
+        &scroll_last_pos,
+        &scroll_last_time,
+        &scroll_debounce_gen,
+        &thumbnail_size,
+        &realized_thumb_images,
+        &hash_cache,
+        &selection_model,
+        &sort_key,
+        &sort_fields_cache,
+        &scroll_flag_box,
+        &scroll_flag,
+    );
 
     // add_titled returns ViewStackPage — use it to set the page icon.
     let grid_page = view_stack.add_titled(&grid_overlay, Some("grid"), "Grid");

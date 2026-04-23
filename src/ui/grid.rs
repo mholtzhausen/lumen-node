@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{
-    gdk, gio, glib, Box as GtkBox, Button, EventControllerMotion, Image, Label, ListItem,
-    Orientation, StringObject,
+    gdk, gio, glib, Box as GtkBox, Button, EventControllerMotion, GridView, Image, Label, ListItem,
+    Orientation, ScrolledWindow, SingleSelection, StringObject,
 };
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
@@ -9,9 +9,13 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::time::{Duration, Instant};
 
 use crate::{
-    db, dialogs::{open_delete_dialog, open_rename_dialog}, thumbnails,
+    db,
+    dialogs::{open_delete_dialog, open_rename_dialog},
+    sort_flags::{sort_flag_text_for_path, SortFields},
+    thumbnails,
 };
 
 pub static ACTIVE_THUMBNAIL_TASKS: AtomicU64 = AtomicU64::new(0);
@@ -278,6 +282,156 @@ pub fn make_delete_action(
             path,
         );
     })
+}
+
+pub fn build_scroll_flag_overlay() -> (GtkBox, Label) {
+    let scroll_flag_box = GtkBox::new(Orientation::Horizontal, 0);
+    scroll_flag_box.set_visible(false);
+    scroll_flag_box.set_halign(gtk4::Align::End);
+    scroll_flag_box.set_valign(gtk4::Align::Start);
+    scroll_flag_box.set_margin_end(12);
+    scroll_flag_box.set_margin_top(12);
+    scroll_flag_box.set_margin_start(12);
+    scroll_flag_box.set_margin_bottom(12);
+
+    let scroll_flag = Label::new(None);
+    scroll_flag.add_css_class("title-4");
+    scroll_flag.add_css_class("scroll-flag-bubble");
+    scroll_flag.set_xalign(0.5);
+    scroll_flag.set_margin_start(10);
+    scroll_flag.set_margin_end(6);
+    scroll_flag.set_margin_top(4);
+    scroll_flag.set_margin_bottom(4);
+
+    let scroll_flag_pointer = Label::new(Some("▶"));
+    scroll_flag_pointer.add_css_class("title-4");
+    scroll_flag_pointer.add_css_class("scroll-flag-pointer");
+    scroll_flag_pointer.set_margin_start(0);
+    scroll_flag_pointer.set_margin_end(0);
+    scroll_flag_pointer.set_margin_top(0);
+    scroll_flag_pointer.set_margin_bottom(0);
+
+    scroll_flag_box.append(&scroll_flag);
+    scroll_flag_box.append(&scroll_flag_pointer);
+    (scroll_flag_box, scroll_flag)
+}
+
+pub fn install_grid_scroll_speed_gate(
+    grid_scroll: &ScrolledWindow,
+    grid_view: &GridView,
+    fast_scroll_active: &Rc<Cell<bool>>,
+    scroll_last_pos: &Rc<Cell<f64>>,
+    scroll_last_time: &Rc<Cell<Option<Instant>>>,
+    scroll_debounce_gen: &Rc<Cell<u64>>,
+    thumbnail_size: &Rc<RefCell<i32>>,
+    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
+    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    selection_model: &SingleSelection,
+    sort_key: &Rc<RefCell<String>>,
+    sort_fields_cache: &Rc<RefCell<HashMap<String, SortFields>>>,
+    scroll_flag_box: &GtkBox,
+    scroll_flag: &Label,
+) {
+    let adj = grid_scroll.vadjustment();
+    let fast_scroll_active_adj = fast_scroll_active.clone();
+    let scroll_last_pos_adj = scroll_last_pos.clone();
+    let scroll_last_time_adj = scroll_last_time.clone();
+    let scroll_debounce_gen_adj = scroll_debounce_gen.clone();
+    let thumbnail_size_adj = thumbnail_size.clone();
+    let realized_adj = realized_thumb_images.clone();
+    let hash_cache_adj = hash_cache.clone();
+    let selection_model_adj = selection_model.clone();
+    let sort_key_adj = sort_key.clone();
+    let sort_fields_cache_adj = sort_fields_cache.clone();
+    let scroll_flag_adj = scroll_flag.clone();
+    let scroll_flag_box_adj = scroll_flag_box.clone();
+    let grid_scroll_adj = grid_scroll.clone();
+    let _grid_view = grid_view;
+
+    adj.connect_value_changed(move |adj| {
+        let now = Instant::now();
+        let pos = adj.value();
+        let cell_height = (*thumbnail_size_adj.borrow() + 24) as f64;
+        let rows_per_sec = scroll_last_time_adj
+            .get()
+            .map(|last| {
+                let dt = now.duration_since(last).as_secs_f64();
+                if dt > 0.001 {
+                    (pos - scroll_last_pos_adj.get()).abs() / cell_height / dt
+                } else {
+                    f64::INFINITY
+                }
+            })
+            .unwrap_or(0.0);
+        scroll_last_pos_adj.set(pos);
+        scroll_last_time_adj.set(Some(now));
+        fast_scroll_active_adj.set(rows_per_sec > 5.0);
+
+        let gen = scroll_debounce_gen_adj.get().wrapping_add(1);
+        scroll_debounce_gen_adj.set(gen);
+        let fsa = fast_scroll_active_adj.clone();
+        let realized = realized_adj.clone();
+        let hash_cache = hash_cache_adj.clone();
+        let thumbnail_size = thumbnail_size_adj.clone();
+        let debounce_gen = scroll_debounce_gen_adj.clone();
+        let scroll_flag = scroll_flag_adj.clone();
+        let scroll_flag_box = scroll_flag_box_adj.clone();
+
+        let total_items = selection_model_adj.n_items();
+        if total_items > 0 {
+            let thumb_size = (*thumbnail_size_adj.borrow()).max(1);
+            let cell_width = (thumb_size + 4).max(1);
+            let cell_height = (thumb_size + 20).max(1);
+            let viewport_width = grid_scroll_adj.width().max(cell_width);
+            let columns = (viewport_width / cell_width).max(1) as u32;
+            let row = ((adj.value() / (cell_height as f64)).floor() as u32).saturating_mul(columns);
+            let idx = row.min(total_items.saturating_sub(1));
+
+            let text = selection_model_adj
+                .item(idx)
+                .and_downcast::<StringObject>()
+                .and_then(|obj| {
+                    let path = obj.string().to_string();
+                    sort_flag_text_for_path(&path, &sort_key_adj.borrow(), &sort_fields_cache_adj.borrow())
+                });
+
+            if let Some(text) = text.filter(|t| !t.is_empty()) {
+                scroll_flag.set_text(&text);
+                let viewport_height = grid_scroll_adj.height().max(1) as f64;
+                let upper = adj.upper().max(1.0);
+                let page_size = adj.page_size().clamp(1.0, upper);
+                let range = (upper - page_size).max(1.0);
+                let ratio = (adj.value() / range).clamp(0.0, 1.0);
+                let thumb_height = ((page_size / upper) * viewport_height).clamp(18.0, viewport_height);
+                let thumb_top = ratio * (viewport_height - thumb_height);
+                let thumb_center = thumb_top + (thumb_height * 0.5);
+                let flag_height = 32.0;
+                let y = (thumb_center - (flag_height * 0.5))
+                    .clamp(0.0, (viewport_height - flag_height).max(0.0)) as i32;
+                scroll_flag_box.set_margin_top(y);
+                scroll_flag_box.set_visible(true);
+            } else {
+                scroll_flag_box.set_visible(false);
+            }
+        } else {
+            scroll_flag_box.set_visible(false);
+        }
+
+        glib::timeout_add_local_once(Duration::from_millis(150), move || {
+            if debounce_gen.get() != gen {
+                return;
+            }
+            fsa.set(false);
+            refresh_realized_grid_thumbnails(&realized, &thumbnail_size, &hash_cache);
+        });
+        let hide_gen = scroll_debounce_gen_adj.clone();
+        glib::timeout_add_local_once(Duration::from_millis(450), move || {
+            if hide_gen.get() != gen {
+                return;
+            }
+            scroll_flag_box.set_visible(false);
+        });
+    });
 }
 
 pub fn load_grid_thumbnail(
