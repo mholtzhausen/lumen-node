@@ -33,33 +33,28 @@ use sort::{
 };
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use tree_sidebar::reset_tree_root;
-use ui::actions::install_context_menu;
 use ui::center::{build_center_content, CenterContentDeps};
-use ui::controls::{
-    install_clear_button_handler, install_search_entry_handler, install_sort_dropdown_handler,
-    install_thumbnail_size_handlers,
-};
 use ui::grid::DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE;
 use ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps};
 use ui::models::{build_model_bundle, ModelAssemblyDeps};
 use ui::navigation::{install_navigation_handlers, NavigationDeps};
-use ui::open_folder::{build_open_folder_action, OpenFolderActionDeps};
 use ui::right_sidebar::{build_right_sidebar, RightSidebarDeps};
 use ui::scan_runtime::{install_scan_runtime, ScanRuntimeDeps};
-use ui::selection::{handle_selection_change_event, ClickTrace};
 use ui::session::{
     install_close_persistence_handler, restore_session_state, ClosePersistenceDeps,
     RestoreSessionDeps,
 };
 use ui::shell::{
     assemble_paned_layout, build_header_controls, create_progress_widgets,
-    create_window_with_defaults, install_history_popover_handler, install_open_button_handler,
-    mount_window_content,
+    create_window_with_defaults, mount_window_content,
 };
-use ui::sidebar::{
-    connect_sidebar_visibility_toggles, populate_metadata_sidebar,
-};
+use ui::sidebar::connect_sidebar_visibility_toggles;
 use ui::tree::build_tree_widgets;
+use ui::wiring::{
+    install_context_menu_wiring, install_controls_wiring, install_open_folder_wiring,
+    install_selection_wiring, ContextMenuWiringDeps, ControlsWiringDeps,
+    OpenFolderWiringDeps, SelectionWiringDeps,
+};
 use window_math::pct_to_px;
 
 use std::{
@@ -533,32 +528,26 @@ fn build_ui(app: &adw::Application) {
     let meta_split_dirty = right_sidebar_bundle.meta_split_dirty;
     let pane_restore_complete = right_sidebar_bundle.pane_restore_complete;
 
-    let refresh_metadata_sidebar_for_actions: Rc<dyn Fn(&ImageMetadata)> = Rc::new({
-        let meta_listbox = meta_listbox.clone();
-        move |meta: &ImageMetadata| populate_metadata_sidebar(&meta_listbox, meta)
+    install_context_menu_wiring(ContextMenuWiringDeps {
+        window: window.clone(),
+        toast_overlay: toast_overlay.clone(),
+        selection_model: selection_model.clone(),
+        meta_cache: meta_cache.clone(),
+        hash_cache: hash_cache.clone(),
+        thumbnail_size: thumbnail_size.clone(),
+        meta_expander: meta_expander.clone(),
+        meta_paned: meta_paned.clone(),
+        meta_split_before_auto_collapse: meta_split_before_auto_collapse.clone(),
+        meta_position_programmatic: meta_position_programmatic.clone(),
+        min_meta_split_px: MIN_META_SPLIT_PX,
+        current_folder: current_folder.clone(),
+        start_scan_for_folder: start_scan_for_folder.clone(),
+        list_store: list_store.clone(),
+        meta_listbox: meta_listbox.clone(),
+        grid_view: grid_view.clone(),
+        single_picture: single_picture.clone(),
+        meta_preview: meta_preview.clone(),
     });
-    let start_scan_for_folder_actions: Rc<dyn Fn(std::path::PathBuf)> =
-        start_scan_for_folder.clone();
-    install_context_menu(
-        &window,
-        &toast_overlay,
-        &selection_model,
-        &meta_cache,
-        &hash_cache,
-        &thumbnail_size,
-        &meta_expander,
-        &meta_paned,
-        &meta_split_before_auto_collapse,
-        &meta_position_programmatic,
-        MIN_META_SPLIT_PX,
-        &current_folder,
-        &start_scan_for_folder_actions,
-        &list_store,
-        &refresh_metadata_sidebar_for_actions,
-        &grid_view,
-        &single_picture,
-        &meta_preview,
-    );
 
     // -----------------------------------------------------------------------
     // Wire: sidebar toggle buttons → show/hide panels
@@ -579,48 +568,26 @@ fn build_ui(app: &adw::Application) {
         meta_preview: meta_preview.clone(),
     });
 
-    // -----------------------------------------------------------------------
-    // Wire: selection change → populate metadata sidebar
-    // -----------------------------------------------------------------------
-    let meta_listbox_sel = meta_listbox.clone();
-    let meta_expander_sel = meta_expander.clone();
-    let meta_paned_sel = meta_paned.clone();
-    let meta_split_before_auto_collapse_sel = meta_split_before_auto_collapse.clone();
-    let meta_position_programmatic_sel = meta_position_programmatic.clone();
-    let meta_preview_sel = meta_preview.clone();
-    let meta_cache_sel = meta_cache.clone();
-    let realized_thumb_images_sel = realized_thumb_images.clone();
-    let thumbnail_size_sel = thumbnail_size.clone();
-    let hash_cache_sel = hash_cache.clone();
-    let click_trace_state: Rc<RefCell<Option<ClickTrace>>> = Rc::new(RefCell::new(None));
-    let click_trace_state_sel = click_trace_state.clone();
-    selection_model.connect_selection_changed(move |model, _, _| {
-        let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
-            return;
-        };
-        handle_selection_change_event(
-            &item,
-            &click_trace_state_sel,
-            &meta_cache_sel,
-            &meta_listbox_sel,
-            &meta_expander_sel,
-            &meta_paned_sel,
-            &meta_split_before_auto_collapse_sel,
-            &meta_position_programmatic_sel,
-            &meta_preview_sel,
-            &realized_thumb_images_sel,
-            &thumbnail_size_sel,
-            &hash_cache_sel,
-        );
+    install_selection_wiring(SelectionWiringDeps {
+        selection_model: selection_model.clone(),
+        meta_cache: meta_cache.clone(),
+        meta_listbox: meta_listbox.clone(),
+        meta_expander: meta_expander.clone(),
+        meta_paned: meta_paned.clone(),
+        meta_split_before_auto_collapse: meta_split_before_auto_collapse.clone(),
+        meta_position_programmatic: meta_position_programmatic.clone(),
+        meta_preview: meta_preview.clone(),
+        realized_thumb_images: realized_thumb_images.clone(),
+        thumbnail_size: thumbnail_size.clone(),
+        hash_cache: hash_cache.clone(),
     });
 
     // -----------------------------------------------------------------------
     // Wire: open_btn → FileDialog → start scan (quick-jump shortcut)
     // -----------------------------------------------------------------------
-    let start_scan_for_folder_open_action: Rc<dyn Fn(std::path::PathBuf)> = start_scan_for_folder.clone();
-    let open_folder_action = build_open_folder_action(OpenFolderActionDeps {
+    let open_folder_action = install_open_folder_wiring(OpenFolderWiringDeps {
         current_folder: current_folder.clone(),
-        start_scan_for_folder: start_scan_for_folder_open_action,
+        start_scan_for_folder: start_scan_for_folder.clone(),
         tree_root: tree_root.clone(),
         tree_model: tree_model.clone(),
         tree_list_view: tree_list_view.clone(),
@@ -635,58 +602,33 @@ fn build_ui(app: &adw::Application) {
         size_buttons: size_buttons.clone(),
         progress_state: progress_state.clone(),
         recent_folders_limit: RECENT_FOLDERS_LIMIT,
+        history_popover: history_popover.clone(),
+        history_list: history_list.clone(),
+        open_btn: open_btn.clone(),
+        window: window.clone(),
     });
-
-    install_history_popover_handler(
-        &history_popover,
-        &history_list,
-        &recent_folders,
-        &current_folder,
-        open_folder_action.clone(),
-        RECENT_FOLDERS_LIMIT,
-    );
-
-    install_open_button_handler(
-        &open_btn,
-        &window,
-        &current_folder,
-        open_folder_action.clone(),
-    );
 
     // -----------------------------------------------------------------------
     // Wire: sort/search/clear/thumbnail-size controls
     // -----------------------------------------------------------------------
-    let start_scan_for_folder_controls: Rc<dyn Fn(std::path::PathBuf)> = start_scan_for_folder.clone();
-    install_sort_dropdown_handler(
-        &sort_dropdown,
-        &sort_key,
-        &sorter,
-        &current_folder,
-        &scan_in_progress,
-        &start_scan_for_folder_controls,
-    );
-    install_search_entry_handler(&search_entry, &search_text, &filter, &current_folder);
-    install_clear_button_handler(
-        &clear_btn,
-        &search_text,
-        &sort_key,
-        &filter,
-        &sorter,
-        &search_entry,
-        &sort_dropdown,
-        &thumbnail_size,
-        &current_folder,
-    );
-    install_thumbnail_size_handlers(
-        &size_buttons,
-        thumbnail_size_options(),
-        &thumbnail_size,
-        &grid_view,
-        &realized_thumb_images,
-        &realized_cell_boxes,
-        &hash_cache,
-        &current_folder,
-    );
+    install_controls_wiring(ControlsWiringDeps {
+        sort_dropdown: sort_dropdown.clone(),
+        sort_key: sort_key.clone(),
+        sorter: sorter.clone(),
+        current_folder: current_folder.clone(),
+        scan_in_progress: scan_in_progress.clone(),
+        start_scan_for_folder: start_scan_for_folder.clone(),
+        search_entry: search_entry.clone(),
+        search_text: search_text.clone(),
+        filter: filter.clone(),
+        clear_btn: clear_btn.clone(),
+        thumbnail_size: thumbnail_size.clone(),
+        size_buttons: size_buttons.clone(),
+        grid_view: grid_view.clone(),
+        realized_thumb_images: realized_thumb_images.clone(),
+        realized_cell_boxes: realized_cell_boxes.clone(),
+        hash_cache: hash_cache.clone(),
+    });
 
     // -----------------------------------------------------------------------
     // Assemble three-pane layout with resizable Paned dividers
