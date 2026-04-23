@@ -1,6 +1,7 @@
 use crate::file_name_ops::{build_renamed_target, split_filename};
+use gtk4::gio::prelude::FileExt;
 use gtk4::prelude::*;
-use gtk4::{Label, Orientation};
+use gtk4::{gio, Label, Orientation};
 use libadwaita as adw;
 use std::{cell::RefCell, rc::Rc};
 
@@ -192,6 +193,81 @@ pub fn open_delete_dialog(
             }
         }
         dialog_for_delete.close();
+    });
+
+    dialog.present();
+}
+
+pub fn open_trash_dialog(
+    window: &adw::ApplicationWindow,
+    toast_overlay: &adw::ToastOverlay,
+    start_scan_for_folder: &Rc<dyn Fn(std::path::PathBuf)>,
+    current_folder: &Rc<RefCell<Option<std::path::PathBuf>>>,
+    source_path: std::path::PathBuf,
+) {
+    let file_name = source_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| source_path.to_string_lossy().into_owned());
+    let dialog = gtk4::Window::builder()
+        .transient_for(window)
+        .modal(true)
+        .title("Move to Trash")
+        .default_width(420)
+        .build();
+
+    let content = gtk4::Box::new(Orientation::Vertical, 10);
+    content.set_margin_top(12);
+    content.set_margin_bottom(12);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+    dialog.set_child(Some(&content));
+
+    let prompt = Label::new(Some(&format!("Move '{}' to the trash?", file_name)));
+    prompt.set_halign(gtk4::Align::Start);
+    content.append(&prompt);
+
+    let hint = Label::new(Some("You can restore it from your trash folder."));
+    hint.add_css_class("caption");
+    hint.set_halign(gtk4::Align::Start);
+    content.append(&hint);
+
+    let button_row = gtk4::Box::new(Orientation::Horizontal, 6);
+    button_row.set_halign(gtk4::Align::End);
+    let cancel_btn = gtk4::Button::with_label("Cancel");
+    let trash_btn = gtk4::Button::with_label("Move to Trash");
+    trash_btn.add_css_class("destructive-action");
+    button_row.append(&cancel_btn);
+    button_row.append(&trash_btn);
+    content.append(&button_row);
+
+    let dialog_for_cancel = dialog.clone();
+    cancel_btn.connect_clicked(move |_| {
+        dialog_for_cancel.close();
+    });
+
+    let dialog_for_trash = dialog.clone();
+    let toast_overlay = toast_overlay.clone();
+    let start_scan_for_folder = start_scan_for_folder.clone();
+    let current_folder = current_folder.clone();
+    trash_btn.connect_clicked(move |_| {
+        let file = gio::File::for_path(&source_path);
+        match file.trash(gio::Cancellable::NONE) {
+            Ok(()) => {
+                if let Some(folder) = current_folder.borrow().as_ref().cloned() {
+                    start_scan_for_folder(folder);
+                }
+                let toast = adw::Toast::new("Moved to trash");
+                toast.set_timeout(2);
+                toast_overlay.add_toast(toast);
+            }
+            Err(err) => {
+                let toast = adw::Toast::new(&format!("Could not move to trash: {}", err));
+                toast.set_timeout(3);
+                toast_overlay.add_toast(toast);
+            }
+        }
+        dialog_for_trash.close();
     });
 
     dialog.present();

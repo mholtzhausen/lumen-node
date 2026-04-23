@@ -1,4 +1,5 @@
 use crate::db;
+use crate::dialogs::open_trash_dialog;
 use crate::metadata::ImageMetadata;
 use crate::metadata_section::apply_metadata_section_state;
 use crate::metadata_view::{
@@ -51,6 +52,8 @@ pub fn install_context_menu(
     let refresh_folder_meta_action = gio::SimpleAction::new("refresh-folder-metadata", None);
     let open_in_file_manager_action = gio::SimpleAction::new("open-in-file-manager", None);
     let open_in_external_editor_action = gio::SimpleAction::new("open-in-external-editor", None);
+    let toggle_favourite_action = gio::SimpleAction::new("toggle-favourite", None);
+    let move_to_trash_action = gio::SimpleAction::new("move-to-trash", None);
 
     let selection_for_actions = selection_model.clone();
     let meta_cache_for_actions = meta_cache.clone();
@@ -335,6 +338,48 @@ pub fn install_context_menu(
         }
     });
 
+    let selection_for_actions = selection_model.clone();
+    let toast_overlay_for_actions = toast_overlay.clone();
+    let current_folder_for_favourite = current_folder.clone();
+    toggle_favourite_action.connect_activate(move |_, _| {
+        let Some(path) = selected_image_path(&selection_for_actions) else {
+            return;
+        };
+        let Some(folder) = current_folder_for_favourite.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Ok(conn) = db::open(&folder) else {
+            return;
+        };
+        let text = match db::toggle_favourite(&conn, &path) {
+            Ok(Some(true)) => "Added to favourites",
+            Ok(Some(false)) => "Removed from favourites",
+            Ok(None) => "Not indexed yet — try again after scan finishes",
+            Err(_) => "Could not update favourite",
+        };
+        let toast = adw::Toast::new(text);
+        toast.set_timeout(2);
+        toast_overlay_for_actions.add_toast(toast);
+    });
+
+    let selection_for_actions = selection_model.clone();
+    let window_for_trash = window.clone();
+    let toast_for_trash = toast_overlay.clone();
+    let start_scan_for_trash = start_scan_for_folder.clone();
+    let current_folder_for_trash = current_folder.clone();
+    move_to_trash_action.connect_activate(move |_, _| {
+        let Some(path) = selected_image_path(&selection_for_actions) else {
+            return;
+        };
+        open_trash_dialog(
+            &window_for_trash,
+            &toast_for_trash,
+            &start_scan_for_trash,
+            &current_folder_for_trash,
+            path,
+        );
+    });
+
     action_group.add_action(&copy_prompt_action);
     action_group.add_action(&copy_negative_prompt_action);
     action_group.add_action(&copy_seed_action);
@@ -348,6 +393,8 @@ pub fn install_context_menu(
     action_group.add_action(&refresh_folder_meta_action);
     action_group.add_action(&open_in_file_manager_action);
     action_group.add_action(&open_in_external_editor_action);
+    action_group.add_action(&toggle_favourite_action);
+    action_group.add_action(&move_to_trash_action);
     window.insert_action_group("ctx", Some(&action_group));
 
     let menu_model = gio::Menu::new();
@@ -380,6 +427,11 @@ pub fn install_context_menu(
         Some("ctx.open-in-external-editor"),
     );
     menu_model.append_section(None, &open_section);
+
+    let organise_section = gio::Menu::new();
+    organise_section.append(Some("Favourite"), Some("ctx.toggle-favourite"));
+    organise_section.append(Some("Move to Trash"), Some("ctx.move-to-trash"));
+    menu_model.append_section(None, &organise_section);
 
     let refresh_submenu = gio::Menu::new();
     refresh_submenu.append(Some("Refresh Thumbnail"), Some("ctx.refresh-thumbnail"));
