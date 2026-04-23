@@ -112,16 +112,20 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
         }
         if key == gdk::Key::Delete {
             let Some(path) = selected_image_path(&selection_for_keys) else {
-                return glib::Propagation::Stop;
+                return glib::Propagation::Proceed;
             };
-            open_delete_dialog(
-                &window_for_keys,
-                &toast_overlay_for_keys,
-                &start_scan_for_folder_keys,
-                &current_folder_for_keys,
-                path,
-            );
-            return glib::Propagation::Stop;
+            if state.contains(gdk::ModifierType::SHIFT_MASK) {
+                open_delete_dialog(
+                    &window_for_keys,
+                    &toast_overlay_for_keys,
+                    &start_scan_for_folder_keys,
+                    &current_folder_for_keys,
+                    path,
+                );
+                return glib::Propagation::Stop;
+            }
+            // Plain Delete: let `Application` accel run `ctx.move-to-trash` (trash dialog).
+            return glib::Propagation::Proceed;
         }
         if key == gdk::Key::Escape {
             let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");

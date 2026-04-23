@@ -394,21 +394,40 @@ pub fn refresh_indexed(conn: &Connection, path: &Path) -> Option<ImageRow> {
 }
 
 /// Flips the `favourite` flag for an indexed image. Returns `None` if there is no DB row yet.
-pub fn toggle_favourite(conn: &Connection, path: &Path) -> rusqlite::Result<Option<bool>> {
+/// Returns whether an `images` row exists for `path` (image has been indexed in this folder DB).
+pub fn image_row_exists(conn: &Connection, path: &Path) -> bool {
     let path_str = path.to_string_lossy();
-    let current: i32 = match conn.query_row(
+    matches!(
+        conn.query_row(
+            "SELECT 1 FROM images WHERE path = ?1 LIMIT 1",
+            params![path_str.as_ref()],
+            |_| Ok(()),
+        ),
+        Ok(())
+    )
+}
+
+/// Returns whether the image row exists and is marked favourite (`None` if no row).
+pub fn get_favourite(conn: &Connection, path: &Path) -> rusqlite::Result<Option<bool>> {
+    let path_str = path.to_string_lossy();
+    match conn.query_row(
         "SELECT favourite FROM images WHERE path = ?1",
         params![path_str.as_ref()],
         |row| row.get::<_, i32>(0),
     ) {
-        Ok(v) => v,
-        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    let next = if current != 0 { 0 } else { 1 };
-    conn.execute(
+        Ok(v) => Ok(Some(v != 0)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Sets `favourite` for an indexed image. Returns `false` if no row exists for `path`.
+pub fn set_favourite(conn: &Connection, path: &Path, favourite: bool) -> rusqlite::Result<bool> {
+    let path_str = path.to_string_lossy();
+    let v: i32 = if favourite { 1 } else { 0 };
+    let n = conn.execute(
         "UPDATE images SET favourite = ?1 WHERE path = ?2",
-        params![next, path_str.as_ref()],
+        params![v, path_str.as_ref()],
     )?;
-    Ok(Some(next != 0))
+    Ok(n > 0)
 }

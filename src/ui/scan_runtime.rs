@@ -22,11 +22,15 @@ pub(crate) struct ScanRuntimeDeps {
     pub(crate) progress_box: gtk4::Box,
     pub(crate) progress_label: Label,
     pub(crate) progress_bar: ProgressBar,
+    /// When set, invoked after each scan drain batch so context menu actions stay in sync.
+    pub(crate) sync_context_menu: Option<Rc<dyn Fn()>>,
 }
 
 pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
     /// Maximum items drained from the buffer per idle tick.
     const BATCH_SIZE: usize = SCAN_DRAIN_BATCH_SIZE as usize;
+
+    let sync_context_menu = deps.sync_context_menu.clone();
 
     let buffer: Rc<RefCell<VecDeque<ScanMessage>>> = Rc::new(RefCell::new(VecDeque::new()));
     let drain_scheduled: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
@@ -49,6 +53,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
         let progress_bar_recv = deps.progress_bar.clone();
         let thumbnail_size_recv = deps.app_state.thumbnail_size.clone();
         let realized_thumb_images_recv = deps.app_state.realized_thumb_images.clone();
+        let sync_context_menu_sticky = sync_context_menu.clone();
         Rc::new(move || {
             if *drain_scheduled.borrow() {
                 return;
@@ -71,6 +76,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
             let progress_box_recv = progress_box_recv.clone();
             let progress_label_recv = progress_label_recv.clone();
             let progress_bar_recv = progress_bar_recv.clone();
+            let sync_context_menu_recv = sync_context_menu_sticky.clone();
             glib::idle_add_local(move || {
                 *drain_scheduled.borrow_mut() = false;
                 SCAN_DRAIN_SCHEDULED.store(0, AtomicOrdering::Relaxed);
@@ -257,6 +263,10 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                         &progress_label_recv,
                         &progress_bar_recv,
                     );
+                }
+
+                if let Some(sync) = sync_context_menu_recv.as_ref() {
+                    sync();
                 }
 
                 // Re-schedule if the buffer still has items.

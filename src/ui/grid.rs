@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use crate::{
     db,
-    dialogs::{open_delete_dialog, open_rename_dialog},
+    dialogs::{open_rename_dialog, open_trash_dialog},
     sort_flags::{sort_flag_text_for_path, SortFields},
     thumbnails,
 };
@@ -418,7 +418,7 @@ pub fn make_delete_action(
     current_folder: Rc<RefCell<Option<std::path::PathBuf>>>,
 ) -> Rc<dyn Fn(std::path::PathBuf)> {
     Rc::new(move |path| {
-        open_delete_dialog(
+        open_trash_dialog(
             &window,
             &toast_overlay,
             &start_scan_for_folder,

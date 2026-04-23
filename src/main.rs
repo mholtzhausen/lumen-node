@@ -231,15 +231,6 @@ fn build_ui(app: &adw::Application) {
     let scroll_last_time = app_state.scroll_last_time.clone();
     let scroll_debounce_gen = app_state.scroll_debounce_gen.clone();
 
-    install_scan_runtime(ScanRuntimeDeps {
-        receiver,
-        app_state: app_state.clone(),
-        toast_overlay: toast_overlay.clone(),
-        progress_box: progress_box.clone(),
-        progress_label: progress_label.clone(),
-        progress_bar: progress_bar.clone(),
-    });
-
     // -----------------------------------------------------------------------
     // Header chrome + left file-system tree (tree visibility follows header toggle)
     // -----------------------------------------------------------------------
@@ -307,7 +298,7 @@ fn build_ui(app: &adw::Application) {
         meta_pane_start_px: pane_metrics.meta_pane_start_px,
     });
 
-    install_context_menu_wiring(ContextMenuWiringDeps {
+    let sync_ctx_menu = install_context_menu_wiring(ContextMenuWiringDeps {
         app_state: app_state.clone(),
         window: window.clone(),
         toast_overlay: toast_overlay.clone(),
@@ -317,6 +308,16 @@ fn build_ui(app: &adw::Application) {
         min_meta_split_px: MIN_META_SPLIT_PX,
         start_scan_for_folder: start_scan_for_folder.clone(),
         external_editor: app_config.external_editor.clone(),
+    });
+
+    install_scan_runtime(ScanRuntimeDeps {
+        receiver,
+        app_state: app_state.clone(),
+        toast_overlay: toast_overlay.clone(),
+        progress_box: progress_box.clone(),
+        progress_label: progress_label.clone(),
+        progress_bar: progress_bar.clone(),
+        sync_context_menu: Some(sync_ctx_menu),
     });
 
     // -----------------------------------------------------------------------

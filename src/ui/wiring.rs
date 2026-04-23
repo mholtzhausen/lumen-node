@@ -30,7 +30,7 @@ pub(crate) struct ContextMenuWiringDeps {
     pub(crate) external_editor: Option<PathBuf>,
 }
 
-pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) {
+pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn Fn()> {
     let refresh_metadata_sidebar: Rc<dyn Fn(&ImageMetadata)> = Rc::new({
         let meta_listbox = deps.right.meta_listbox.clone();
         move |meta: &ImageMetadata| populate_metadata_sidebar(&meta_listbox, meta)
@@ -56,7 +56,7 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) {
         &deps.center.grid_view,
         &deps.center.single_picture,
         &deps.right.meta_preview,
-    );
+    )
 }
 
 pub(crate) struct SelectionWiringDeps {

@@ -48,6 +48,21 @@ pub fn extract_seed_from_parameters(meta: &ImageMetadata) -> Option<String> {
     None
 }
 
+/// True when `format_generation_command` would include more than the placeholder stub.
+pub fn has_generation_command_content(meta: &ImageMetadata) -> bool {
+    meta.prompt.as_ref().is_some_and(|s| !s.trim().is_empty())
+        || meta.negative_prompt.as_ref().is_some_and(|s| !s.trim().is_empty())
+        || extract_seed_from_parameters(meta).is_some()
+        || meta
+            .raw_parameters
+            .as_ref()
+            .is_some_and(|s| !s.trim().is_empty())
+        || meta
+            .workflow_json
+            .as_ref()
+            .is_some_and(|s| !s.trim().is_empty())
+}
+
 /// Formats a CLI-style generation command from available metadata.
 pub fn format_generation_command(meta: &ImageMetadata) -> String {
     let mut parts = Vec::new();
