@@ -4,6 +4,7 @@ pub mod grid;
 pub mod keyboard;
 pub mod preview;
 pub mod selection;
+pub mod session;
 pub mod shell;
 pub mod sidebar;
 pub mod tree;

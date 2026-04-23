@@ -49,9 +49,13 @@ use ui::grid::{
     unbind_grid_list_item, ACTIVE_THUMBNAIL_TASKS,
     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
 };
-use ui::keyboard::{install_keyboard_handler, KeyboardDeps};
+use ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps};
 use ui::preview::{load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
 use ui::selection::{handle_selection_change_event, ClickTrace};
+use ui::session::{
+    install_close_persistence_handler, restore_session_state, ClosePersistenceDeps,
+    RestoreSessionDeps,
+};
 use ui::shell::{
     assemble_paned_layout, build_header_controls, create_progress_widgets,
     create_window_with_defaults, install_history_popover_handler, install_open_button_handler,
@@ -65,7 +69,7 @@ use ui::sidebar::{
     initialize_meta_paned_position, populate_metadata_sidebar,
 };
 use ui::tree::build_tree_widgets;
-use window_math::{pct_to_px, px_to_pct};
+use window_math::pct_to_px;
 
 use std::{
     cell::Cell,
@@ -80,8 +84,8 @@ use std::{
 use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
-    gio, glib, CustomFilter, CustomSorter, EventControllerScroll, EventControllerScrollFlags,
-    FilterListModel, GestureClick, Image, Label, ListItem, ProgressBar, SignalListItemFactory, SingleSelection,
+    gio, glib, CustomFilter, CustomSorter, FilterListModel, GestureClick, Image, Label, ListItem,
+    ProgressBar, SignalListItemFactory, SingleSelection,
     SortListModel, StringObject, TreeListRow,
 };
 
@@ -1430,259 +1434,57 @@ fn build_ui(app: &adw::Application) {
     // Scroll on single-view / meta-preview → navigate images
     // Accumulate delta so smooth-scroll trackpads don't flood set_selected.
     // -----------------------------------------------------------------------
-    {
-        let selection = selection_model.clone();
-        let picture = single_picture.clone();
-        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
-        let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
-        scroll.connect_scroll(move |_, _dx, dy| {
-            let count = selection.n_items();
-            if count == 0 {
-                return glib::Propagation::Proceed;
-            }
-            accum.set(accum.get() + dy);
-            let steps = accum.get().trunc() as i32;
-            if steps == 0 {
-                return glib::Propagation::Stop;
-            }
-            accum.set(accum.get().fract());
-            let cur = selection.selected() as i32;
-            let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
-            if next != cur as u32 {
-                selection.set_selected(next);
-                if let Some(item) = selection.selected_item().and_downcast::<StringObject>() {
-                    load_picture_async(&picture, &item.string().to_string(), None, None);
-                }
-            }
-            glib::Propagation::Stop
-        });
-        single_picture.add_controller(scroll);
-    }
-    {
-        let selection = selection_model.clone();
-        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
-        let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
-        scroll.connect_scroll(move |_, _dx, dy| {
-            let count = selection.n_items();
-            if count == 0 {
-                return glib::Propagation::Proceed;
-            }
-            accum.set(accum.get() + dy);
-            let steps = accum.get().trunc() as i32;
-            if steps == 0 {
-                return glib::Propagation::Stop;
-            }
-            accum.set(accum.get().fract());
-            let cur = selection.selected() as i32;
-            let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
-            if next != cur as u32 {
-                selection.set_selected(next);
-            }
-            glib::Propagation::Stop
-        });
-        meta_preview.add_controller(scroll);
-    }
+    install_scroll_navigation_handlers(&selection_model, &single_picture, &meta_preview);
 
     // -----------------------------------------------------------------------
-    // Save config on window close (folder + pane positions)
+    // Save config on close + restore session state
     // -----------------------------------------------------------------------
-    let cf_close = current_folder.clone();
-    let outer_paned_close = outer_paned.clone();
-    let inner_paned_close = inner_paned.clone();
-    let meta_paned_close = meta_paned.clone();
-    let meta_split_before_auto_collapse_close = meta_split_before_auto_collapse.clone();
-    let sort_key_close = sort_key.clone();
-    let search_text_close = search_text.clone();
-    let thumbnail_size_close = thumbnail_size.clone();
-    let recent_folders_close = recent_folders.clone();
-    let left_toggle_close = left_toggle.clone();
-    let right_toggle_close = right_toggle.clone();
-    let window_for_close = window.clone();
-    let outer_split_dirty_close = outer_split_dirty.clone();
-    let inner_split_dirty_close = inner_split_dirty.clone();
-    let meta_split_dirty_close = meta_split_dirty.clone();
-    window.connect_close_request(move |_| {
-        let window_width = window_for_close.width().max(1);
-        let window_height = window_for_close.height().max(1);
-        let window_maximized = window_for_close.is_maximized();
-        let left_pos = outer_paned_close.position();
-        let inner_pos = inner_paned_close.position();
-        let raw_meta_pos = meta_split_before_auto_collapse_close
-            .get()
-            .unwrap_or_else(|| meta_paned_close.position());
-        let meta_total_height = meta_paned_close.height().max(1);
-        let meta_upper_bound = meta_total_height.saturating_sub(MIN_META_SPLIT_PX);
-        let meta_pos = if meta_upper_bound < MIN_META_SPLIT_PX {
-            // Window too short to preserve both minimum panes; persist midpoint.
-            (meta_total_height / 2).max(1)
-        } else {
-            raw_meta_pos.clamp(MIN_META_SPLIT_PX, meta_upper_bound)
-        };
-        let recent_folders = recent_folders_close.borrow();
-        let left_pos_for_save = if outer_split_dirty_close.get() {
-            left_pos
-        } else {
-            configured_left_pane_pos.unwrap_or(left_pos)
-        };
-        let inner_pos_for_save = if inner_split_dirty_close.get() {
-            inner_pos
-        } else {
-            configured_right_pane_pos.unwrap_or(inner_pos)
-        };
-        let right_width_for_save = window_width.saturating_sub(left_pos_for_save + inner_pos_for_save);
-        let meta_pos_for_save = if meta_split_dirty_close.get() {
-            meta_pos
-        } else {
-            configured_meta_pane_pos.unwrap_or(meta_pos)
-        };
-        let left_pct_for_save = if outer_split_dirty_close.get() {
-            px_to_pct(left_pos_for_save, window_width)
-        } else {
-            configured_left_pane_width_pct.unwrap_or(px_to_pct(left_pos_for_save, window_width))
-        };
-        let right_pct_for_save = if inner_split_dirty_close.get() {
-            px_to_pct(right_width_for_save, window_width)
-        } else {
-            configured_right_pane_width_pct
-                .unwrap_or(px_to_pct(right_width_for_save, window_width))
-        };
-        let meta_pct_for_save = if meta_split_dirty_close.get() {
-            px_to_pct(meta_pos_for_save, meta_total_height)
-        } else {
-            configured_meta_pane_height_pct
-                .unwrap_or(px_to_pct(meta_pos_for_save, meta_total_height))
-        };
-
-        config::save(
-            cf_close.borrow().as_deref(),
-            &recent_folders,
-            window_width,
-            window_height,
-            window_maximized,
-            left_pos_for_save,
-            inner_pos_for_save,
-            meta_pos_for_save,
-            left_pct_for_save,
-            right_pct_for_save,
-            meta_pct_for_save,
-            left_toggle_close.is_active(),
-            right_toggle_close.is_active(),
-        );
-        if let Some(folder) = cf_close.borrow().as_ref() {
-            let _ = db::save_ui_state(
-                folder.as_path(),
-                &db::UiState {
-                    sort_key: sort_key_close.borrow().clone(),
-                    search_text: search_text_close.borrow().clone(),
-                    thumbnail_size: *thumbnail_size_close.borrow(),
-                },
-            );
-        }
-        glib::Propagation::Proceed
+    install_close_persistence_handler(ClosePersistenceDeps {
+        current_folder: current_folder.clone(),
+        outer_paned: outer_paned.clone(),
+        inner_paned: inner_paned.clone(),
+        meta_paned: meta_paned.clone(),
+        meta_split_before_auto_collapse: meta_split_before_auto_collapse.clone(),
+        sort_key: sort_key.clone(),
+        search_text: search_text.clone(),
+        thumbnail_size: thumbnail_size.clone(),
+        recent_folders: recent_folders.clone(),
+        left_toggle: left_toggle.clone(),
+        right_toggle: right_toggle.clone(),
+        window: window.clone(),
+        outer_split_dirty: outer_split_dirty.clone(),
+        inner_split_dirty: inner_split_dirty.clone(),
+        meta_split_dirty: meta_split_dirty.clone(),
+        configured_left_pane_pos,
+        configured_right_pane_pos,
+        configured_meta_pane_pos,
+        configured_left_pane_width_pct,
+        configured_right_pane_width_pct,
+        configured_meta_pane_height_pct,
+        min_meta_split_px: MIN_META_SPLIT_PX,
     });
 
-    // -----------------------------------------------------------------------
-    // Restore last folder from config + sync tree
-    // -----------------------------------------------------------------------
-    if let Some(last_folder) = app_config.last_folder.as_ref() {
-        if last_folder.is_dir() {
-            open_folder_action(last_folder.clone(), true);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Restore persisted sort + search state into the UI controls
-    // -----------------------------------------------------------------------
-    {
-        let initial_sort_idx: u32 = sort_index_for_key(sort_key.borrow().as_str());
-        if initial_sort_idx != 0 {
-            // fires connect_selected_notify → updates sort_key + calls sorter.changed()
-            sort_dropdown.set_selected(initial_sort_idx);
-        }
-        let initial_search = search_text.borrow().clone();
-        if !initial_search.is_empty() {
-            search_entry.set_text(&initial_search);
-            filter.changed(gtk4::FilterChange::Different);
-        }
-    }
-
-    if app_config.window_maximized.unwrap_or(false) {
-        window.maximize();
-    }
-
-    window.present();
-    let window_for_pane_restore = window.clone();
-    let outer_paned_restore = outer_paned.clone();
-    let inner_paned_restore = inner_paned.clone();
-    let meta_paned_restore = meta_paned.clone();
-    let outer_position_programmatic_restore = outer_position_programmatic.clone();
-    let inner_position_programmatic_restore = inner_position_programmatic.clone();
-    let meta_position_programmatic_restore = meta_position_programmatic.clone();
-    let pane_restore_complete_restore = pane_restore_complete.clone();
-    let pane_restore_attempts = Rc::new(Cell::new(0_u8));
-    let pane_restore_attempts_tick = pane_restore_attempts.clone();
-    glib::timeout_add_local(Duration::from_millis(16), move || {
-        let attempts = pane_restore_attempts_tick.get();
-        if attempts >= 60 {
-            pane_restore_complete_restore.set(true);
-            return glib::ControlFlow::Break;
-        }
-        pane_restore_attempts_tick.set(attempts.saturating_add(1));
-
-        let window_width = window_for_pane_restore.width();
-        let inner_width = inner_paned_restore.width();
-        if window_width <= 1 || inner_width <= 1 {
-            return glib::ControlFlow::Continue;
-        }
-
-        let left_limit =
-            (window_width - MIN_CENTER_PANE_PX - MIN_RIGHT_PANE_PX).max(MIN_LEFT_PANE_PX);
-        let left_pos = outer_paned_restore
-            .position()
-            .clamp(MIN_LEFT_PANE_PX, left_limit);
-        let max_right_pane_width_px = window_width
-            .saturating_sub(left_pos + MIN_CENTER_PANE_PX)
-            .max(MIN_RIGHT_PANE_PX);
-        let right_pane_width_px = configured_right_pane_width_pct
-            .map(|pct| pct_to_px(window_width, pct))
-            .or_else(|| {
-                configured_right_pane_pos
-                    .map(|inner_pos| window_width.saturating_sub(left_pos + inner_pos))
-            })
-            .unwrap_or(260)
-            .clamp(MIN_RIGHT_PANE_PX, max_right_pane_width_px);
-        let inner_pane_start_px = window_width
-            .saturating_sub(left_pos + right_pane_width_px)
-            .max(MIN_CENTER_PANE_PX);
-        inner_position_programmatic_restore
-            .set(inner_position_programmatic_restore.get().saturating_add(1));
-        inner_paned_restore.set_position(inner_pane_start_px);
-        inner_position_programmatic_restore
-            .set(inner_position_programmatic_restore.get().saturating_sub(1));
-        let meta_total_height = meta_paned_restore.height().max(1);
-        let configured_meta_pos = configured_meta_pane_height_pct
-            .map(|pct| pct_to_px(meta_total_height, pct))
-            .or(configured_meta_pane_pos)
-            .unwrap_or(200);
-        let meta_upper_bound = meta_total_height.saturating_sub(MIN_META_SPLIT_PX);
-        let meta_pane_start_px = if meta_upper_bound < MIN_META_SPLIT_PX {
-            // Window is too short to enforce both minimum split sizes.
-            (meta_total_height / 2).max(1)
-        } else {
-            configured_meta_pos.clamp(MIN_META_SPLIT_PX, meta_upper_bound)
-        };
-        outer_position_programmatic_restore
-            .set(outer_position_programmatic_restore.get().saturating_add(1));
-        outer_paned_restore.set_position(left_pos);
-        outer_position_programmatic_restore
-            .set(outer_position_programmatic_restore.get().saturating_sub(1));
-        meta_position_programmatic_restore
-            .set(meta_position_programmatic_restore.get().saturating_add(1));
-        meta_paned_restore.set_position(meta_pane_start_px);
-        meta_position_programmatic_restore
-            .set(meta_position_programmatic_restore.get().saturating_sub(1));
-        pane_restore_complete_restore.set(true);
-        glib::ControlFlow::Break
+    let open_folder_action_restore: Rc<dyn Fn(std::path::PathBuf, bool)> = open_folder_action.clone();
+    restore_session_state(RestoreSessionDeps {
+        app_config,
+        open_folder_action: open_folder_action_restore,
+        sort_key: sort_key.clone(),
+        search_text: search_text.clone(),
+        sort_dropdown: sort_dropdown.clone(),
+        search_entry: search_entry.clone(),
+        filter: filter.clone(),
+        window: window.clone(),
+        outer_paned: outer_paned.clone(),
+        inner_paned: inner_paned.clone(),
+        meta_paned: meta_paned.clone(),
+        outer_position_programmatic: outer_position_programmatic.clone(),
+        inner_position_programmatic: inner_position_programmatic.clone(),
+        meta_position_programmatic: meta_position_programmatic.clone(),
+        pane_restore_complete: pane_restore_complete.clone(),
+        min_left_pane_px: MIN_LEFT_PANE_PX,
+        min_right_pane_px: MIN_RIGHT_PANE_PX,
+        min_center_pane_px: MIN_CENTER_PANE_PX,
+        min_meta_split_px: MIN_META_SPLIT_PX,
     });
 }
 

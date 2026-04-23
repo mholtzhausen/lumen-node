@@ -3,7 +3,10 @@ use crate::file_name_ops::clipboard_base_name_hint;
 use crate::ui::preview::load_picture_async;
 use crate::view_helpers::selected_image_path;
 use gtk4::prelude::*;
-use gtk4::{gdk, gio, glib, EventControllerKey, ListScrollFlags, StringObject};
+use gtk4::{
+    gdk, gio, glib, EventControllerKey, EventControllerScroll, EventControllerScrollFlags,
+    ListScrollFlags, StringObject,
+};
 use libadwaita as adw;
 use std::{
     cell::Cell,
@@ -226,4 +229,63 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
         glib::Propagation::Proceed
     });
     deps.window.add_controller(key_controller);
+}
+
+pub(crate) fn install_scroll_navigation_handlers(
+    selection_model: &gtk4::SingleSelection,
+    single_picture: &gtk4::Picture,
+    meta_preview: &gtk4::Picture,
+) {
+    {
+        let selection = selection_model.clone();
+        let picture = single_picture.clone();
+        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+        scroll.connect_scroll(move |_, _dx, dy| {
+            let count = selection.n_items();
+            if count == 0 {
+                return glib::Propagation::Proceed;
+            }
+            accum.set(accum.get() + dy);
+            let steps = accum.get().trunc() as i32;
+            if steps == 0 {
+                return glib::Propagation::Stop;
+            }
+            accum.set(accum.get().fract());
+            let cur = selection.selected() as i32;
+            let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
+            if next != cur as u32 {
+                selection.set_selected(next);
+                if let Some(item) = selection.selected_item().and_downcast::<StringObject>() {
+                    load_picture_async(&picture, &item.string().to_string(), None, None);
+                }
+            }
+            glib::Propagation::Stop
+        });
+        single_picture.add_controller(scroll);
+    }
+    {
+        let selection = selection_model.clone();
+        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+        scroll.connect_scroll(move |_, _dx, dy| {
+            let count = selection.n_items();
+            if count == 0 {
+                return glib::Propagation::Proceed;
+            }
+            accum.set(accum.get() + dy);
+            let steps = accum.get().trunc() as i32;
+            if steps == 0 {
+                return glib::Propagation::Stop;
+            }
+            accum.set(accum.get().fract());
+            let cur = selection.selected() as i32;
+            let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
+            if next != cur as u32 {
+                selection.set_selected(next);
+            }
+            glib::Propagation::Stop
+        });
+        meta_preview.add_controller(scroll);
+    }
 }
