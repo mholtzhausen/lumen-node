@@ -5,6 +5,7 @@ pub mod keyboard;
 pub mod navigation;
 pub mod open_folder;
 pub mod preview;
+pub mod scan_runtime;
 pub mod selection;
 pub mod session;
 pub mod shell;
