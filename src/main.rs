@@ -41,6 +41,7 @@ use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use timing_report::write_timing_report;
 use tree_sidebar::{build_tree_root, reset_tree_root, sync_tree_to_path};
 use ui::actions::install_context_menu;
+use ui::preview::{load_picture_async, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
 use ui::sidebar::populate_metadata_sidebar;
 use view_helpers::selected_image_path;
 use window_math::{monitor_bounds_for_window, pct_to_px, px_to_pct};
@@ -69,7 +70,6 @@ use gtk4::{
 static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 static FULL_VIEW_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 static ACTIVE_THUMBNAIL_TASKS: AtomicU64 = AtomicU64::new(0);
-static ACTIVE_PREVIEW_TASKS: AtomicU64 = AtomicU64::new(0);
 static PREVIEW_REQUEST_PENDING: AtomicU64 = AtomicU64::new(0);
 static SUPPRESS_SIDEBAR_DURING_PREVIEW: AtomicU64 = AtomicU64::new(0);
 static THUMB_UI_CALLBACKS_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -306,12 +306,6 @@ impl ClickTrace {
     }
 }
 
-enum PreviewLoadOutcome {
-    Displayed,
-    Failed,
-    StaleOrCancelled,
-}
-
 fn load_grid_thumbnail(
     thumb_image: &Image,
     path_str: String,
@@ -446,18 +440,6 @@ fn refresh_realized_grid_thumbnails(
             }
         }
     }
-}
-
-struct PreviewLoadMetrics {
-    outcome: PreviewLoadOutcome,
-    queue_wait_ms: f64,
-    file_open_ms: f64,
-    decode_ms: f64,
-    texture_create_ms: f64,
-    worker_total_ms: f64,
-    worker_done_since_enqueue_ms: f64,
-    main_thread_dispatch_ms: f64,
-    texture_apply_ms: f64,
 }
 
 struct FullViewTrace {
@@ -755,6 +737,8 @@ fn build_ui(app: &adw::Application) {
     );
     let configured_right_pane_width_pct = app_config.right_pane_width_pct;
     let configured_right_pane_pos = app_config.right_pane_pos;
+    let configured_left_pane_width_pct = app_config.left_pane_width_pct;
+    let configured_left_pane_pos = app_config.left_pane_pos;
     let configured_meta_pane_height_pct = app_config.meta_pane_height_pct;
     let configured_meta_pane_pos = app_config.meta_pane_pos;
 
@@ -1977,7 +1961,26 @@ fn build_ui(app: &adw::Application) {
     meta_paned.set_resize_end_child(true);
     meta_paned.set_shrink_start_child(false);
     meta_paned.set_shrink_end_child(false);
+    let meta_position_programmatic = Rc::new(Cell::new(0_u32));
+    let meta_split_dirty = Rc::new(Cell::new(false));
+    let pane_restore_complete = Rc::new(Cell::new(false));
+    meta_position_programmatic.set(meta_position_programmatic.get().saturating_add(1));
     meta_paned.set_position(meta_pane_start_px);
+    meta_position_programmatic.set(meta_position_programmatic.get().saturating_sub(1));
+    {
+        let meta_position_programmatic = meta_position_programmatic.clone();
+        let meta_split_dirty = meta_split_dirty.clone();
+        let pane_restore_complete = pane_restore_complete.clone();
+        meta_paned.connect_notify_local(Some("position"), move |_, _| {
+            if !pane_restore_complete.get() {
+                return;
+            }
+            if meta_position_programmatic.get() != 0 {
+                return;
+            }
+            meta_split_dirty.set(true);
+        });
+    }
     right_sidebar.append(&meta_paned);
 
     let refresh_metadata_sidebar_for_actions: Rc<dyn Fn(&ImageMetadata)> = Rc::new({
@@ -1996,6 +1999,7 @@ fn build_ui(app: &adw::Application) {
         &meta_expander,
         &meta_paned,
         &meta_split_before_auto_collapse,
+        &meta_position_programmatic,
         MIN_META_SPLIT_PX,
         &current_folder,
         &start_scan_for_folder_actions,
@@ -2150,6 +2154,7 @@ fn build_ui(app: &adw::Application) {
     let meta_expander_sel = meta_expander.clone();
     let meta_paned_sel = meta_paned.clone();
     let meta_split_before_auto_collapse_sel = meta_split_before_auto_collapse.clone();
+    let meta_position_programmatic_sel = meta_position_programmatic.clone();
     let meta_preview_sel = meta_preview.clone();
     let meta_cache_sel = meta_cache.clone();
     let realized_thumb_images_sel = realized_thumb_images.clone();
@@ -2246,6 +2251,7 @@ fn build_ui(app: &adw::Application) {
             meta_expander_sel.clone(),
             meta_paned_sel.clone(),
             meta_split_before_auto_collapse_sel.clone(),
+            meta_position_programmatic_sel.clone(),
             click_trace_for_metadata,
             click_id,
         );
@@ -2657,7 +2663,25 @@ fn build_ui(app: &adw::Application) {
     inner_paned.set_resize_end_child(false);
     inner_paned.set_shrink_start_child(false);
     inner_paned.set_shrink_end_child(false);
+    let inner_position_programmatic = Rc::new(Cell::new(0_u32));
+    let inner_split_dirty = Rc::new(Cell::new(false));
+    inner_position_programmatic.set(inner_position_programmatic.get().saturating_add(1));
     inner_paned.set_position(inner_pane_start_px);
+    inner_position_programmatic.set(inner_position_programmatic.get().saturating_sub(1));
+    {
+        let inner_position_programmatic = inner_position_programmatic.clone();
+        let inner_split_dirty = inner_split_dirty.clone();
+        let pane_restore_complete = pane_restore_complete.clone();
+        inner_paned.connect_notify_local(Some("position"), move |_, _| {
+            if !pane_restore_complete.get() {
+                return;
+            }
+            if inner_position_programmatic.get() != 0 {
+                return;
+            }
+            inner_split_dirty.set(true);
+        });
+    }
 
     // Outer paned: left sidebar | (center + right)
     let outer_paned = Paned::new(Orientation::Horizontal);
@@ -2667,7 +2691,25 @@ fn build_ui(app: &adw::Application) {
     outer_paned.set_resize_end_child(true);
     outer_paned.set_shrink_start_child(false);
     outer_paned.set_shrink_end_child(false);
+    let outer_position_programmatic = Rc::new(Cell::new(0_u32));
+    let outer_split_dirty = Rc::new(Cell::new(false));
+    outer_position_programmatic.set(outer_position_programmatic.get().saturating_add(1));
     outer_paned.set_position(left_pane_start_px);
+    outer_position_programmatic.set(outer_position_programmatic.get().saturating_sub(1));
+    {
+        let outer_position_programmatic = outer_position_programmatic.clone();
+        let outer_split_dirty = outer_split_dirty.clone();
+        let pane_restore_complete = pane_restore_complete.clone();
+        outer_paned.connect_notify_local(Some("position"), move |_, _| {
+            if !pane_restore_complete.get() {
+                return;
+            }
+            if outer_position_programmatic.get() != 0 {
+                return;
+            }
+            outer_split_dirty.set(true);
+        });
+    }
 
     // Wrap content in ToastOverlay + bottom status bar → ToolbarView → window
     toast_overlay.set_child(Some(&outer_paned));
@@ -2993,18 +3035,60 @@ fn build_ui(app: &adw::Application) {
     let left_toggle_close = left_toggle.clone();
     let right_toggle_close = right_toggle.clone();
     let window_for_close = window.clone();
+    let outer_split_dirty_close = outer_split_dirty.clone();
+    let inner_split_dirty_close = inner_split_dirty.clone();
+    let meta_split_dirty_close = meta_split_dirty.clone();
     window.connect_close_request(move |_| {
         let window_width = window_for_close.width().max(1);
         let window_height = window_for_close.height().max(1);
         let window_maximized = window_for_close.is_maximized();
         let left_pos = outer_paned_close.position();
         let inner_pos = inner_paned_close.position();
-        let meta_pos = meta_split_before_auto_collapse_close
+        let raw_meta_pos = meta_split_before_auto_collapse_close
             .get()
             .unwrap_or_else(|| meta_paned_close.position());
-        let right_width = window_width.saturating_sub(left_pos + inner_pos);
         let meta_total_height = meta_paned_close.height().max(1);
+        let meta_upper_bound = meta_total_height.saturating_sub(MIN_META_SPLIT_PX);
+        let meta_pos = if meta_upper_bound < MIN_META_SPLIT_PX {
+            // Window too short to preserve both minimum panes; persist midpoint.
+            (meta_total_height / 2).max(1)
+        } else {
+            raw_meta_pos.clamp(MIN_META_SPLIT_PX, meta_upper_bound)
+        };
         let recent_folders = recent_folders_close.borrow();
+        let left_pos_for_save = if outer_split_dirty_close.get() {
+            left_pos
+        } else {
+            configured_left_pane_pos.unwrap_or(left_pos)
+        };
+        let inner_pos_for_save = if inner_split_dirty_close.get() {
+            inner_pos
+        } else {
+            configured_right_pane_pos.unwrap_or(inner_pos)
+        };
+        let right_width_for_save = window_width.saturating_sub(left_pos_for_save + inner_pos_for_save);
+        let meta_pos_for_save = if meta_split_dirty_close.get() {
+            meta_pos
+        } else {
+            configured_meta_pane_pos.unwrap_or(meta_pos)
+        };
+        let left_pct_for_save = if outer_split_dirty_close.get() {
+            px_to_pct(left_pos_for_save, window_width)
+        } else {
+            configured_left_pane_width_pct.unwrap_or(px_to_pct(left_pos_for_save, window_width))
+        };
+        let right_pct_for_save = if inner_split_dirty_close.get() {
+            px_to_pct(right_width_for_save, window_width)
+        } else {
+            configured_right_pane_width_pct
+                .unwrap_or(px_to_pct(right_width_for_save, window_width))
+        };
+        let meta_pct_for_save = if meta_split_dirty_close.get() {
+            px_to_pct(meta_pos_for_save, meta_total_height)
+        } else {
+            configured_meta_pane_height_pct
+                .unwrap_or(px_to_pct(meta_pos_for_save, meta_total_height))
+        };
 
         config::save(
             cf_close.borrow().as_deref(),
@@ -3012,12 +3096,12 @@ fn build_ui(app: &adw::Application) {
             window_width,
             window_height,
             window_maximized,
-            left_pos,
-            inner_pos,
-            meta_pos,
-            px_to_pct(left_pos, window_width),
-            px_to_pct(right_width, window_width),
-            px_to_pct(meta_pos, meta_total_height),
+            left_pos_for_save,
+            inner_pos_for_save,
+            meta_pos_for_save,
+            left_pct_for_save,
+            right_pct_for_save,
+            meta_pct_for_save,
             left_toggle_close.is_active(),
             right_toggle_close.is_active(),
         );
@@ -3068,11 +3152,16 @@ fn build_ui(app: &adw::Application) {
     let outer_paned_restore = outer_paned.clone();
     let inner_paned_restore = inner_paned.clone();
     let meta_paned_restore = meta_paned.clone();
+    let outer_position_programmatic_restore = outer_position_programmatic.clone();
+    let inner_position_programmatic_restore = inner_position_programmatic.clone();
+    let meta_position_programmatic_restore = meta_position_programmatic.clone();
+    let pane_restore_complete_restore = pane_restore_complete.clone();
     let pane_restore_attempts = Rc::new(Cell::new(0_u8));
     let pane_restore_attempts_tick = pane_restore_attempts.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
         let attempts = pane_restore_attempts_tick.get();
         if attempts >= 60 {
+            pane_restore_complete_restore.set(true);
             return glib::ControlFlow::Break;
         }
         pane_restore_attempts_tick.set(attempts.saturating_add(1));
@@ -3102,7 +3191,11 @@ fn build_ui(app: &adw::Application) {
         let inner_pane_start_px = window_width
             .saturating_sub(left_pos + right_pane_width_px)
             .max(MIN_CENTER_PANE_PX);
+        inner_position_programmatic_restore
+            .set(inner_position_programmatic_restore.get().saturating_add(1));
         inner_paned_restore.set_position(inner_pane_start_px);
+        inner_position_programmatic_restore
+            .set(inner_position_programmatic_restore.get().saturating_sub(1));
         let meta_total_height = meta_paned_restore.height().max(1);
         let configured_meta_pos = configured_meta_pane_height_pct
             .map(|pct| pct_to_px(meta_total_height, pct))
@@ -3115,209 +3208,18 @@ fn build_ui(app: &adw::Application) {
         } else {
             configured_meta_pos.clamp(MIN_META_SPLIT_PX, meta_upper_bound)
         };
+        outer_position_programmatic_restore
+            .set(outer_position_programmatic_restore.get().saturating_add(1));
+        outer_paned_restore.set_position(left_pos);
+        outer_position_programmatic_restore
+            .set(outer_position_programmatic_restore.get().saturating_sub(1));
+        meta_position_programmatic_restore
+            .set(meta_position_programmatic_restore.get().saturating_add(1));
         meta_paned_restore.set_position(meta_pane_start_px);
+        meta_position_programmatic_restore
+            .set(meta_position_programmatic_restore.get().saturating_sub(1));
+        pane_restore_complete_restore.set(true);
         glib::ControlFlow::Break
-    });
-}
-
-// ---------------------------------------------------------------------------
-// Async image loading for Picture widgets
-// ---------------------------------------------------------------------------
-
-/// Loads an image off the main thread and sets it on a [`Picture`] widget
-/// once decoded.  A tag on the widget guards against stale loads when the
-/// user navigates away before decoding finishes.
-///
-/// When `max_dimension` is `Some(dim)`, the image is decoded at a reduced
-/// resolution (longest side capped to `dim` pixels) for faster display.
-/// Pass `None` to decode at the file's native resolution.
-fn load_picture_async(
-    picture: &Picture,
-    path: &str,
-    max_dimension: Option<i32>,
-    on_complete: Option<Box<dyn Fn(PreviewLoadMetrics) + 'static>>,
-) {
-    // Clear immediately so the user sees something is happening.
-    picture.set_paintable(gdk::Paintable::NONE);
-
-    // Cancel any in-flight load for this widget.
-    let prev_cancel: Option<gio::Cancellable> =
-        unsafe { picture.steal_data("loading-cancel") };
-    if let Some(c) = prev_cancel {
-        c.cancel();
-    }
-
-    // Fresh cancellable for this load.
-    let cancel = gio::Cancellable::new();
-    unsafe { picture.set_data("loading-cancel", cancel.clone()); }
-
-    // Tag to detect stale loads (user clicked a different image before this one finished).
-    unsafe { picture.set_data("loading-path", path.to_owned()); }
-
-    let path_owned = path.to_owned();
-    let path_check = path_owned.clone();
-    let cancel_bg = cancel.clone();
-    let weak = picture.downgrade();
-    let enqueued_at = Instant::now();
-    let enqueued_at_main = enqueued_at;
-    let task = gio::spawn_blocking(move || {
-        let worker_started_at = Instant::now();
-        let started_at = Instant::now();
-        let queue_wait_ms = started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0;
-        let _guard = AtomicTaskGuard::new(&ACTIVE_PREVIEW_TASKS);
-
-        if cancel_bg.is_cancelled() {
-            let worker_total_ms = worker_started_at.elapsed().as_secs_f64() * 1000.0;
-            let worker_done_since_enqueue_ms =
-                worker_started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0
-                    + worker_total_ms;
-            return (
-                None,
-                PreviewLoadMetrics {
-                    outcome: PreviewLoadOutcome::StaleOrCancelled,
-                    queue_wait_ms,
-                    file_open_ms: 0.0,
-                    decode_ms: 0.0,
-                    texture_create_ms: 0.0,
-                    worker_total_ms,
-                    worker_done_since_enqueue_ms,
-                    main_thread_dispatch_ms: 0.0,
-                    texture_apply_ms: 0.0,
-                },
-            );
-        }
-
-        let file = gio::File::for_path(&path_owned);
-        let file_open_started = Instant::now();
-        let Some(stream) = file.read(Some(&cancel_bg)).ok() else {
-            let worker_total_ms = worker_started_at.elapsed().as_secs_f64() * 1000.0;
-            let worker_done_since_enqueue_ms =
-                worker_started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0
-                    + worker_total_ms;
-            return (
-                None,
-                PreviewLoadMetrics {
-                    outcome: PreviewLoadOutcome::Failed,
-                    queue_wait_ms,
-                    file_open_ms: file_open_started.elapsed().as_secs_f64() * 1000.0,
-                    decode_ms: 0.0,
-                    texture_create_ms: 0.0,
-                    worker_total_ms,
-                    worker_done_since_enqueue_ms,
-                    main_thread_dispatch_ms: 0.0,
-                    texture_apply_ms: 0.0,
-                },
-            );
-        };
-        let file_open_ms = file_open_started.elapsed().as_secs_f64() * 1000.0;
-
-        let decode_started = Instant::now();
-        let pixbuf = match max_dimension {
-            Some(dim) => gdk_pixbuf::Pixbuf::from_stream_at_scale(
-                &stream, dim, dim, true, Some(&cancel_bg),
-            ),
-            None => gdk_pixbuf::Pixbuf::from_stream(&stream, Some(&cancel_bg)),
-        };
-        let decode_ms = decode_started.elapsed().as_secs_f64() * 1000.0;
-
-        match pixbuf {
-            Ok(pb) => {
-                let texture_create_started = Instant::now();
-                let tex = gdk::Texture::for_pixbuf(&pb);
-                let texture_create_ms =
-                    texture_create_started.elapsed().as_secs_f64() * 1000.0;
-                let worker_total_ms = worker_started_at.elapsed().as_secs_f64() * 1000.0;
-                let worker_done_since_enqueue_ms =
-                    worker_started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0
-                        + worker_total_ms;
-                (
-                    Some(tex),
-                    PreviewLoadMetrics {
-                        outcome: PreviewLoadOutcome::Displayed,
-                        queue_wait_ms,
-                        file_open_ms,
-                        decode_ms,
-                        texture_create_ms,
-                        worker_total_ms,
-                        worker_done_since_enqueue_ms,
-                        main_thread_dispatch_ms: 0.0,
-                        texture_apply_ms: 0.0,
-                    },
-                )
-            }
-            Err(_) => {
-                let worker_total_ms = worker_started_at.elapsed().as_secs_f64() * 1000.0;
-                let worker_done_since_enqueue_ms =
-                    worker_started_at.duration_since(enqueued_at).as_secs_f64() * 1000.0
-                        + worker_total_ms;
-                (
-                    None,
-                    PreviewLoadMetrics {
-                        outcome: PreviewLoadOutcome::Failed,
-                        queue_wait_ms,
-                        file_open_ms,
-                        decode_ms,
-                        texture_create_ms: 0.0,
-                        worker_total_ms,
-                        worker_done_since_enqueue_ms,
-                        main_thread_dispatch_ms: 0.0,
-                        texture_apply_ms: 0.0,
-                    },
-                )
-            }
-        }
-    });
-    glib::MainContext::default().spawn_local(async move {
-        let mut on_complete = on_complete;
-
-        let Ok((maybe_tex, mut metrics)) = task.await else {
-            if let Some(cb) = on_complete.take() {
-                cb(PreviewLoadMetrics {
-                    outcome: PreviewLoadOutcome::Failed,
-                    queue_wait_ms: 0.0,
-                    file_open_ms: 0.0,
-                    decode_ms: 0.0,
-                    texture_create_ms: 0.0,
-                    worker_total_ms: 0.0,
-                    worker_done_since_enqueue_ms: 0.0,
-                    main_thread_dispatch_ms: 0.0,
-                    texture_apply_ms: 0.0,
-                });
-            }
-            return;
-        };
-        let callback_started_since_enqueue_ms =
-            Instant::now().duration_since(enqueued_at_main).as_secs_f64() * 1000.0;
-        metrics.main_thread_dispatch_ms =
-            (callback_started_since_enqueue_ms - metrics.worker_done_since_enqueue_ms).max(0.0);
-        let Some(pic) = weak.upgrade() else {
-            if let Some(cb) = on_complete.take() {
-                metrics.outcome = PreviewLoadOutcome::StaleOrCancelled;
-                cb(metrics);
-            }
-            return;
-        };
-        // Check the widget is still expecting this path.
-        let is_current = unsafe {
-            pic.data::<String>("loading-path")
-                .map(|p| p.as_ref() == &path_check)
-                .unwrap_or(false)
-        };
-        if !is_current {
-            if let Some(cb) = on_complete.take() {
-                metrics.outcome = PreviewLoadOutcome::StaleOrCancelled;
-                cb(metrics);
-            }
-            return;
-        }
-        if let Some(tex) = maybe_tex {
-            let apply_started = Instant::now();
-            pic.set_paintable(Some(&tex));
-            metrics.texture_apply_ms = apply_started.elapsed().as_secs_f64() * 1000.0;
-        }
-        if let Some(cb) = on_complete.take() {
-            cb(metrics);
-        }
     });
 }
 
@@ -3334,12 +3236,14 @@ fn load_metadata_async(
     meta_expander: gtk4::Expander,
     meta_paned: gtk4::Paned,
     meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
+    meta_position_programmatic: Rc<Cell<u32>>,
     trace_state: Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
 ) {
     glib::MainContext::default().spawn_local(async move {
         // Populate the sidebar (this is fast, all UI calls).
         populate_metadata_sidebar(&listbox, &metadata);
+        meta_position_programmatic.set(meta_position_programmatic.get().saturating_add(1));
         apply_metadata_section_state(
             &metadata,
             &meta_expander,
@@ -3347,6 +3251,7 @@ fn load_metadata_async(
             &meta_split_before_auto_collapse,
             MIN_META_SPLIT_PX,
         );
+        meta_position_programmatic.set(meta_position_programmatic.get().saturating_sub(1));
 
         // Mark metadata as complete in trace if it's still the current click.
         let should_finalize = if let Some(trace) = trace_state.borrow_mut().as_mut() {

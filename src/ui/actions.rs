@@ -24,6 +24,7 @@ pub fn install_context_menu(
     meta_expander: &gtk4::Expander,
     meta_paned: &gtk4::Paned,
     meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
+    meta_position_programmatic: &Rc<Cell<u32>>,
     min_meta_split_px: i32,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     start_scan_for_folder: &Rc<dyn Fn(PathBuf)>,
@@ -203,6 +204,7 @@ pub fn install_context_menu(
     let meta_expander_for_actions = meta_expander.clone();
     let meta_paned_for_actions = meta_paned.clone();
     let meta_split_before_auto_collapse_for_actions = meta_split_before_auto_collapse.clone();
+    let meta_position_programmatic_for_actions = meta_position_programmatic.clone();
     let toast_overlay_for_actions = toast_overlay.clone();
     refresh_meta_action.connect_activate(move |_, _| {
         let Some(path) = selected_image_path(&selection_for_actions) else {
@@ -224,6 +226,8 @@ pub fn install_context_menu(
                 .borrow_mut()
                 .insert(path_key, row.hash);
             refresh_metadata_sidebar_for_actions(&row.meta);
+            meta_position_programmatic_for_actions
+                .set(meta_position_programmatic_for_actions.get().saturating_add(1));
             apply_metadata_section_state(
                 &row.meta,
                 &meta_expander_for_actions,
@@ -231,6 +235,8 @@ pub fn install_context_menu(
                 &meta_split_before_auto_collapse_for_actions,
                 min_meta_split_px,
             );
+            meta_position_programmatic_for_actions
+                .set(meta_position_programmatic_for_actions.get().saturating_sub(1));
 
             let toast = adw::Toast::new("Metadata refreshed");
             toast.set_timeout(2);
