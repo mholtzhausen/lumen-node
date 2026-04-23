@@ -174,6 +174,203 @@ fn human_readable_bytes(bytes: u64) -> String {
     }
 }
 
+fn invalid_filename_reason(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        return Some("Name cannot be empty");
+    }
+    if name == "." || name == ".." {
+        return Some("Name cannot be '.' or '..'");
+    }
+    if name.ends_with(' ') || name.ends_with('.') {
+        return Some("Name cannot end with a space or dot");
+    }
+    if name.chars().any(|c| c == '\0' || c.is_control()) {
+        return Some("Name cannot contain control characters");
+    }
+    if name
+        .chars()
+        .any(|c| matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
+    {
+        return Some("Name contains illegal characters");
+    }
+    let upper = name.to_ascii_uppercase();
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return Some("Reserved filename");
+    }
+    if let Some(n) = upper.strip_prefix("COM") {
+        if matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") {
+            return Some("Reserved filename");
+        }
+    }
+    if let Some(n) = upper.strip_prefix("LPT") {
+        if matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") {
+            return Some("Reserved filename");
+        }
+    }
+    None
+}
+
+fn split_filename(path: &std::path::Path) -> (String, Option<String>) {
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if let Some(ext) = path.extension().map(|e| e.to_string_lossy().into_owned()) {
+        let suffix = format!(".{}", ext);
+        if let Some(stem) = file_name.strip_suffix(&suffix) {
+            return (stem.to_string(), Some(ext));
+        }
+    }
+    (file_name, None)
+}
+
+fn build_renamed_target(
+    source_path: &std::path::Path,
+    input_base_name: &str,
+) -> Result<std::path::PathBuf, String> {
+    let trimmed = input_base_name.trim();
+    if let Some(reason) = invalid_filename_reason(trimmed) {
+        return Err(reason.to_string());
+    }
+    let (current_base, ext) = split_filename(source_path);
+    if trimmed == current_base {
+        return Err("Enter a different name".to_string());
+    }
+    let Some(parent) = source_path.parent() else {
+        return Err("Cannot determine parent folder".to_string());
+    };
+    let candidate_name = if let Some(ext) = ext {
+        format!("{trimmed}.{ext}")
+    } else {
+        trimmed.to_string()
+    };
+    let target = parent.join(candidate_name);
+    if target.exists() {
+        return Err("A file with this name already exists".to_string());
+    }
+    Ok(target)
+}
+
+fn open_rename_dialog(
+    window: &adw::ApplicationWindow,
+    toast_overlay: &adw::ToastOverlay,
+    start_scan_for_folder: &Rc<dyn Fn(std::path::PathBuf)>,
+    current_folder: &Rc<RefCell<Option<std::path::PathBuf>>>,
+    source_path: std::path::PathBuf,
+) {
+    let (current_base, ext) = split_filename(&source_path);
+    let dialog = gtk4::Window::builder()
+        .transient_for(window)
+        .modal(true)
+        .title("Rename file")
+        .default_width(420)
+        .build();
+
+    let content = gtk4::Box::new(Orientation::Vertical, 8);
+    content.set_spacing(8);
+    content.set_margin_top(12);
+    content.set_margin_bottom(12);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+    dialog.set_child(Some(&content));
+
+    let prompt = Label::new(Some("Enter a new base name:"));
+    prompt.set_halign(gtk4::Align::Start);
+    content.append(&prompt);
+
+    let entry = gtk4::Entry::new();
+    entry.set_text(&current_base);
+    entry.set_hexpand(true);
+    entry.select_region(0, -1);
+    content.append(&entry);
+
+    let extension_hint = if let Some(ext) = &ext {
+        format!("Extension '.{ext}' will be preserved")
+    } else {
+        "File has no extension".to_string()
+    };
+    let hint_label = Label::new(Some(&extension_hint));
+    hint_label.add_css_class("caption");
+    hint_label.set_halign(gtk4::Align::Start);
+    content.append(&hint_label);
+
+    let error_label = Label::new(None);
+    error_label.add_css_class("caption");
+    error_label.add_css_class("error");
+    error_label.set_halign(gtk4::Align::Start);
+    content.append(&error_label);
+
+    let button_row = gtk4::Box::new(Orientation::Horizontal, 6);
+    button_row.set_halign(gtk4::Align::End);
+    let cancel_btn = gtk4::Button::with_label("Cancel");
+    let rename_btn = gtk4::Button::with_label("Rename");
+    rename_btn.set_sensitive(false);
+    button_row.append(&cancel_btn);
+    button_row.append(&rename_btn);
+    content.append(&button_row);
+
+    let candidate_target: Rc<RefCell<Option<std::path::PathBuf>>> = Rc::new(RefCell::new(None));
+    let validate_input: Rc<dyn Fn(&str)> = Rc::new({
+        let source_path = source_path.clone();
+        let candidate_target = candidate_target.clone();
+        let rename_btn = rename_btn.clone();
+        let error_label = error_label.clone();
+        move |value: &str| {
+            match build_renamed_target(&source_path, value) {
+                Ok(path) => {
+                    *candidate_target.borrow_mut() = Some(path);
+                    error_label.set_text("");
+                    rename_btn.set_sensitive(true);
+                }
+                Err(message) => {
+                    *candidate_target.borrow_mut() = None;
+                    error_label.set_text(&message);
+                    rename_btn.set_sensitive(false);
+                }
+            }
+        }
+    });
+    (validate_input.as_ref())(entry.text().as_str());
+
+    let validate_on_change = validate_input.clone();
+    entry.connect_changed(move |e| {
+        (validate_on_change.as_ref())(e.text().as_str());
+    });
+
+    let start_scan_for_folder = start_scan_for_folder.clone();
+    let current_folder = current_folder.clone();
+    let toast_overlay = toast_overlay.clone();
+    let dialog_for_cancel = dialog.clone();
+    cancel_btn.connect_clicked(move |_| {
+        dialog_for_cancel.close();
+    });
+
+    let dialog_for_rename = dialog.clone();
+    let rename_btn_activate = rename_btn.clone();
+    entry.connect_activate(move |_| {
+        rename_btn_activate.emit_clicked();
+    });
+
+    rename_btn.connect_clicked(move |_| {
+        if let Some(target) = candidate_target.borrow().clone() {
+            match std::fs::rename(&source_path, &target) {
+                Ok(()) => {
+                    if let Some(folder) = current_folder.borrow().as_ref().cloned() {
+                        start_scan_for_folder(folder);
+                    }
+                    toast_overlay.add_toast(adw::Toast::new("File renamed"));
+                }
+                Err(err) => {
+                    toast_overlay.add_toast(adw::Toast::new(&format!("Rename failed: {}", err)));
+                }
+            }
+        }
+        dialog_for_rename.close();
+    });
+
+    dialog.present();
+}
+
 fn push_recent_folder_entry(history: &mut Vec<std::path::PathBuf>, folder: &std::path::Path) {
     history.retain(|entry| entry != folder);
     history.insert(0, folder.to_path_buf());
@@ -1573,6 +1770,10 @@ fn build_ui(app: &adw::Application) {
     let thumbnail_size_setup = thumbnail_size.clone();
     let realized_thumb_images_setup = realized_thumb_images.clone();
     let realized_cell_boxes_setup = realized_cell_boxes.clone();
+    let window_for_rename = window.clone();
+    let toast_for_rename = toast_overlay.clone();
+    let current_folder_for_rename = current_folder.clone();
+    let start_scan_for_folder_rename = start_scan_for_folder.clone();
     factory.connect_setup(move |_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
         let cell_box = gtk4::Box::new(Orientation::Vertical, 4);
@@ -1589,8 +1790,46 @@ fn build_ui(app: &adw::Application) {
         name_label.set_max_width_chars(16);
         name_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         name_label.add_css_class("caption");
+        name_label.set_hexpand(true);
+        name_label.set_halign(gtk4::Align::Start);
+        let rename_btn = gtk4::Button::from_icon_name("document-edit-symbolic");
+        rename_btn.add_css_class("flat");
+        rename_btn.set_tooltip_text(Some("Rename file"));
+        rename_btn.set_opacity(0.0);
+        rename_btn.set_focus_on_click(false);
+        let window_for_btn = window_for_rename.clone();
+        let toast_for_btn = toast_for_rename.clone();
+        let current_folder_for_btn = current_folder_for_rename.clone();
+        let start_scan_for_folder_btn: Rc<dyn Fn(std::path::PathBuf)> =
+            start_scan_for_folder_rename.clone();
+        rename_btn.connect_clicked(move |btn| {
+            let path = unsafe { btn.data::<String>("bound-path").map(|s| s.as_ref().clone()) };
+            let Some(path) = path else { return };
+            open_rename_dialog(
+                &window_for_btn,
+                &toast_for_btn,
+                &start_scan_for_folder_btn,
+                &current_folder_for_btn,
+                std::path::PathBuf::from(path),
+            );
+        });
+        let name_row = gtk4::Box::new(Orientation::Horizontal, 4);
+        name_row.set_hexpand(true);
+        name_row.set_halign(gtk4::Align::Fill);
+        name_row.append(&name_label);
+        name_row.append(&rename_btn);
+        let rename_btn_enter = rename_btn.clone();
+        let rename_btn_leave = rename_btn.clone();
+        let motion = EventControllerMotion::new();
+        motion.connect_enter(move |_, _, _| {
+            rename_btn_enter.set_opacity(1.0);
+        });
+        motion.connect_leave(move |_| {
+            rename_btn_leave.set_opacity(0.0);
+        });
+        cell_box.add_controller(motion);
         cell_box.append(&thumb_image);
-        cell_box.append(&name_label);
+        cell_box.append(&name_row);
         list_item.set_child(Some(&cell_box));
     });
 
@@ -1607,7 +1846,9 @@ fn build_ui(app: &adw::Application) {
 
         let cell_box = list_item.child().and_downcast::<gtk4::Box>().unwrap();
         let thumb_image = cell_box.first_child().and_downcast::<Image>().unwrap();
-        let name_label = cell_box.last_child().and_downcast::<Label>().unwrap();
+        let name_row = cell_box.last_child().and_downcast::<gtk4::Box>().unwrap();
+        let name_label = name_row.first_child().and_downcast::<Label>().unwrap();
+        let rename_btn = name_row.last_child().and_downcast::<gtk4::Button>().unwrap();
         let size = *thumbnail_size_bind.borrow();
         cell_box.set_size_request(size + 4, size + 20);
         thumb_image.set_pixel_size(size);
@@ -1618,6 +1859,7 @@ fn build_ui(app: &adw::Application) {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         name_label.set_text(&filename);
+        unsafe { rename_btn.set_data("bound-path", path_str.clone()); }
         let generation_token = unsafe {
             thumb_image
                 .data::<Rc<Cell<u64>>>("thumb-generation")
@@ -1656,6 +1898,12 @@ fn build_ui(app: &adw::Application) {
                     generation_token.set(generation_token.get().saturating_add(1));
                 }
                 unsafe { image.steal_data::<String>("bound-path"); }
+                if let Some(name_row) = cell_box.last_child().and_downcast::<gtk4::Box>() {
+                    if let Some(rename_btn) = name_row.last_child().and_downcast::<gtk4::Button>()
+                    {
+                        unsafe { rename_btn.steal_data::<String>("bound-path"); }
+                    }
+                }
                 image.set_icon_name(Some("image-x-generic-symbolic"));
             }
         }
