@@ -2,6 +2,7 @@ pub mod actions;
 pub mod controls;
 pub mod grid;
 pub mod keyboard;
+pub mod navigation;
 pub mod preview;
 pub mod selection;
 pub mod session;

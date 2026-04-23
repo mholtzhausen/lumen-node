@@ -33,7 +33,6 @@ use sort::{
     SORT_KEY_NAME_ASC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
 };
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
-use timing_report::write_timing_report;
 use tree_sidebar::{reset_tree_root, sync_tree_to_path};
 use ui::actions::install_context_menu;
 use ui::controls::{
@@ -43,14 +42,14 @@ use ui::controls::{
 use ui::grid::{
     add_scroll_flag_overlay, attach_grid_page, attach_single_page,
     bind_grid_list_item, build_scroll_flag_overlay, create_center_box, create_grid_overlay,
-    create_grid_scroll, create_grid_view, create_single_picture, enter_single_view_mode,
+    create_grid_scroll, create_grid_view, create_single_picture,
     install_grid_scroll_speed_gate, make_delete_action, make_rename_action,
     refresh_realized_grid_thumbnails, set_default_grid_page, setup_grid_list_item,
-    unbind_grid_list_item, ACTIVE_THUMBNAIL_TASKS,
+    unbind_grid_list_item,
     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
 };
 use ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps};
-use ui::preview::{load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
+use ui::navigation::{install_navigation_handlers, NavigationDeps};
 use ui::selection::{handle_selection_change_event, ClickTrace};
 use ui::session::{
     install_close_persistence_handler, restore_session_state, ClosePersistenceDeps,
@@ -84,13 +83,12 @@ use std::{
 use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
-    gio, glib, CustomFilter, CustomSorter, FilterListModel, GestureClick, Image, Label, ListItem,
+    gio, glib, CustomFilter, CustomSorter, FilterListModel, Image, Label, ListItem,
     ProgressBar, SignalListItemFactory, SingleSelection,
     SortListModel, StringObject, TreeListRow,
 };
 
 pub(crate) static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
-static FULL_VIEW_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub(crate) static PREVIEW_REQUEST_PENDING: AtomicU64 = AtomicU64::new(0);
 pub(crate) static SUPPRESS_SIDEBAR_DURING_PREVIEW: AtomicU64 = AtomicU64::new(0);
 pub(crate) static THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW: AtomicU64 = AtomicU64::new(0);
@@ -211,142 +209,6 @@ fn sync_progress_widgets(
     progress_bar.set_text(Some(&format!("{:.0}%", fraction * 100.0)));
 }
 
-struct FullViewTrace {
-    id: u64,
-    path: String,
-    started: Instant,
-    outcome: String,
-    active_thumbnail_jobs_at_activate: u64,
-    active_preview_jobs_at_activate: u64,
-    preview_queue_wait_ms: Option<f64>,
-    preview_file_open_ms: Option<f64>,
-    preview_decode_ms: Option<f64>,
-    preview_texture_create_ms: Option<f64>,
-    preview_worker_total_ms: Option<f64>,
-    preview_main_thread_dispatch_ms: Option<f64>,
-    preview_texture_apply_ms: Option<f64>,
-    displayed_ms: Option<f64>,
-}
-
-impl FullViewTrace {
-    fn new(
-        id: u64,
-        path: String,
-        active_thumbnail_jobs_at_activate: u64,
-        active_preview_jobs_at_activate: u64,
-    ) -> Self {
-        Self {
-            id,
-            path,
-            started: Instant::now(),
-            outcome: "pending".to_string(),
-            active_thumbnail_jobs_at_activate,
-            active_preview_jobs_at_activate,
-            preview_queue_wait_ms: None,
-            preview_file_open_ms: None,
-            preview_decode_ms: None,
-            preview_texture_create_ms: None,
-            preview_worker_total_ms: None,
-            preview_main_thread_dispatch_ms: None,
-            preview_texture_apply_ms: None,
-            displayed_ms: None,
-        }
-    }
-
-    fn total_ms(&self) -> f64 {
-        self.started.elapsed().as_secs_f64() * 1000.0
-    }
-}
-
-fn emit_full_view_report(trace: &FullViewTrace) {
-    let mut report = String::new();
-    report.push_str(&format!(
-        "FULLVIEW {} | {} | outcome={}\n",
-        trace.id, trace.path, trace.outcome
-    ));
-    if let Some(v) = trace.displayed_ms {
-        report.push_str(&format!("{:>8.3}ms fullview_displayed\n", v));
-    }
-    report.push_str("METRICS\n");
-    report.push_str(&format!(
-        "active_thumbnail_jobs_at_activate={}\n",
-        trace.active_thumbnail_jobs_at_activate
-    ));
-    report.push_str(&format!(
-        "active_preview_jobs_at_activate={}\n",
-        trace.active_preview_jobs_at_activate
-    ));
-    if let Some(v) = trace.preview_queue_wait_ms {
-        report.push_str(&format!("preview_queue_wait_ms={:.3}\n", v));
-    }
-    if let Some(v) = trace.preview_file_open_ms {
-        report.push_str(&format!("preview_file_open_ms={:.3}\n", v));
-    }
-    if let Some(v) = trace.preview_decode_ms {
-        report.push_str(&format!("preview_decode_ms={:.3}\n", v));
-    }
-    if let Some(v) = trace.preview_texture_create_ms {
-        report.push_str(&format!("preview_texture_create_ms={:.3}\n", v));
-    }
-    if let Some(v) = trace.preview_worker_total_ms {
-        report.push_str(&format!("preview_worker_total_ms={:.3}\n", v));
-    }
-    if let Some(v) = trace.preview_main_thread_dispatch_ms {
-        report.push_str(&format!("preview_main_thread_dispatch_ms={:.3}\n", v));
-    }
-    if let Some(v) = trace.preview_texture_apply_ms {
-        report.push_str(&format!("preview_texture_apply_ms={:.3}\n", v));
-    }
-    report.push_str(&format!("TOTAL {:>8.3}ms\n\n", trace.total_ms()));
-
-    write_timing_report(&report);
-}
-
-fn new_full_view_trace(path_str: String) -> Rc<RefCell<FullViewTrace>> {
-    let full_view_id = FULL_VIEW_TRACE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
-    let active_thumbnail_jobs_at_activate = ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed);
-    let active_preview_jobs_at_activate = ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed);
-    Rc::new(RefCell::new(FullViewTrace::new(
-        full_view_id,
-        path_str,
-        active_thumbnail_jobs_at_activate,
-        active_preview_jobs_at_activate,
-    )))
-}
-
-fn apply_full_view_metrics(trace: &Rc<RefCell<FullViewTrace>>, metrics: PreviewLoadMetrics) {
-    let mut t = trace.borrow_mut();
-    t.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
-    t.preview_file_open_ms = Some(metrics.file_open_ms);
-    t.preview_decode_ms = Some(metrics.decode_ms);
-    t.preview_texture_create_ms = Some(metrics.texture_create_ms);
-    t.preview_worker_total_ms = Some(metrics.worker_total_ms);
-    t.preview_main_thread_dispatch_ms = Some(metrics.main_thread_dispatch_ms);
-    t.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
-    t.displayed_ms = Some(t.started.elapsed().as_secs_f64() * 1000.0);
-    t.outcome = match metrics.outcome {
-        PreviewLoadOutcome::Displayed => "done".to_string(),
-        PreviewLoadOutcome::Failed => "failed".to_string(),
-        PreviewLoadOutcome::StaleOrCancelled => "cancelled".to_string(),
-    };
-    emit_full_view_report(&t);
-}
-
-fn dispatch_full_view_load(
-    picture: &gtk4::Picture,
-    path_str: &str,
-    trace: Rc<RefCell<FullViewTrace>>,
-) {
-    let trace_for_cb = trace.clone();
-    load_picture_async(
-        picture,
-        path_str,
-        None,
-        Some(Box::new(move |metrics| {
-            apply_full_view_metrics(&trace_for_cb, metrics);
-        })),
-    );
-}
 
 // ---------------------------------------------------------------------------
 // UI construction
@@ -1152,68 +1014,19 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     connect_sidebar_visibility_toggles(&left_toggle, &left_sidebar, &right_toggle, &right_sidebar);
 
-    // -----------------------------------------------------------------------
-    // Wire: grid item activate → switch to single view
-    // -----------------------------------------------------------------------
     let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-    let stack_for_grid = view_stack.clone();
-    let picture_for_grid = single_picture.clone();
-    let selection_for_grid = selection_model.clone();
-    let left_toggle_grid = left_toggle.clone();
-    let right_toggle_grid = right_toggle.clone();
-    let pre_fullview_left_grid = pre_fullview_left.clone();
-    let pre_fullview_right_grid = pre_fullview_right.clone();
-    grid_view.connect_activate(move |_, pos| {
-        if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
-            let path_str = item.string().to_string();
-            let trace = new_full_view_trace(path_str.clone());
-            dispatch_full_view_load(&picture_for_grid, &path_str, trace);
-        }
-        enter_single_view_mode(
-            &stack_for_grid,
-            &left_toggle_grid,
-            &right_toggle_grid,
-            &pre_fullview_left_grid,
-            &pre_fullview_right_grid,
-        );
+    install_navigation_handlers(NavigationDeps {
+        grid_view: grid_view.clone(),
+        view_stack: view_stack.clone(),
+        single_picture: single_picture.clone(),
+        selection_model: selection_model.clone(),
+        left_toggle: left_toggle.clone(),
+        right_toggle: right_toggle.clone(),
+        pre_fullview_left: pre_fullview_left.clone(),
+        pre_fullview_right: pre_fullview_right.clone(),
+        meta_preview: meta_preview.clone(),
     });
-
-    // -----------------------------------------------------------------------
-    // Wire: double-click on preview image → switch to single view
-    // -----------------------------------------------------------------------
-    {
-        let stack_for_preview = view_stack.clone();
-        let picture_for_preview = single_picture.clone();
-        let selection_for_preview = selection_model.clone();
-        let left_toggle_preview = left_toggle.clone();
-        let right_toggle_preview = right_toggle.clone();
-        let pre_fullview_left_preview = pre_fullview_left.clone();
-        let pre_fullview_right_preview = pre_fullview_right.clone();
-        let dbl_click = GestureClick::new();
-        dbl_click.connect_pressed(move |_, n_press, _, _| {
-            if n_press < 2 {
-                return;
-            }
-            let Some(item) = selection_for_preview
-                .selected_item()
-                .and_downcast::<StringObject>()
-            else {
-                return;
-            };
-            let path_str = item.string().to_string();
-            let trace = new_full_view_trace(path_str.clone());
-            dispatch_full_view_load(&picture_for_preview, &path_str, trace);
-            enter_single_view_mode(
-                &stack_for_preview,
-                &left_toggle_preview,
-                &right_toggle_preview,
-                &pre_fullview_left_preview,
-                &pre_fullview_right_preview,
-            );
-        });
-        meta_preview.add_controller(dbl_click);
-    }
 
     // -----------------------------------------------------------------------
     // Wire: selection change → populate metadata sidebar
