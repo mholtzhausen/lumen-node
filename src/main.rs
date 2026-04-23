@@ -17,14 +17,12 @@ mod thumbnails;
 mod thumbnail_sizing;
 mod timing_report;
 mod tree_sidebar;
+mod ui;
 mod updater;
 mod view_helpers;
 mod window_math;
 
 use metadata::ImageMetadata;
-use metadata_view::{
-    extract_seed_from_parameters, format_generation_command, format_metadata_text,
-};
 use dialogs::{open_delete_dialog, open_rename_dialog};
 use file_name_ops::{
     clipboard_base_name_hint,
@@ -43,7 +41,8 @@ use sort::{
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use timing_report::write_timing_report;
 use tree_sidebar::{build_tree_root, reset_tree_root, sync_tree_to_path};
-use view_helpers::{attach_context_menu, selected_image_path};
+use ui::actions::install_context_menu;
+use view_helpers::selected_image_path;
 use window_math::{monitor_bounds_for_window, pct_to_px, px_to_pct};
 
 use std::{
@@ -1981,299 +1980,31 @@ fn build_ui(app: &adw::Application) {
     meta_paned.set_position(meta_pane_start_px);
     right_sidebar.append(&meta_paned);
 
-    // -----------------------------------------------------------------------
-    // Context menu: actions + menu model + right-click attachment
-    // -----------------------------------------------------------------------
-    let action_group = gio::SimpleActionGroup::new();
-
-    let copy_prompt_action = gio::SimpleAction::new("copy-prompt", None);
-    let copy_negative_prompt_action = gio::SimpleAction::new("copy-negative-prompt", None);
-    let copy_seed_action = gio::SimpleAction::new("copy-seed", None);
-    let copy_generation_command_action = gio::SimpleAction::new("copy-generation-command", None);
-    let copy_image_action = gio::SimpleAction::new("copy-image", None);
-    let copy_path_action = gio::SimpleAction::new("copy-path", None);
-    let copy_metadata_action = gio::SimpleAction::new("copy-metadata", None);
-    let refresh_thumb_action = gio::SimpleAction::new("refresh-thumbnail", None);
-    let refresh_meta_action = gio::SimpleAction::new("refresh-metadata", None);
-    let refresh_folder_thumbs_action =
-        gio::SimpleAction::new("refresh-folder-thumbnails", None);
-    let refresh_folder_meta_action =
-        gio::SimpleAction::new("refresh-folder-metadata", None);
-
-    let selection_for_actions = selection_model.clone();
-    let meta_cache_for_actions = meta_cache.clone();
-    let window_for_actions = window.clone();
-    copy_prompt_action.connect_activate(move |_, _| {
-        let Some(path) = selected_image_path(&selection_for_actions) else {
-            return;
-        };
-        let path_key = path.to_string_lossy().to_string();
-        let text = meta_cache_for_actions
-            .borrow()
-            .get(&path_key)
-            .and_then(|meta| meta.prompt.clone())
-            .unwrap_or_else(|| "No prompt found".to_string());
-        gtk4::prelude::WidgetExt::display(&window_for_actions)
-            .clipboard()
-            .set_text(&text);
+    let refresh_metadata_sidebar_for_actions: Rc<dyn Fn(&ImageMetadata)> = Rc::new({
+        let meta_listbox = meta_listbox.clone();
+        move |meta: &ImageMetadata| populate_metadata_sidebar(&meta_listbox, meta)
     });
-
-    let selection_for_actions = selection_model.clone();
-    let meta_cache_for_actions = meta_cache.clone();
-    let window_for_actions = window.clone();
-    copy_negative_prompt_action.connect_activate(move |_, _| {
-        let Some(path) = selected_image_path(&selection_for_actions) else {
-            return;
-        };
-        let path_key = path.to_string_lossy().to_string();
-        let text = meta_cache_for_actions
-            .borrow()
-            .get(&path_key)
-            .and_then(|meta| meta.negative_prompt.clone())
-            .unwrap_or_else(|| "No negative prompt found".to_string());
-        gtk4::prelude::WidgetExt::display(&window_for_actions)
-            .clipboard()
-            .set_text(&text);
-    });
-
-    let selection_for_actions = selection_model.clone();
-    let meta_cache_for_actions = meta_cache.clone();
-    let window_for_actions = window.clone();
-    copy_seed_action.connect_activate(move |_, _| {
-        let Some(path) = selected_image_path(&selection_for_actions) else {
-            return;
-        };
-        let path_key = path.to_string_lossy().to_string();
-        let text = meta_cache_for_actions
-            .borrow()
-            .get(&path_key)
-            .and_then(|meta| extract_seed_from_parameters(&meta))
-            .unwrap_or_else(|| "No seed found".to_string());
-        gtk4::prelude::WidgetExt::display(&window_for_actions)
-            .clipboard()
-            .set_text(&text);
-    });
-
-    let selection_for_actions = selection_model.clone();
-    let meta_cache_for_actions = meta_cache.clone();
-    let window_for_actions = window.clone();
-    copy_generation_command_action.connect_activate(move |_, _| {
-        let Some(path) = selected_image_path(&selection_for_actions) else {
-            return;
-        };
-        let path_key = path.to_string_lossy().to_string();
-        let text = meta_cache_for_actions
-            .borrow()
-            .get(&path_key)
-            .map(|meta| format_generation_command(meta))
-            .unwrap_or_else(|| "No generation parameters found".to_string());
-        gtk4::prelude::WidgetExt::display(&window_for_actions)
-            .clipboard()
-            .set_text(&text);
-    });
-
-    let selection_for_actions = selection_model.clone();
-    let window_for_actions = window.clone();
-    let toast_overlay_for_actions = toast_overlay.clone();
-    copy_image_action.connect_activate(move |_, _| {
-        let Some(path) = selected_image_path(&selection_for_actions) else {
-            return;
-        };
-        let file = gio::File::for_path(&path);
-        if let Ok(texture) = gdk::Texture::from_file(&file) {
-            gtk4::prelude::WidgetExt::display(&window_for_actions)
-                .clipboard()
-                .set_texture(&texture);
-            let toast = adw::Toast::new("Image copied to clipboard");
-            toast.set_timeout(2);
-            toast_overlay_for_actions.add_toast(toast);
-        }
-    });
-
-    let selection_for_actions = selection_model.clone();
-    let window_for_actions = window.clone();
-    copy_path_action.connect_activate(move |_, _| {
-        let Some(path) = selected_image_path(&selection_for_actions) else {
-            return;
-        };
-        gtk4::prelude::WidgetExt::display(&window_for_actions)
-            .clipboard()
-            .set_text(&path.to_string_lossy());
-    });
-
-    let selection_for_actions = selection_model.clone();
-    let meta_cache_for_actions = meta_cache.clone();
-    let window_for_actions = window.clone();
-    copy_metadata_action.connect_activate(move |_, _| {
-        let Some(path) = selected_image_path(&selection_for_actions) else {
-            return;
-        };
-        let path_key = path.to_string_lossy().to_string();
-        let text = meta_cache_for_actions
-            .borrow()
-            .get(&path_key)
-            .map(format_metadata_text)
-            .unwrap_or_else(|| "No metadata found".to_string());
-        gtk4::prelude::WidgetExt::display(&window_for_actions)
-            .clipboard()
-            .set_text(&text);
-    });
-
-    let selection_for_actions = selection_model.clone();
-    let hash_cache_for_actions = hash_cache.clone();
-    let toast_overlay_for_actions = toast_overlay.clone();
-    let thumbnail_size_for_actions = thumbnail_size.clone();
-    refresh_thumb_action.connect_activate(move |_, _| {
-        let Some(path) = selected_image_path(&selection_for_actions) else {
-            return;
-        };
-        let hash = hash_cache_for_actions
-            .borrow()
-            .get(&path.to_string_lossy().to_string())
-            .cloned()
-            .or_else(|| db::hash_file(&path).ok());
-        let Some(hash) = hash else { return };
-
-        thumbnails::remove_hash_thumbnail_variants(&hash);
-        let _ = thumbnails::generate_hash_thumbnail(&path, &hash);
-        let current_size = *thumbnail_size_for_actions.borrow();
-        if current_size != thumbnails::THUMB_NORMAL_SIZE {
-            let _ = thumbnails::generate_hash_thumbnail_for_size(&path, &hash, current_size);
-        }
-        hash_cache_for_actions
-            .borrow_mut()
-            .insert(path.to_string_lossy().to_string(), hash);
-
-        let toast = adw::Toast::new("Thumbnail refreshed");
-        toast.set_timeout(2);
-        toast_overlay_for_actions.add_toast(toast);
-    });
-
-    let selection_for_actions = selection_model.clone();
-    let meta_cache_for_actions = meta_cache.clone();
-    let hash_cache_for_actions = hash_cache.clone();
-    let meta_listbox_for_actions = meta_listbox.clone();
-    let meta_expander_for_actions = meta_expander.clone();
-    let meta_paned_for_actions = meta_paned.clone();
-    let meta_split_before_auto_collapse_for_actions = meta_split_before_auto_collapse.clone();
-    let toast_overlay_for_actions = toast_overlay.clone();
-    refresh_meta_action.connect_activate(move |_, _| {
-        let Some(path) = selected_image_path(&selection_for_actions) else {
-            return;
-        };
-        let Some(folder) = path.parent().map(|p| p.to_path_buf()) else {
-            return;
-        };
-
-        let Ok(conn) = db::open(&folder) else {
-            return;
-        };
-        if let Some(row) = db::refresh_indexed(&conn, &path) {
-            let path_key = path.to_string_lossy().to_string();
-            meta_cache_for_actions
-                .borrow_mut()
-                .insert(path_key.clone(), row.meta.clone());
-            hash_cache_for_actions
-                .borrow_mut()
-                .insert(path_key, row.hash);
-            populate_metadata_sidebar(&meta_listbox_for_actions, &row.meta);
-            apply_metadata_section_state(
-                &row.meta,
-                &meta_expander_for_actions,
-                &meta_paned_for_actions,
-                &meta_split_before_auto_collapse_for_actions,
-                MIN_META_SPLIT_PX,
-            );
-
-            let toast = adw::Toast::new("Metadata refreshed");
-            toast.set_timeout(2);
-            toast_overlay_for_actions.add_toast(toast);
-        }
-    });
-
-    let current_folder_for_actions = current_folder.clone();
-    let hash_cache_for_actions = hash_cache.clone();
-    let start_scan_for_actions = start_scan_for_folder.clone();
-    refresh_folder_thumbs_action.connect_activate(move |_, _| {
-        let Some(folder) = current_folder_for_actions.borrow().as_ref().cloned() else {
-            return;
-        };
-
-        // Force thumbnail regeneration by deleting existing hash-based cache files.
-        let cached_hashes: Vec<String> =
-            hash_cache_for_actions.borrow().values().cloned().collect();
-        for hash in cached_hashes {
-            thumbnails::remove_hash_thumbnail_variants(&hash);
-        }
-        start_scan_for_actions(folder);
-    });
-
-    let current_folder_for_actions = current_folder.clone();
-    let list_store_for_actions = list_store.clone();
-    let start_scan_for_actions = start_scan_for_folder.clone();
-    refresh_folder_meta_action.connect_activate(move |_, _| {
-        let Some(folder) = current_folder_for_actions.borrow().as_ref().cloned() else {
-            return;
-        };
-
-        let mut paths = Vec::new();
-        for i in 0..list_store_for_actions.n_items() {
-            if let Some(item) = list_store_for_actions.item(i).and_downcast::<StringObject>() {
-                paths.push(std::path::PathBuf::from(item.string().as_str()));
-            }
-        }
-
-        if let Ok(conn) = db::open(&folder) {
-            for p in &paths {
-                let _ = db::refresh_indexed(&conn, p);
-            }
-        }
-        start_scan_for_actions(folder);
-    });
-
-    action_group.add_action(&copy_prompt_action);
-    action_group.add_action(&copy_negative_prompt_action);
-    action_group.add_action(&copy_seed_action);
-    action_group.add_action(&copy_generation_command_action);
-    action_group.add_action(&copy_image_action);
-    action_group.add_action(&copy_path_action);
-    action_group.add_action(&copy_metadata_action);
-    action_group.add_action(&refresh_thumb_action);
-    action_group.add_action(&refresh_meta_action);
-    action_group.add_action(&refresh_folder_thumbs_action);
-    action_group.add_action(&refresh_folder_meta_action);
-    window.insert_action_group("ctx", Some(&action_group));
-
-    let menu_model = gio::Menu::new();
-    let prompt_section = gio::Menu::new();
-    prompt_section.append(Some("Copy Prompt"), Some("ctx.copy-prompt"));
-    prompt_section.append(Some("Copy Negative Prompt"), Some("ctx.copy-negative-prompt"));
-    prompt_section.append(Some("Copy Seed"), Some("ctx.copy-seed"));
-    prompt_section.append(Some("Copy Generation Command"), Some("ctx.copy-generation-command"));
-    menu_model.append_section(None, &prompt_section);
-
-    let clipboard_section = gio::Menu::new();
-    clipboard_section.append(Some("Copy Image"), Some("ctx.copy-image"));
-    clipboard_section.append(Some("Copy Path"), Some("ctx.copy-path"));
-    clipboard_section.append(Some("Copy Metadata"), Some("ctx.copy-metadata"));
-    menu_model.append_section(None, &clipboard_section);
-
-    let refresh_submenu = gio::Menu::new();
-    refresh_submenu.append(Some("Refresh Thumbnail"), Some("ctx.refresh-thumbnail"));
-    refresh_submenu.append(Some("Refresh Metadata"), Some("ctx.refresh-metadata"));
-    refresh_submenu.append(
-        Some("Refresh Folder Thumbnails"),
-        Some("ctx.refresh-folder-thumbnails"),
+    let start_scan_for_folder_actions: Rc<dyn Fn(std::path::PathBuf)> =
+        start_scan_for_folder.clone();
+    install_context_menu(
+        &window,
+        &toast_overlay,
+        &selection_model,
+        &meta_cache,
+        &hash_cache,
+        &thumbnail_size,
+        &meta_expander,
+        &meta_paned,
+        &meta_split_before_auto_collapse,
+        MIN_META_SPLIT_PX,
+        &current_folder,
+        &start_scan_for_folder_actions,
+        &list_store,
+        &refresh_metadata_sidebar_for_actions,
+        &grid_view,
+        &single_picture,
+        &meta_preview,
     );
-    refresh_submenu.append(
-        Some("Refresh Folder Metadata"),
-        Some("ctx.refresh-folder-metadata"),
-    );
-    menu_model.append_submenu(Some("Refresh"), &refresh_submenu);
-
-    attach_context_menu(&grid_view, &menu_model);
-    attach_context_menu(&single_picture, &menu_model);
-    attach_context_menu(&meta_preview, &menu_model);
 
     // -----------------------------------------------------------------------
     // Wire: sidebar toggle buttons → show/hide panels
