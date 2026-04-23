@@ -1,4 +1,5 @@
 mod byte_format;
+mod core;
 mod config;
 mod db;
 mod dialogs;
@@ -18,15 +19,16 @@ mod thumbnail_sizing;
 mod timing_report;
 mod tree_sidebar;
 mod ui;
+mod services;
 mod updater;
 mod view_helpers;
 mod window_math;
 
 use metadata::ImageMetadata;
 use byte_format::human_readable_bytes;
+use core::scan_coordinator::{build_start_scan_for_folder, ScanCoordinatorDeps};
 use scan::ScanMessage;
 use recent_folders::push_recent_folder_entry;
-use scanner::scan_directory;
 use sort_flags::SortFields;
 use sort::{
     normalize_sort_key, sort_index_for_key, SORT_KEY_NAME_ASC,
@@ -34,19 +36,14 @@ use sort::{
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use tree_sidebar::reset_tree_root;
 use ui::center::{build_center_content, CenterContentDeps};
-use ui::grid::DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE;
-use ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps};
 use ui::layout::{
     assemble_and_mount_layout, compute_startup_pane_metrics, LayoutMountDeps,
 };
+use ui::lifecycle::{install_lifecycle, LifecycleDeps};
 use ui::models::{build_model_bundle, ModelAssemblyDeps};
 use ui::navigation::{install_navigation_handlers, NavigationDeps};
 use ui::right_sidebar::{build_right_sidebar, RightSidebarDeps};
 use ui::scan_runtime::{install_scan_runtime, ScanRuntimeDeps};
-use ui::session::{
-    install_close_persistence_handler, restore_session_state, ClosePersistenceDeps,
-    RestoreSessionDeps,
-};
 use ui::shell::{
     build_header_controls, create_progress_widgets, create_window_with_defaults,
 };
@@ -63,7 +60,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     rc::Rc,
-    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
+    sync::atomic::AtomicU64,
     time::Instant,
 };
 
@@ -346,44 +343,20 @@ fn build_ui(app: &adw::Application) {
     let tree_selection = tree_widgets.tree_selection;
     let tree_list_view = tree_widgets.tree_list_view;
 
-    let start_scan_for_folder = {
-        let list_store = list_store.clone();
-        let sender = sender.clone();
-        let hash_cache = hash_cache.clone();
-        let meta_cache = meta_cache.clone();
-        let sort_fields_cache = sort_fields_cache.clone();
-        let sort_key = sort_key.clone();
-        let active_scan_generation = active_scan_generation.clone();
-        let scan_in_progress = scan_in_progress.clone();
-        let progress_state = progress_state.clone();
-        let progress_box = progress_box.clone();
-        let progress_label = progress_label.clone();
-        let progress_bar = progress_bar.clone();
-        Rc::new(move |folder: std::path::PathBuf| {
-            let generation = active_scan_generation
-                .get()
-                .saturating_add(1);
-            active_scan_generation.set(generation);
-            scan_in_progress.set(true);
-
-            list_store.remove_all();
-            hash_cache.borrow_mut().clear();
-            meta_cache.borrow_mut().clear();
-            sort_fields_cache.borrow_mut().clear();
-            {
-                let mut progress = progress_state.borrow_mut();
-                progress.start_pending(generation);
-                sync_progress_widgets(&progress, &progress_box, &progress_label, &progress_bar);
-            }
-            DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.store(1, AtomicOrdering::Relaxed);
-            scan_directory(
-                folder,
-                sender.clone(),
-                sort_key.borrow().clone(),
-                generation,
-            );
-        })
-    };
+    let start_scan_for_folder = build_start_scan_for_folder(ScanCoordinatorDeps {
+        list_store: list_store.clone(),
+        sender: sender.clone(),
+        hash_cache: hash_cache.clone(),
+        meta_cache: meta_cache.clone(),
+        sort_fields_cache: sort_fields_cache.clone(),
+        sort_key: sort_key.clone(),
+        active_scan_generation: active_scan_generation.clone(),
+        scan_in_progress: scan_in_progress.clone(),
+        progress_state: progress_state.clone(),
+        progress_box: progress_box.clone(),
+        progress_label: progress_label.clone(),
+        progress_bar: progress_bar.clone(),
+    });
 
     // Wire tree folder selection → clear grid, start scan.
     let current_folder_tree = current_folder.clone();
@@ -630,31 +603,8 @@ fn build_ui(app: &adw::Application) {
     let outer_split_dirty = paned_layout.outer_split_dirty.clone();
     let update_banner = layout_bundle.update_banner;
 
-    // Check for updates in a background thread; show banner if a newer release exists.
-    let (update_tx, update_rx) = async_channel::bounded::<updater::UpdateInfo>(1);
-    std::thread::spawn(move || {
-        if let Some(info) = updater::check_for_update() {
-            let _ = update_tx.send_blocking(info);
-        }
-    });
-    glib::MainContext::default().spawn_local(async move {
-        if let Ok(info) = update_rx.recv().await {
-            update_banner.set_title(&format!("Version {} available", info.version));
-            update_banner.set_revealed(true);
-            update_banner.connect_button_clicked(move |_| {
-                let _ = gio::AppInfo::launch_default_for_uri(
-                    &info.url,
-                    None::<&gio::AppLaunchContext>,
-                );
-            });
-        }
-    });
-
-    // -----------------------------------------------------------------------
-    // Keyboard: Escape / Left / Right / Page navigation
-    // -----------------------------------------------------------------------
-    let start_scan_for_folder_keys: Rc<dyn Fn(std::path::PathBuf)> = start_scan_for_folder.clone();
-    install_keyboard_handler(KeyboardDeps {
+    install_lifecycle(LifecycleDeps {
+        update_banner,
         window: window.clone(),
         view_stack: view_stack.clone(),
         selection_model: selection_model.clone(),
@@ -664,35 +614,19 @@ fn build_ui(app: &adw::Application) {
         thumbnail_size: thumbnail_size.clone(),
         toast_overlay: toast_overlay.clone(),
         current_folder: current_folder.clone(),
-        start_scan_for_folder: start_scan_for_folder_keys,
+        start_scan_for_folder: start_scan_for_folder.clone(),
         left_toggle: left_toggle.clone(),
         right_toggle: right_toggle.clone(),
         pre_fullview_left: pre_fullview_left.clone(),
         pre_fullview_right: pre_fullview_right.clone(),
-    });
-
-    // -----------------------------------------------------------------------
-    // Scroll on single-view / meta-preview → navigate images
-    // Accumulate delta so smooth-scroll trackpads don't flood set_selected.
-    // -----------------------------------------------------------------------
-    install_scroll_navigation_handlers(&selection_model, &single_picture, &meta_preview);
-
-    // -----------------------------------------------------------------------
-    // Save config on close + restore session state
-    // -----------------------------------------------------------------------
-    install_close_persistence_handler(ClosePersistenceDeps {
-        current_folder: current_folder.clone(),
+        meta_preview: meta_preview.clone(),
         outer_paned: outer_paned.clone(),
         inner_paned: inner_paned.clone(),
         meta_paned: meta_paned.clone(),
         meta_split_before_auto_collapse: meta_split_before_auto_collapse.clone(),
         sort_key: sort_key.clone(),
         search_text: search_text.clone(),
-        thumbnail_size: thumbnail_size.clone(),
         recent_folders: recent_folders.clone(),
-        left_toggle: left_toggle.clone(),
-        right_toggle: right_toggle.clone(),
-        window: window.clone(),
         outer_split_dirty: outer_split_dirty.clone(),
         inner_split_dirty: inner_split_dirty.clone(),
         meta_split_dirty: meta_split_dirty.clone(),
@@ -703,21 +637,11 @@ fn build_ui(app: &adw::Application) {
         configured_right_pane_width_pct,
         configured_meta_pane_height_pct,
         min_meta_split_px: MIN_META_SPLIT_PX,
-    });
-
-    let open_folder_action_restore: Rc<dyn Fn(std::path::PathBuf, bool)> = open_folder_action.clone();
-    restore_session_state(RestoreSessionDeps {
         app_config,
-        open_folder_action: open_folder_action_restore,
-        sort_key: sort_key.clone(),
-        search_text: search_text.clone(),
+        open_folder_action: open_folder_action.clone(),
         sort_dropdown: sort_dropdown.clone(),
         search_entry: search_entry.clone(),
         filter: filter.clone(),
-        window: window.clone(),
-        outer_paned: outer_paned.clone(),
-        inner_paned: inner_paned.clone(),
-        meta_paned: meta_paned.clone(),
         outer_position_programmatic: outer_position_programmatic.clone(),
         inner_position_programmatic: inner_position_programmatic.clone(),
         meta_position_programmatic: meta_position_programmatic.clone(),
@@ -725,7 +649,6 @@ fn build_ui(app: &adw::Application) {
         min_left_pane_px: MIN_LEFT_PANE_PX,
         min_right_pane_px: MIN_RIGHT_PANE_PX,
         min_center_pane_px: MIN_CENTER_PANE_PX,
-        min_meta_split_px: MIN_META_SPLIT_PX,
     });
 }
 
