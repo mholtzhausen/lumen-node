@@ -272,11 +272,12 @@ Config lives at `~/.lumen-node/config.yml` — a plain-text `key: value` file yo
 | Key | Default | Description |
 |-----|---------|-------------|
 | `last_folder` | — | Folder reopened at launch |
-| `window_width` / `window_height` | 1200×800 | Window size |
+| `window_width` / `window_height` | 1280×800 | Window size |
 | `window_maximized` | false | Maximized state |
-| `left_pane_width_pct` | 15 | Folder tree width (% of window) |
-| `right_pane_width_pct` | 20 | Metadata sidebar width (%) |
-| `left_sidebar_visible` | true | Folder tree visibility |
+| `left_pane_width_pct` | derived from pane split | Folder tree width (% of window) |
+| `right_pane_width_pct` | derived from pane split | Metadata sidebar width (%) |
+| `meta_pane_height_pct` | derived from pane split | Metadata/detail split in the right pane (%) |
+| `left_sidebar_visible` | false | Folder tree visibility |
 | `right_sidebar_visible` | true | Metadata pane visibility |
 | `recent_folder` | — | Repeated entry for recent folder history |
 
@@ -286,17 +287,17 @@ Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favo
 
 ## Architecture
 
-LumenNode is ~12,000 lines of Rust across six modules.
+LumenNode is organized into focused Rust modules.
 
 ```
 src/
-├── main.rs        ~3 400 lines   UI construction, event wiring, all GTK state
-├── scanner.rs       ~173 lines   Background scan thread, async-channel messaging
-├── db.rs            ~289 lines   Per-folder SQLite cache, staleness validation
-├── metadata.rs      ~338 lines   Format-dispatched metadata extraction
-├── thumbnails.rs    ~238 lines   Freedesktop spec + content-hash thumbnail stores
-├── config.rs        ~149 lines   ~/.lumen-node/config.yml read/write
-└── updater.rs        ~22 lines   Version check stub
+├── main.rs        UI construction, event wiring, all GTK state
+├── scanner.rs     Background scan thread, async-channel messaging
+├── db.rs          Per-folder SQLite cache, staleness validation
+├── metadata.rs    Format-dispatched metadata extraction
+├── thumbnails.rs  Freedesktop spec + content-hash thumbnail stores
+├── config.rs      ~/.lumen-node/config.yml read/write
+└── updater.rs     Version check stub
 ```
 
 ### Data flow
@@ -309,7 +310,7 @@ scan_directory()  ──── background thread ──────────�
        │                                                                      │
   Phase 1: Enumerate (fast)                        Phase 2: Enrich (slower)  │
   ┌────────────────────┐                    ┌───────────────────────────────┐ │
-  │ emit               │                    │ db::ensure_indexed()          │ │
+  │ emit               │                    │ db::ensure_indexed_with_outcome() │ │
   │ ImageEnumerated    │  ─── channel ───▶  │  ├─ cache hit (mtime+size ✓) │ │
   │ (placeholder rows) │                    │  └─ cache miss:               │ │
   └────────────────────┘                    │      SHA-256 hash             │ │
@@ -369,11 +370,11 @@ scan_directory()  ──── background thread ──────────�
 
 ```rust
 pub enum ScanMessage {
-    ImageEnumerated { path, filename, generation },
-    ImageEnriched   { path, hash, metadata, ... },
-    ThumbnailReady  { path, pixbuf },
-    ScanComplete    { generation, total },
-    ScanError       { message },
+    ScanStarted { total_count, generation },
+    ImageEnumerated { path, generation },
+    EnumerationComplete { generation },
+    ImageEnriched { path, hash, meta, indexed_from_cache, generation },
+    ScanComplete { generation },
 }
 ```
 
