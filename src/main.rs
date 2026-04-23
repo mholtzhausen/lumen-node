@@ -99,6 +99,7 @@ struct ScanProgressState {
     enriched_cached: u32,
     folder_image_count: u32,
     folder_total_size_bytes: u64,
+    current_folder_path: String,
     visible: bool,
 }
 
@@ -139,10 +140,16 @@ impl ScanProgressState {
 
     fn status_text(&self) -> String {
         if !self.visible {
+            let location_text = if self.current_folder_path.is_empty() {
+                "Folder location unknown".to_string()
+            } else {
+                format!("Location {}", self.current_folder_path)
+            };
             return format!(
-                "Images {} | Folder size {}",
+                "Images {} | Folder size {} | {}",
                 self.folder_image_count,
-                human_readable_bytes(self.folder_total_size_bytes)
+                human_readable_bytes(self.folder_total_size_bytes),
+                location_text
             );
         }
         format!(
@@ -1559,24 +1566,6 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     let header_bar = adw::HeaderBar::new();
 
-    // "Open Folder" button in the start slot.
-    let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
-    open_btn.set_tooltip_text(Some("Open Folder…"));
-    header_bar.pack_start(&open_btn);
-
-    let history_btn = gtk4::MenuButton::new();
-    history_btn.set_icon_name("document-open-recent-symbolic");
-    history_btn.set_tooltip_text(Some("Recent folders"));
-    let history_popover = gtk4::Popover::new();
-    let history_list = gtk4::Box::new(Orientation::Vertical, 0);
-    history_list.set_margin_top(6);
-    history_list.set_margin_bottom(6);
-    history_list.set_margin_start(6);
-    history_list.set_margin_end(6);
-    history_popover.set_child(Some(&history_list));
-    history_btn.set_popover(Some(&history_popover));
-    header_bar.pack_start(&history_btn);
-
     // --- Sort dropdown ---
     let sort_options = gtk4::StringList::new(&[
         "Name ↑",
@@ -1633,6 +1622,24 @@ fn build_ui(app: &adw::Application) {
     left_toggle.set_tooltip_text(Some("Toggle left panel"));
     header_bar.pack_start(&left_toggle);
 
+    // "Open Folder" button in the start slot.
+    let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
+    open_btn.set_tooltip_text(Some("Open Folder…"));
+    header_bar.pack_start(&open_btn);
+
+    let history_btn = gtk4::MenuButton::new();
+    history_btn.set_icon_name("document-open-recent-symbolic");
+    history_btn.set_tooltip_text(Some("Recent folders"));
+    let history_popover = gtk4::Popover::new();
+    let history_list = gtk4::Box::new(Orientation::Vertical, 0);
+    history_list.set_margin_top(6);
+    history_list.set_margin_bottom(6);
+    history_list.set_margin_start(6);
+    history_list.set_margin_end(6);
+    history_popover.set_child(Some(&history_list));
+    history_btn.set_popover(Some(&history_popover));
+    header_bar.pack_start(&history_btn);
+
     let right_toggle = gtk4::ToggleButton::new();
     right_toggle.set_icon_name("sidebar-show-right-symbolic");
     let initial_right_sidebar_visible = app_config.right_sidebar_visible.unwrap_or(true);
@@ -1648,11 +1655,11 @@ fn build_ui(app: &adw::Application) {
     left_sidebar.set_width_request(200);
     left_sidebar.set_visible(initial_left_sidebar_visible);
 
-    // Root items: home directory + real mount points.
-    let tree_root = build_tree_root();
+    // Root item: currently selected folder (fallback to home until selection).
+    let tree_root = build_tree_root(app_config.last_folder.as_ref());
 
     // TreeListModel lazily loads subdirectories when a node is expanded.
-    let tree_model = TreeListModel::new(tree_root, false, false, move |item: &glib::Object| -> Option<gio::ListModel> {
+    let tree_model = TreeListModel::new(tree_root.clone(), false, false, move |item: &glib::Object| -> Option<gio::ListModel> {
         let file = item.downcast_ref::<gio::File>()?;
         let store = gio::ListStore::new::<gio::File>();
         if let Ok(enumerator) = file.enumerate_children(
@@ -1720,12 +1727,14 @@ fn build_ui(app: &adw::Application) {
     let current_folder_tree = current_folder.clone();
     let start_scan_tree = start_scan_for_folder.clone();
     let recent_folders_tree = recent_folders.clone();
+    let tree_root_tree = tree_root.clone();
     let sort_key_tree = sort_key.clone();
     let search_text_tree = search_text.clone();
     let thumbnail_size_tree = thumbnail_size.clone();
     let sort_dropdown_tree = sort_dropdown.clone();
     let search_entry_tree = search_entry.clone();
     let size_buttons_tree = size_buttons.clone();
+    let progress_state_tree = progress_state.clone();
     tree_selection.connect_selection_changed(move |model, _, _| {
         let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
             return;
@@ -1762,11 +1771,13 @@ fn build_ui(app: &adw::Application) {
         }
 
         *current_folder_tree.borrow_mut() = Some(path.clone());
+        progress_state_tree.borrow_mut().current_folder_path = path.display().to_string();
         {
             let mut history = recent_folders_tree.borrow_mut();
             push_recent_folder_entry(&mut history, path.as_path());
             config::save_recent_state(Some(path.as_path()), &history);
         }
+        reset_tree_root(&tree_root_tree, path.as_path());
         start_scan_tree(path);
     });
 
@@ -3009,6 +3020,7 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     let current_folder_open_action = current_folder.clone();
     let start_scan_open_action = start_scan_for_folder.clone();
+    let tree_root_open_action = tree_root.clone();
     let tree_model_open_action = tree_model.clone();
     let tree_list_view_open_action = tree_list_view.clone();
     let recent_folders_open_action = recent_folders.clone();
@@ -3020,6 +3032,7 @@ fn build_ui(app: &adw::Application) {
     let filter_open_action = filter.clone();
     let sorter_open_action = sorter.clone();
     let size_buttons_open_action = size_buttons.clone();
+    let progress_state_open_action = progress_state.clone();
     let open_folder_action = Rc::new(move |path: std::path::PathBuf, sync_tree: bool| {
         if current_folder_open_action.borrow().as_deref() == Some(path.as_path()) {
             return;
@@ -3051,11 +3064,13 @@ fn build_ui(app: &adw::Application) {
         }
 
         *current_folder_open_action.borrow_mut() = Some(path.clone());
+        progress_state_open_action.borrow_mut().current_folder_path = path.display().to_string();
         {
             let mut history = recent_folders_open_action.borrow_mut();
             push_recent_folder_entry(&mut history, path.as_path());
             config::save_recent_state(Some(path.as_path()), &history);
         }
+        reset_tree_root(&tree_root_open_action, path.as_path());
         start_scan_open_action(path.clone());
         if sync_tree {
             sync_tree_to_path(&tree_model_open_action, &tree_list_view_open_action, &path);
@@ -3699,9 +3714,9 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Restore last folder from config + sync tree
     // -----------------------------------------------------------------------
-    if let Some(last_folder) = app_config.last_folder {
+    if let Some(last_folder) = app_config.last_folder.as_ref() {
         if last_folder.is_dir() {
-            open_folder_action(last_folder, true);
+            open_folder_action(last_folder.clone(), true);
         }
     }
 
@@ -4473,56 +4488,21 @@ fn sync_tree_to_path(
 // File system helpers for the tree sidebar
 // ---------------------------------------------------------------------------
 
-/// Returns real mount points (block devices, network mounts) from /proc/mounts,
-/// excluding pseudo-filesystems and kernel-internal mounts.
-fn get_mount_points() -> Vec<std::path::PathBuf> {
-    let pseudo_fs = [
-        "tmpfs", "proc", "sysfs", "devtmpfs", "devpts", "cgroup", "cgroup2",
-        "pstore", "bpf", "tracefs", "debugfs", "securityfs", "fusectl",
-        "hugetlbfs", "mqueue", "configfs", "binfmt_misc", "ramfs", "squashfs",
-        "overlay", "nsfs", "autofs", "efivarfs", "rpc_pipefs",
-    ];
-    let mut points = vec![std::path::PathBuf::from("/")];
-    if let Ok(content) = std::fs::read_to_string("/proc/mounts") {
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 3 {
-                continue;
-            }
-            let mount_point = parts[1];
-            let fs_type = parts[2];
-            if pseudo_fs.contains(&fs_type) {
-                continue;
-            }
-            if mount_point.starts_with("/proc")
-                || mount_point.starts_with("/sys")
-                || mount_point.starts_with("/dev")
-                || mount_point.starts_with("/run")
-            {
-                continue;
-            }
-            if mount_point == "/" {
-                continue; // already in vec
-            }
-            points.push(std::path::PathBuf::from(mount_point));
-        }
-    }
-    points.sort();
-    points.dedup();
-    points
+/// Replaces the tree root with exactly one folder entry.
+fn reset_tree_root(tree_root: &gio::ListStore, root_path: &std::path::Path) {
+    tree_root.remove_all();
+    tree_root.append(&gio::File::for_path(root_path));
 }
 
-/// Builds the root `ListStore` for the file tree: home directory first,
-/// then all real mount points (deduplicating home if it is also a mount point).
-fn build_tree_root() -> gio::ListStore {
+/// Builds the root `ListStore` for the file tree.
+/// Uses last opened folder when present, otherwise falls back to home.
+fn build_tree_root(last_folder: Option<&std::path::PathBuf>) -> gio::ListStore {
     let store = gio::ListStore::new::<gio::File>();
-    let home = glib::home_dir();
-    store.append(&gio::File::for_path(&home));
-    for mp in get_mount_points() {
-        if mp != home {
-            store.append(&gio::File::for_path(&mp));
-        }
-    }
+    let root = match last_folder {
+        Some(path) if path.is_dir() => path.clone(),
+        _ => glib::home_dir(),
+    };
+    store.append(&gio::File::for_path(root));
     store
 }
 
