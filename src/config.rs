@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 pub struct AppConfig {
     pub last_folder: Option<PathBuf>,
+    pub recent_folders: Vec<PathBuf>,
     pub window_width: Option<i32>,
     pub window_height: Option<i32>,
     pub window_maximized: Option<bool>,
@@ -21,6 +22,7 @@ pub struct AppConfig {
 /// Loads `~/.lumen-node/config.yml`.  Missing file → empty config.
 pub fn load() -> AppConfig {
     let mut last_folder = None;
+    let mut recent_folders = Vec::new();
     let mut window_width = None;
     let mut window_height = None;
     let mut window_maximized = None;
@@ -41,6 +43,11 @@ pub fn load() -> AppConfig {
                 let val = val.trim();
                 if !val.is_empty() {
                     last_folder = Some(PathBuf::from(val));
+                }
+            } else if let Some(val) = line.strip_prefix("recent_folder: ") {
+                let val = val.trim();
+                if !val.is_empty() {
+                    recent_folders.push(PathBuf::from(val));
                 }
             } else if let Some(val) = line.strip_prefix("window_width: ") {
                 window_width = val.trim().parse::<i32>().ok();
@@ -79,6 +86,7 @@ pub fn load() -> AppConfig {
     }
     AppConfig {
         last_folder,
+        recent_folders,
         window_width,
         window_height,
         window_maximized,
@@ -99,6 +107,7 @@ pub fn load() -> AppConfig {
 /// Writes config to `~/.lumen-node/config.yml`, creating the directory if needed.
 pub fn save(
     last_folder: Option<&Path>,
+    recent_folders: &[PathBuf],
     window_width: i32,
     window_height: i32,
     window_maximized: bool,
@@ -121,9 +130,15 @@ pub fn save(
     let folder_str = last_folder
         .map(|p| p.display().to_string())
         .unwrap_or_default();
+    let recent_folder_lines = recent_folders
+        .iter()
+        .map(|p| format!("recent_folder: {}", p.display()))
+        .collect::<Vec<_>>()
+        .join("\n");
     let content = format!(
-        "last_folder: {}\nwindow_width: {}\nwindow_height: {}\nwindow_maximized: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\nsort_key: {}\nsearch_text: {}\nthumbnail_size: {}\n",
+        "last_folder: {}\n{}\nwindow_width: {}\nwindow_height: {}\nwindow_maximized: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\nsort_key: {}\nsearch_text: {}\nthumbnail_size: {}\n",
         folder_str,
+        recent_folder_lines,
         window_width,
         window_height,
         window_maximized,

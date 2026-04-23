@@ -12,7 +12,7 @@
 //! PNG dispatch keys:
 //! - `"parameters"`        → Automatic1111 / InvokeAI raw prompt string
 //! - `"prompt"`            → ComfyUI API node graph → positive/negative prompts
-//! - `"workflow"`          → ComfyUI UI workflow → human-readable node summary
+//! - `"workflow"`          → ComfyUI UI workflow JSON + primary prompt guess
 //! - `"invokeai_metadata"` → InvokeAI JSON → positive/negative prompts + settings
 //! - other keywords         → captured verbatim as fallback metadata
 
@@ -44,7 +44,7 @@ pub struct ImageMetadata {
     pub prompt: Option<String>,
     /// Negative prompt, extracted from ComfyUI `"prompt"` JSON.
     pub negative_prompt: Option<String>,
-    /// Human-readable node summary from ComfyUI `"workflow"` JSON.
+    /// Raw ComfyUI `"workflow"` JSON.
     pub workflow_json: Option<String>,
 }
 
@@ -198,10 +198,12 @@ fn apply_text_chunk(meta: &mut ImageMetadata, keyword: &str, text: &str) {
             meta.negative_prompt = neg;
         }
 
-        // ComfyUI UI workflow: full node graph JSON → human-readable summary
+        // ComfyUI UI workflow: preserve full JSON and best-effort prompt guess.
         "workflow" => {
-            meta.workflow_json = extract_comfyui_summary(text)
-                .or_else(|| Some(text.to_owned()));
+            meta.workflow_json = Some(text.to_owned());
+            if meta.prompt.is_none() {
+                meta.prompt = extract_primary_prompt_from_workflow(text);
+            }
         }
 
         // InvokeAI metadata: JSON with positive_prompt, negative_prompt, model, etc.
@@ -279,59 +281,87 @@ fn extract_comfyui_prompts(prompt_str: &str) -> (Option<String>, Option<String>)
     (positive, negative)
 }
 
-/// Converts the ComfyUI UI-format `"workflow"` JSON into a compact
-/// human-readable summary. Each output line has the form:
+/// Best-effort heuristic for the "primary prompt" inside ComfyUI workflow JSON.
 ///
-/// ```text
-/// [Node Title]  "value1"  42  true
-/// ```
-///
-/// Returns `None` if the JSON cannot be parsed or has no `"nodes"` array.
-fn extract_comfyui_summary(workflow_str: &str) -> Option<String> {
+/// We recursively inspect all strings and score candidates by path/key context.
+/// Strings under CLIP text nodes and keys named `text` / `prompt` rank highest.
+fn extract_primary_prompt_from_workflow(workflow_str: &str) -> Option<String> {
     let val: serde_json::Value = serde_json::from_str(workflow_str).ok()?;
-    let nodes = val.get("nodes")?.as_array()?;
+    let mut best: Option<(i32, String)> = None;
 
-    let lines: Vec<String> = nodes
-        .iter()
-        .map(|node| {
-            let node_type = node
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown");
-            let title = node
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or(node_type);
+    fn walk(
+        value: &serde_json::Value,
+        path: &mut Vec<String>,
+        in_clip_text_node: bool,
+        best: &mut Option<(i32, String)>,
+    ) {
+        match value {
+            serde_json::Value::Object(map) => {
+                let class_type = map
+                    .get("class_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let node_type = map
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let node_title = map
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let is_clip_text_node = class_type.contains("cliptextencode")
+                    || node_type.contains("cliptextencode")
+                    || node_title.contains("cliptextencode");
+                let child_in_clip = in_clip_text_node || is_clip_text_node;
 
-            let values: Vec<String> = node
-                .get("widgets_values")
-                .and_then(|w| w.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .take(4)
-                        .filter_map(|v| match v {
-                            serde_json::Value::String(s) if !s.is_empty() => {
-                                if s.len() > 60 {
-                                    Some(format!("\"{}…\"", &s[..57]))
-                                } else {
-                                    Some(format!("\"{s}\""))
-                                }
-                            }
-                            serde_json::Value::Number(n) => Some(n.to_string()),
-                            serde_json::Value::Bool(b) => Some(b.to_string()),
-                            _ => None,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            if values.is_empty() {
-                format!("[{title}]")
-            } else {
-                format!("[{title}]  {}", values.join("  "))
+                for (k, v) in map {
+                    path.push(k.to_ascii_lowercase());
+                    walk(v, path, child_in_clip, best);
+                    path.pop();
+                }
             }
-        })
-        .collect();
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    walk(item, path, in_clip_text_node, best);
+                }
+            }
+            serde_json::Value::String(s) => {
+                let text = s.trim();
+                if text.is_empty() || text.len() < 8 {
+                    return;
+                }
 
-    Some(lines.join("\n"))
+                let path_text = path.join(".");
+                let mut score = text.len().min(800) as i32;
+                if in_clip_text_node {
+                    score += 600;
+                }
+                if path_text.contains("inputs.text") {
+                    score += 500;
+                }
+                if path_text.contains("widgets_values") {
+                    score += 300;
+                }
+                if path_text.contains("prompt") || path_text.ends_with("text") {
+                    score += 250;
+                }
+                if path_text.contains("negative") || path_text.contains("neg") {
+                    score -= 500;
+                }
+
+                let replace = best.as_ref().map_or(true, |(best_score, _)| score > *best_score);
+                if replace {
+                    *best = Some((score, text.to_owned()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut path = Vec::new();
+    walk(&val, &mut path, false, &mut best);
+    best.map(|(_, prompt)| prompt)
 }

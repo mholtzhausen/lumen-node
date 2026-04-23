@@ -26,8 +26,9 @@ use gtk4::{
     GestureClick,
     GridView, Image, Label, ListItem, ListView, ListScrollFlags, Orientation, Overlay, Paned, Picture,
     PopoverMenu, ScrolledWindow, SignalListItemFactory, SingleSelection, SortListModel,
-    ProgressBar, StringObject, TreeExpander, TreeListModel, TreeListRow,
+    ProgressBar, StringObject, TreeExpander, TreeListModel, TreeListRow, Expander,
 };
+use serde_json::Value as JsonValue;
 
 static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 static FULL_VIEW_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -47,6 +48,7 @@ const MIN_LEFT_PANE_PX: i32 = 120;
 const MIN_RIGHT_PANE_PX: i32 = 180;
 const MIN_CENTER_PANE_PX: i32 = 260;
 const MIN_META_SPLIT_PX: i32 = 120;
+const RECENT_FOLDERS_LIMIT: usize = 50;
 const ENUM_PHASE_WEIGHT: f64 = 0.10;
 const THUMB_PHASE_WEIGHT: f64 = 0.35;
 const ENRICH_PHASE_WEIGHT: f64 = 0.55;
@@ -170,6 +172,12 @@ fn human_readable_bytes(bytes: u64) -> String {
     } else {
         format!("{value:.1} {}", UNITS[unit_idx])
     }
+}
+
+fn push_recent_folder_entry(history: &mut Vec<std::path::PathBuf>, folder: &std::path::Path) {
+    history.retain(|entry| entry != folder);
+    history.insert(0, folder.to_path_buf());
+    history.truncate(RECENT_FOLDERS_LIMIT);
 }
 
 fn sync_progress_widgets(
@@ -804,6 +812,7 @@ fn build_ui(app: &adw::Application) {
 
     // Load persisted config (last folder).
     let app_config = config::load();
+    let initial_recent_folders = app_config.recent_folders.clone();
     let (monitor_width, monitor_height) = monitor_bounds_for_window(&window);
     let min_window_width = MIN_LEFT_PANE_PX + MIN_CENTER_PANE_PX + MIN_RIGHT_PANE_PX;
     let min_window_height = (MIN_META_SPLIT_PX * 2).max(360);
@@ -817,7 +826,7 @@ fn build_ui(app: &adw::Application) {
         .clamp(min_window_height, monitor_height.max(min_window_height));
     window.set_default_size(initial_window_width, initial_window_height);
     let css = gtk4::CssProvider::new();
-    css.load_from_data(
+    css.load_from_string(
         "
         .scroll-flag-bubble {
             background-color: alpha(@theme_bg_color, 0.86);
@@ -842,6 +851,19 @@ fn build_ui(app: &adw::Application) {
     // Tracks the most recently scanned folder for config persistence.
     let current_folder: Rc<RefCell<Option<std::path::PathBuf>>> =
         Rc::new(RefCell::new(None));
+    let recent_folders: Rc<RefCell<Vec<std::path::PathBuf>>> =
+        Rc::new(RefCell::new(initial_recent_folders));
+    {
+        let mut history = recent_folders.borrow_mut();
+        let mut sanitized = Vec::new();
+        for folder in history.iter() {
+            if folder.is_dir() && !sanitized.iter().any(|entry| entry == folder) {
+                sanitized.push(folder.clone());
+            }
+        }
+        *history = sanitized;
+        history.truncate(RECENT_FOLDERS_LIMIT);
+    }
 
     // Shared model: each item holds the absolute path of one image.
     let list_store = gio::ListStore::new::<StringObject>();
@@ -1208,6 +1230,19 @@ fn build_ui(app: &adw::Application) {
     open_btn.set_tooltip_text(Some("Open Folder…"));
     header_bar.pack_start(&open_btn);
 
+    let history_btn = gtk4::MenuButton::new();
+    history_btn.set_icon_name("document-open-recent-symbolic");
+    history_btn.set_tooltip_text(Some("Recent folders"));
+    let history_popover = gtk4::Popover::new();
+    let history_list = gtk4::Box::new(Orientation::Vertical, 0);
+    history_list.set_margin_top(6);
+    history_list.set_margin_bottom(6);
+    history_list.set_margin_start(6);
+    history_list.set_margin_end(6);
+    history_popover.set_child(Some(&history_list));
+    history_btn.set_popover(Some(&history_popover));
+    header_bar.pack_start(&history_btn);
+
     // --- Sort dropdown ---
     let sort_options = gtk4::StringList::new(&[
         "Name ↑",
@@ -1350,6 +1385,7 @@ fn build_ui(app: &adw::Application) {
     // Wire tree folder selection → clear grid, start scan.
     let current_folder_tree = current_folder.clone();
     let start_scan_tree = start_scan_for_folder.clone();
+    let recent_folders_tree = recent_folders.clone();
     tree_selection.connect_selection_changed(move |model, _, _| {
         let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
             return;
@@ -1363,6 +1399,10 @@ fn build_ui(app: &adw::Application) {
             return;
         }
         *current_folder_tree.borrow_mut() = Some(path.clone());
+        {
+            let mut history = recent_folders_tree.borrow_mut();
+            push_recent_folder_entry(&mut history, path.as_path());
+        }
         start_scan_tree(path);
     });
 
@@ -1840,18 +1880,19 @@ fn build_ui(app: &adw::Application) {
     meta_content.set_margin_start(4);
     meta_content.set_margin_end(8);
 
-    let meta_title = Label::new(Some("Metadata"));
-    meta_title.add_css_class("title-4");
-    meta_title.set_halign(gtk4::Align::Start);
-    meta_content.append(&meta_title);
-
     let meta_scroll = ScrolledWindow::new();
     meta_scroll.set_vexpand(true);
+    meta_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
     let meta_listbox = gtk4::ListBox::new();
     meta_listbox.add_css_class("boxed-list");
     meta_listbox.set_selection_mode(gtk4::SelectionMode::None);
     meta_scroll.set_child(Some(&meta_listbox));
-    meta_content.append(&meta_scroll);
+
+    let meta_expander = Expander::new(Some("Metadata"));
+    meta_expander.set_expanded(true);
+    meta_expander.set_child(Some(&meta_scroll));
+    meta_content.append(&meta_expander);
+    let meta_split_before_auto_collapse: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
 
     // Vertical paned: preview (top) | metadata (bottom)
     let meta_paned = Paned::new(Orientation::Vertical);
@@ -2033,6 +2074,9 @@ fn build_ui(app: &adw::Application) {
     let meta_cache_for_actions = meta_cache.clone();
     let hash_cache_for_actions = hash_cache.clone();
     let meta_listbox_for_actions = meta_listbox.clone();
+    let meta_expander_for_actions = meta_expander.clone();
+    let meta_paned_for_actions = meta_paned.clone();
+    let meta_split_before_auto_collapse_for_actions = meta_split_before_auto_collapse.clone();
     let toast_overlay_for_actions = toast_overlay.clone();
     refresh_meta_action.connect_activate(move |_, _| {
         let Some(path) = selected_image_path(&selection_for_actions) else {
@@ -2054,6 +2098,12 @@ fn build_ui(app: &adw::Application) {
                 .borrow_mut()
                 .insert(path_key, row.hash);
             populate_metadata_sidebar(&meta_listbox_for_actions, &row.meta);
+            apply_metadata_section_state(
+                &row.meta,
+                &meta_expander_for_actions,
+                &meta_paned_for_actions,
+                &meta_split_before_auto_collapse_for_actions,
+            );
 
             let toast = adw::Toast::new("Metadata refreshed");
             toast.set_timeout(2);
@@ -2286,6 +2336,9 @@ fn build_ui(app: &adw::Application) {
     // Wire: selection change → populate metadata sidebar
     // -----------------------------------------------------------------------
     let meta_listbox_sel = meta_listbox.clone();
+    let meta_expander_sel = meta_expander.clone();
+    let meta_paned_sel = meta_paned.clone();
+    let meta_split_before_auto_collapse_sel = meta_split_before_auto_collapse.clone();
     let meta_preview_sel = meta_preview.clone();
     let meta_cache_sel = meta_cache.clone();
     let realized_thumb_images_sel = realized_thumb_images.clone();
@@ -2379,6 +2432,9 @@ fn build_ui(app: &adw::Application) {
         load_metadata_async(
             meta.clone(),
             meta_listbox_for_metadata,
+            meta_expander_sel.clone(),
+            meta_paned_sel.clone(),
+            meta_split_before_auto_collapse_sel.clone(),
             click_trace_for_metadata,
             click_id,
         );
@@ -2482,21 +2538,79 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Wire: open_btn → FileDialog → start scan (quick-jump shortcut)
     // -----------------------------------------------------------------------
+    let current_folder_open_action = current_folder.clone();
+    let start_scan_open_action = start_scan_for_folder.clone();
+    let tree_model_open_action = tree_model.clone();
+    let tree_list_view_open_action = tree_list_view.clone();
+    let recent_folders_open_action = recent_folders.clone();
+    let open_folder_action = Rc::new(move |path: std::path::PathBuf, sync_tree: bool| {
+        if current_folder_open_action.borrow().as_deref() == Some(path.as_path()) {
+            return;
+        }
+        *current_folder_open_action.borrow_mut() = Some(path.clone());
+        {
+            let mut history = recent_folders_open_action.borrow_mut();
+            push_recent_folder_entry(&mut history, path.as_path());
+        }
+        start_scan_open_action(path.clone());
+        if sync_tree {
+            sync_tree_to_path(&tree_model_open_action, &tree_list_view_open_action, &path);
+        }
+    });
+
+    let history_list_show = history_list.clone();
+    let history_popover_show = history_popover.clone();
+    let recent_folders_show = recent_folders.clone();
+    let open_folder_from_history = open_folder_action.clone();
+    history_popover.connect_show(move |_| {
+        while let Some(child) = history_list_show.first_child() {
+            history_list_show.remove(&child);
+        }
+
+        let folders = recent_folders_show.borrow().clone();
+        if folders.is_empty() {
+            let empty_label = Label::new(Some("No recent folders"));
+            empty_label.set_halign(gtk4::Align::Start);
+            empty_label.add_css_class("dim-label");
+            history_list_show.append(&empty_label);
+            return;
+        }
+
+        for folder in folders.iter().take(RECENT_FOLDERS_LIMIT) {
+            let label = folder.display().to_string();
+            let btn = gtk4::Button::with_label(&label);
+            btn.set_halign(gtk4::Align::Fill);
+            btn.set_tooltip_text(Some(&label));
+            btn.add_css_class("flat");
+
+            let path = folder.clone();
+            let open_folder = open_folder_from_history.clone();
+            let popover = history_popover_show.clone();
+            btn.connect_clicked(move |_| {
+                open_folder(path.clone(), true);
+                popover.popdown();
+            });
+            history_list_show.append(&btn);
+        }
+    });
+
     let window_ref = window.clone();
     let current_folder_btn = current_folder.clone();
-    let start_scan_open = start_scan_for_folder.clone();
+    let open_folder_btn = open_folder_action.clone();
     open_btn.connect_clicked(move |_| {
         let dialog = gtk4::FileDialog::builder().title("Choose a Folder").build();
-        let cf2 = current_folder_btn.clone();
-        let start_scan2 = start_scan_open.clone();
+        if let Some(folder) = current_folder_btn.borrow().as_ref() {
+            let file = gio::File::for_path(folder);
+            dialog.set_initial_folder(Some(&file));
+        }
+        let open_folder = open_folder_btn.clone();
         dialog.select_folder(
             Some(&window_ref),
             None::<&gio::Cancellable>,
             move |result| {
                 let Ok(file) = result else { return };
                 let Some(path) = file.path() else { return };
-                *cf2.borrow_mut() = Some(path.clone());
-                start_scan2(path);
+                open_folder(path, true);
             },
         );
     });
@@ -2872,9 +2986,11 @@ fn build_ui(app: &adw::Application) {
     let outer_paned_close = outer_paned.clone();
     let inner_paned_close = inner_paned.clone();
     let meta_paned_close = meta_paned.clone();
+    let meta_split_before_auto_collapse_close = meta_split_before_auto_collapse.clone();
     let sort_key_close = sort_key.clone();
     let search_text_close = search_text.clone();
     let thumbnail_size_close = thumbnail_size.clone();
+    let recent_folders_close = recent_folders.clone();
     let left_toggle_close = left_toggle.clone();
     let right_toggle_close = right_toggle.clone();
     let window_for_close = window.clone();
@@ -2884,12 +3000,16 @@ fn build_ui(app: &adw::Application) {
         let window_maximized = window_for_close.is_maximized();
         let left_pos = outer_paned_close.position();
         let inner_pos = inner_paned_close.position();
-        let meta_pos = meta_paned_close.position();
+        let meta_pos = meta_split_before_auto_collapse_close
+            .get()
+            .unwrap_or_else(|| meta_paned_close.position());
         let right_width = window_width.saturating_sub(left_pos + inner_pos);
         let meta_total_height = meta_paned_close.height().max(1);
+        let recent_folders = recent_folders_close.borrow();
 
         config::save(
             cf_close.borrow().as_deref(),
+            &recent_folders,
             window_width,
             window_height,
             window_maximized,
@@ -2913,9 +3033,7 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     if let Some(last_folder) = app_config.last_folder {
         if last_folder.is_dir() {
-            *current_folder.borrow_mut() = Some(last_folder.clone());
-            start_scan_for_folder(last_folder.clone());
-            sync_tree_to_path(&tree_model, &tree_list_view, &last_folder);
+            open_folder_action(last_folder, true);
         }
     }
 
@@ -2987,14 +3105,17 @@ fn build_ui(app: &adw::Application) {
             .max(MIN_CENTER_PANE_PX);
         inner_paned_restore.set_position(inner_pane_start_px);
         let meta_total_height = meta_paned_restore.height().max(1);
-        let meta_pane_start_px = configured_meta_pane_height_pct
+        let configured_meta_pos = configured_meta_pane_height_pct
             .map(|pct| pct_to_px(meta_total_height, pct))
             .or(configured_meta_pane_pos)
-            .unwrap_or(200)
-            .clamp(
-                MIN_META_SPLIT_PX,
-                meta_total_height.saturating_sub(MIN_META_SPLIT_PX),
-            );
+            .unwrap_or(200);
+        let meta_upper_bound = meta_total_height.saturating_sub(MIN_META_SPLIT_PX);
+        let meta_pane_start_px = if meta_upper_bound < MIN_META_SPLIT_PX {
+            // Window is too short to enforce both minimum split sizes.
+            (meta_total_height / 2).max(1)
+        } else {
+            configured_meta_pos.clamp(MIN_META_SPLIT_PX, meta_upper_bound)
+        };
         meta_paned_restore.set_position(meta_pane_start_px);
         glib::ControlFlow::Break
     });
@@ -3091,6 +3212,125 @@ fn format_generation_command(meta: &ImageMetadata) -> String {
     } else {
         format!("comfy-ui-cli {}", parts.join("").trim())
     }
+}
+
+fn json_copy_text(value: &JsonValue) -> String {
+    match value {
+        JsonValue::String(v) => v.clone(),
+        JsonValue::Bool(v) => v.to_string(),
+        JsonValue::Number(v) => v.to_string(),
+        JsonValue::Null => "null".to_string(),
+        JsonValue::Array(_) | JsonValue::Object(_) => {
+            serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+        }
+    }
+}
+
+fn json_display_value(value: &JsonValue) -> String {
+    match value {
+        JsonValue::String(v) => format!("\"{}\"", v),
+        JsonValue::Bool(v) => v.to_string(),
+        JsonValue::Number(v) => v.to_string(),
+        JsonValue::Null => "null".to_string(),
+        JsonValue::Array(values) => format!("[...] ({} items)", values.len()),
+        JsonValue::Object(map) => format!("{{...}} ({} keys)", map.len()),
+    }
+}
+
+fn add_copy_button_hover(row: &gtk4::Box, copy_button: &gtk4::Button) {
+    copy_button.set_opacity(0.0);
+    let motion = gtk4::EventControllerMotion::new();
+    let copy_button_enter = copy_button.clone();
+    motion.connect_enter(move |_, _, _| {
+        copy_button_enter.set_opacity(1.0);
+    });
+    let copy_button_leave = copy_button.clone();
+    motion.connect_leave(move |_| {
+        copy_button_leave.set_opacity(0.0);
+    });
+    row.add_controller(motion);
+}
+
+fn append_json_node(parent: &gtk4::Box, key: Option<&str>, value: &JsonValue, depth: usize) {
+    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    row.set_margin_start((depth as i32) * 14);
+    row.set_hexpand(true);
+
+    match value {
+        JsonValue::Object(map) => {
+            let title = match key {
+                Some(k) => format!("\"{}\": {}", k, json_display_value(value)),
+                None => json_display_value(value),
+            };
+            let expander = gtk4::Expander::new(Some(&title));
+            expander.set_expanded(depth == 0);
+            expander.set_hexpand(true);
+
+            let children = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+            for (child_key, child_val) in map {
+                append_json_node(&children, Some(child_key), child_val, depth + 1);
+            }
+            expander.set_child(Some(&children));
+            row.append(&expander);
+        }
+        JsonValue::Array(items) => {
+            let title = match key {
+                Some(k) => format!("\"{}\": {}", k, json_display_value(value)),
+                None => json_display_value(value),
+            };
+            let expander = gtk4::Expander::new(Some(&title));
+            expander.set_expanded(depth == 0);
+            expander.set_hexpand(true);
+
+            let children = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+            for (idx, child_val) in items.iter().enumerate() {
+                let idx_key = format!("[{}]", idx);
+                append_json_node(&children, Some(&idx_key), child_val, depth + 1);
+            }
+            expander.set_child(Some(&children));
+            row.append(&expander);
+        }
+        _ => {
+            let text = match key {
+                Some(k) => format!("\"{}\": {}", k, json_display_value(value)),
+                None => json_display_value(value),
+            };
+            let label = gtk4::Label::new(Some(&text));
+            label.set_halign(gtk4::Align::Start);
+            label.set_xalign(0.0);
+            label.set_hexpand(true);
+            label.set_selectable(true);
+            label.add_css_class("monospace");
+            row.append(&label);
+        }
+    }
+
+    let copy_text = json_copy_text(value);
+    let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
+    copy_button.add_css_class("flat");
+    copy_button.add_css_class("circular");
+    copy_button.set_tooltip_text(Some("Copy"));
+    copy_button.connect_clicked(move |btn| {
+        gtk4::prelude::WidgetExt::display(btn)
+            .clipboard()
+            .set_text(&copy_text);
+    });
+    add_copy_button_hover(&row, &copy_button);
+    row.append(&copy_button);
+
+    parent.append(&row);
+}
+
+fn build_json_metadata_widget(raw: &str) -> Option<gtk4::ScrolledWindow> {
+    let value: JsonValue = serde_json::from_str(raw.trim()).ok()?;
+    let tree = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    append_json_node(&tree, None, &value, 0);
+
+    let scroller = gtk4::ScrolledWindow::new();
+    scroller.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
+    scroller.set_min_content_height(130);
+    scroller.set_child(Some(&tree));
+    Some(scroller)
 }
 
 // ---------------------------------------------------------------------------
@@ -3370,16 +3610,20 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
         header_box.append(&copy_button);
         row_box.append(&header_box);
 
-        // TextView: non-editable, word-wrapped; Pango layout is lazy/incremental.
-        let text_view = gtk4::TextView::new();
-        text_view.set_editable(false);
-        text_view.set_cursor_visible(false);
-        text_view.set_wrap_mode(gtk4::WrapMode::WordChar);
-        text_view.set_hexpand(true);
-        text_view.add_css_class("caption");
-        text_view.add_css_class("metadata-text-view");
-        text_view.buffer().set_text(&display_val);
-        row_box.append(&text_view);
+        if let Some(json_widget) = build_json_metadata_widget(&display_val) {
+            row_box.append(&json_widget);
+        } else {
+            // TextView: non-editable, word-wrapped; Pango layout is lazy/incremental.
+            let text_view = gtk4::TextView::new();
+            text_view.set_editable(false);
+            text_view.set_cursor_visible(false);
+            text_view.set_wrap_mode(gtk4::WrapMode::WordChar);
+            text_view.set_hexpand(true);
+            text_view.add_css_class("caption");
+            text_view.add_css_class("metadata-text-view");
+            text_view.buffer().set_text(&display_val);
+            row_box.append(&text_view);
+        }
 
         // Wrap in a ListBoxRow.
         let list_row = gtk4::ListBoxRow::new();
@@ -3396,6 +3640,56 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
     }
 }
 
+fn metadata_has_content(meta: &ImageMetadata) -> bool {
+    [
+        meta.camera_make.as_ref(),
+        meta.camera_model.as_ref(),
+        meta.exposure.as_ref(),
+        meta.iso.as_ref(),
+        meta.prompt.as_ref(),
+        meta.negative_prompt.as_ref(),
+        meta.raw_parameters.as_ref(),
+        meta.workflow_json.as_ref(),
+    ]
+    .iter()
+    .any(|v| v.is_some())
+}
+
+fn apply_metadata_section_state(
+    metadata: &ImageMetadata,
+    meta_expander: &gtk4::Expander,
+    meta_paned: &gtk4::Paned,
+    meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
+) {
+    let has_content = metadata_has_content(metadata);
+    let meta_total_height = meta_paned.height().max(1);
+    let meta_upper_bound = meta_total_height.saturating_sub(MIN_META_SPLIT_PX);
+
+    if has_content {
+        meta_expander.set_expanded(true);
+        if let Some(previous_pos) = meta_split_before_auto_collapse.get() {
+            let restored_pos = if meta_upper_bound < MIN_META_SPLIT_PX {
+                (meta_total_height / 2).max(1)
+            } else {
+                previous_pos.clamp(MIN_META_SPLIT_PX, meta_upper_bound)
+            };
+            meta_paned.set_position(restored_pos);
+            meta_split_before_auto_collapse.set(None);
+        }
+    } else {
+        if meta_split_before_auto_collapse.get().is_none() {
+            meta_split_before_auto_collapse.set(Some(meta_paned.position()));
+        }
+        meta_expander.set_expanded(false);
+        let collapsed_pos = if meta_upper_bound < MIN_META_SPLIT_PX {
+            (meta_total_height / 2).max(1)
+        } else {
+            meta_upper_bound
+        };
+        meta_paned.set_position(collapsed_pos);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Asynchronous metadata sidebar loading (cancellable)
 // ---------------------------------------------------------------------------
@@ -3406,12 +3700,21 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
 fn load_metadata_async(
     metadata: ImageMetadata,
     listbox: gtk4::ListBox,
+    meta_expander: gtk4::Expander,
+    meta_paned: gtk4::Paned,
+    meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
     trace_state: Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
 ) {
     glib::MainContext::default().spawn_local(async move {
         // Populate the sidebar (this is fast, all UI calls).
         populate_metadata_sidebar(&listbox, &metadata);
+        apply_metadata_section_state(
+            &metadata,
+            &meta_expander,
+            &meta_paned,
+            &meta_split_before_auto_collapse,
+        );
 
         // Mark metadata as complete in trace if it's still the current click.
         let should_finalize = if let Some(trace) = trace_state.borrow_mut().as_mut() {
