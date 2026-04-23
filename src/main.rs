@@ -1,10 +1,12 @@
 mod byte_format;
 mod config;
 mod db;
+mod dialogs;
 mod file_name_ops;
 mod image_types;
 mod json_tree;
 mod metadata;
+mod metadata_section;
 mod metadata_view;
 mod recent_folders;
 mod scan;
@@ -13,6 +15,7 @@ mod sort;
 mod sort_flags;
 mod thumbnails;
 mod thumbnail_sizing;
+mod timing_report;
 mod tree_sidebar;
 mod updater;
 mod view_helpers;
@@ -22,10 +25,12 @@ use metadata::ImageMetadata;
 use metadata_view::{
     extract_seed_from_parameters, format_generation_command, format_metadata_text,
 };
+use dialogs::{open_delete_dialog, open_rename_dialog};
 use file_name_ops::{
-    build_renamed_target, clipboard_base_name_hint, split_filename,
+    clipboard_base_name_hint,
 };
 use json_tree::build_json_metadata_widget;
+use metadata_section::apply_metadata_section_state;
 use byte_format::human_readable_bytes;
 use scan::ScanMessage;
 use recent_folders::push_recent_folder_entry;
@@ -36,6 +41,7 @@ use sort::{
     SORT_KEY_NAME_ASC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
 };
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
+use timing_report::write_timing_report;
 use tree_sidebar::{build_tree_root, reset_tree_root, sync_tree_to_path};
 use view_helpers::{attach_context_menu, selected_image_path};
 use window_math::{monitor_bounds_for_window, pct_to_px, px_to_pct};
@@ -160,201 +166,6 @@ impl ScanProgressState {
             self.enriched_cached
         )
     }
-}
-
-fn open_rename_dialog(
-    window: &adw::ApplicationWindow,
-    toast_overlay: &adw::ToastOverlay,
-    start_scan_for_folder: &Rc<dyn Fn(std::path::PathBuf)>,
-    current_folder: &Rc<RefCell<Option<std::path::PathBuf>>>,
-    source_path: std::path::PathBuf,
-    initial_base_name: Option<String>,
-) {
-    let (current_base, ext) = split_filename(&source_path);
-    let dialog = gtk4::Window::builder()
-        .transient_for(window)
-        .modal(true)
-        .title("Rename file")
-        .default_width(420)
-        .build();
-
-    let content = gtk4::Box::new(Orientation::Vertical, 8);
-    content.set_spacing(8);
-    content.set_margin_top(12);
-    content.set_margin_bottom(12);
-    content.set_margin_start(12);
-    content.set_margin_end(12);
-    dialog.set_child(Some(&content));
-
-    let prompt = Label::new(Some("Enter a new base name:"));
-    prompt.set_halign(gtk4::Align::Start);
-    content.append(&prompt);
-
-    let entry = gtk4::Entry::new();
-    entry.set_text(initial_base_name.as_deref().unwrap_or(&current_base));
-    entry.set_hexpand(true);
-    entry.select_region(0, -1);
-    content.append(&entry);
-
-    let extension_hint = if let Some(ext) = &ext {
-        format!("Extension '.{ext}' will be preserved")
-    } else {
-        "File has no extension".to_string()
-    };
-    let hint_label = Label::new(Some(&extension_hint));
-    hint_label.add_css_class("caption");
-    hint_label.set_halign(gtk4::Align::Start);
-    content.append(&hint_label);
-
-    let error_label = Label::new(None);
-    error_label.add_css_class("caption");
-    error_label.add_css_class("error");
-    error_label.set_halign(gtk4::Align::Start);
-    content.append(&error_label);
-
-    let button_row = gtk4::Box::new(Orientation::Horizontal, 6);
-    button_row.set_halign(gtk4::Align::End);
-    let cancel_btn = gtk4::Button::with_label("Cancel");
-    let rename_btn = gtk4::Button::with_label("Rename");
-    rename_btn.set_sensitive(false);
-    button_row.append(&cancel_btn);
-    button_row.append(&rename_btn);
-    content.append(&button_row);
-
-    let candidate_target: Rc<RefCell<Option<std::path::PathBuf>>> = Rc::new(RefCell::new(None));
-    let validate_input: Rc<dyn Fn(&str)> = Rc::new({
-        let source_path = source_path.clone();
-        let candidate_target = candidate_target.clone();
-        let rename_btn = rename_btn.clone();
-        let error_label = error_label.clone();
-        move |value: &str| {
-            match build_renamed_target(&source_path, value) {
-                Ok(path) => {
-                    *candidate_target.borrow_mut() = Some(path);
-                    error_label.set_text("");
-                    rename_btn.set_sensitive(true);
-                }
-                Err(message) => {
-                    *candidate_target.borrow_mut() = None;
-                    error_label.set_text(&message);
-                    rename_btn.set_sensitive(false);
-                }
-            }
-        }
-    });
-    (validate_input.as_ref())(entry.text().as_str());
-
-    let validate_on_change = validate_input.clone();
-    entry.connect_changed(move |e| {
-        (validate_on_change.as_ref())(e.text().as_str());
-    });
-
-    let start_scan_for_folder = start_scan_for_folder.clone();
-    let current_folder = current_folder.clone();
-    let toast_overlay = toast_overlay.clone();
-    let dialog_for_cancel = dialog.clone();
-    cancel_btn.connect_clicked(move |_| {
-        dialog_for_cancel.close();
-    });
-
-    let dialog_for_rename = dialog.clone();
-    let rename_btn_activate = rename_btn.clone();
-    entry.connect_activate(move |_| {
-        rename_btn_activate.emit_clicked();
-    });
-
-    rename_btn.connect_clicked(move |_| {
-        if let Some(target) = candidate_target.borrow().clone() {
-            match std::fs::rename(&source_path, &target) {
-                Ok(()) => {
-                    if let Some(folder) = current_folder.borrow().as_ref().cloned() {
-                        start_scan_for_folder(folder);
-                    }
-                    toast_overlay.add_toast(adw::Toast::new("File renamed"));
-                }
-                Err(err) => {
-                    toast_overlay.add_toast(adw::Toast::new(&format!("Rename failed: {}", err)));
-                }
-            }
-        }
-        dialog_for_rename.close();
-    });
-
-    dialog.present();
-}
-
-fn open_delete_dialog(
-    window: &adw::ApplicationWindow,
-    toast_overlay: &adw::ToastOverlay,
-    start_scan_for_folder: &Rc<dyn Fn(std::path::PathBuf)>,
-    current_folder: &Rc<RefCell<Option<std::path::PathBuf>>>,
-    source_path: std::path::PathBuf,
-) {
-    let file_name = source_path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| source_path.to_string_lossy().into_owned());
-    let dialog = gtk4::Window::builder()
-        .transient_for(window)
-        .modal(true)
-        .title("Delete file")
-        .default_width(420)
-        .build();
-
-    let content = gtk4::Box::new(Orientation::Vertical, 10);
-    content.set_margin_top(12);
-    content.set_margin_bottom(12);
-    content.set_margin_start(12);
-    content.set_margin_end(12);
-    dialog.set_child(Some(&content));
-
-    let prompt = Label::new(Some(&format!("Delete '{}'?", file_name)));
-    prompt.set_halign(gtk4::Align::Start);
-    content.append(&prompt);
-
-    let hint = Label::new(Some("This cannot be undone."));
-    hint.add_css_class("caption");
-    hint.set_halign(gtk4::Align::Start);
-    content.append(&hint);
-
-    let button_row = gtk4::Box::new(Orientation::Horizontal, 6);
-    button_row.set_halign(gtk4::Align::End);
-    let cancel_btn = gtk4::Button::with_label("Cancel");
-    let delete_btn = gtk4::Button::with_label("Delete");
-    delete_btn.add_css_class("destructive-action");
-    button_row.append(&cancel_btn);
-    button_row.append(&delete_btn);
-    content.append(&button_row);
-
-    let dialog_for_cancel = dialog.clone();
-    cancel_btn.connect_clicked(move |_| {
-        dialog_for_cancel.close();
-    });
-
-    let dialog_for_delete = dialog.clone();
-    let toast_overlay = toast_overlay.clone();
-    let start_scan_for_folder = start_scan_for_folder.clone();
-    let current_folder = current_folder.clone();
-    delete_btn.connect_clicked(move |_| {
-        match std::fs::remove_file(&source_path) {
-            Ok(()) => {
-                if let Some(folder) = current_folder.borrow().as_ref().cloned() {
-                    start_scan_for_folder(folder);
-                }
-                let toast = adw::Toast::new("File deleted");
-                toast.set_timeout(2);
-                toast_overlay.add_toast(toast);
-            }
-            Err(err) => {
-                let toast = adw::Toast::new(&format!("Delete failed: {}", err));
-                toast.set_timeout(3);
-                toast_overlay.add_toast(toast);
-            }
-        }
-        dialog_for_delete.close();
-    });
-
-    dialog.present();
 }
 
 fn sync_progress_widgets(
@@ -695,10 +506,6 @@ impl FullViewTrace {
     fn total_ms(&self) -> f64 {
         self.started.elapsed().as_secs_f64() * 1000.0
     }
-}
-
-fn write_timing_report(_report: &str) {
-    // Timing debug output disabled.
 }
 
 fn emit_click_report(trace: &ClickTrace) {
@@ -2375,6 +2182,7 @@ fn build_ui(app: &adw::Application) {
                 &meta_expander_for_actions,
                 &meta_paned_for_actions,
                 &meta_split_before_auto_collapse_for_actions,
+                MIN_META_SPLIT_PX,
             );
 
             let toast = adw::Toast::new("Metadata refreshed");
@@ -3888,56 +3696,6 @@ fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
     }
 }
 
-fn metadata_has_content(meta: &ImageMetadata) -> bool {
-    [
-        meta.camera_make.as_ref(),
-        meta.camera_model.as_ref(),
-        meta.exposure.as_ref(),
-        meta.iso.as_ref(),
-        meta.prompt.as_ref(),
-        meta.negative_prompt.as_ref(),
-        meta.raw_parameters.as_ref(),
-        meta.workflow_json.as_ref(),
-    ]
-    .iter()
-    .any(|v| v.is_some())
-}
-
-fn apply_metadata_section_state(
-    metadata: &ImageMetadata,
-    meta_expander: &gtk4::Expander,
-    meta_paned: &gtk4::Paned,
-    meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
-) {
-    let has_content = metadata_has_content(metadata);
-    let meta_total_height = meta_paned.height().max(1);
-    let meta_upper_bound = meta_total_height.saturating_sub(MIN_META_SPLIT_PX);
-
-    if has_content {
-        meta_expander.set_expanded(true);
-        if let Some(previous_pos) = meta_split_before_auto_collapse.get() {
-            let restored_pos = if meta_upper_bound < MIN_META_SPLIT_PX {
-                (meta_total_height / 2).max(1)
-            } else {
-                previous_pos.clamp(MIN_META_SPLIT_PX, meta_upper_bound)
-            };
-            meta_paned.set_position(restored_pos);
-            meta_split_before_auto_collapse.set(None);
-        }
-    } else {
-        if meta_split_before_auto_collapse.get().is_none() {
-            meta_split_before_auto_collapse.set(Some(meta_paned.position()));
-        }
-        meta_expander.set_expanded(false);
-        let collapsed_pos = if meta_upper_bound < MIN_META_SPLIT_PX {
-            (meta_total_height / 2).max(1)
-        } else {
-            meta_upper_bound
-        };
-        meta_paned.set_position(collapsed_pos);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Asynchronous metadata sidebar loading (cancellable)
 // ---------------------------------------------------------------------------
@@ -3962,6 +3720,7 @@ fn load_metadata_async(
             &meta_expander,
             &meta_paned,
             &meta_split_before_auto_collapse,
+            MIN_META_SPLIT_PX,
         );
 
         // Mark metadata as complete in trace if it's still the current click.
