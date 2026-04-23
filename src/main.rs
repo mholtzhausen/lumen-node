@@ -516,6 +516,131 @@ fn dispatch_full_view_load(
     );
 }
 
+struct ClickRuntimeSnapshot {
+    id: u64,
+    active_thumbnail_jobs_at_click: u64,
+    active_preview_jobs_at_click: u64,
+    scan_buffer_depth_at_click: u64,
+    idle_drain_scheduled_at_click: bool,
+    pending_idle_drain_cycles_est_at_click: u64,
+    thumb_ui_callbacks_total_at_click: u64,
+    thumb_ui_callbacks_skipped_at_click: u64,
+}
+
+fn capture_click_runtime_snapshot() -> ClickRuntimeSnapshot {
+    let scan_buffer_depth_at_click = SCAN_BUFFER_DEPTH.load(AtomicOrdering::Relaxed);
+    let idle_drain_scheduled_at_click = SCAN_DRAIN_SCHEDULED.load(AtomicOrdering::Relaxed) != 0;
+    ClickRuntimeSnapshot {
+        id: CLICK_TRACE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
+        active_thumbnail_jobs_at_click: ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed),
+        active_preview_jobs_at_click: ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed),
+        scan_buffer_depth_at_click,
+        idle_drain_scheduled_at_click,
+        pending_idle_drain_cycles_est_at_click: if scan_buffer_depth_at_click == 0 {
+            0
+        } else {
+            scan_buffer_depth_at_click.div_ceil(SCAN_DRAIN_BATCH_SIZE)
+        },
+        thumb_ui_callbacks_total_at_click: THUMB_UI_CALLBACKS_TOTAL.load(AtomicOrdering::Relaxed),
+        thumb_ui_callbacks_skipped_at_click: THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW
+            .load(AtomicOrdering::Relaxed),
+    }
+}
+
+fn start_click_trace(
+    trace_state: &Rc<RefCell<Option<ClickTrace>>>,
+    path_str: String,
+    snapshot: &ClickRuntimeSnapshot,
+) {
+    let mut state = trace_state.borrow_mut();
+    if let Some(prev) = state.as_mut() {
+        if !prev.finished {
+            prev.mark_step("superseded_by_new_click");
+            prev.outcome = "superseded".to_string();
+            prev.finished = true;
+            emit_click_report(prev);
+        }
+    }
+    let mut trace = ClickTrace::new(
+        snapshot.id,
+        path_str,
+        snapshot.active_thumbnail_jobs_at_click,
+        snapshot.active_preview_jobs_at_click,
+        snapshot.scan_buffer_depth_at_click,
+        snapshot.idle_drain_scheduled_at_click,
+        snapshot.pending_idle_drain_cycles_est_at_click,
+        snapshot.thumb_ui_callbacks_total_at_click,
+        snapshot.thumb_ui_callbacks_skipped_at_click,
+    );
+    trace.mark_step("selection_changed");
+    trace.mark_step(&format!(
+        "active_jobs_captured thumb={} preview={} scan_depth={} drain_scheduled={} thumb_cb_total={} thumb_cb_skipped={}",
+        snapshot.active_thumbnail_jobs_at_click,
+        snapshot.active_preview_jobs_at_click,
+        snapshot.scan_buffer_depth_at_click,
+        snapshot.idle_drain_scheduled_at_click,
+        snapshot.thumb_ui_callbacks_total_at_click,
+        snapshot.thumb_ui_callbacks_skipped_at_click
+    ));
+    *state = Some(trace);
+}
+
+fn apply_click_preview_metrics(trace: &mut ClickTrace, metrics: &PreviewLoadMetrics) {
+    trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
+    trace.preview_file_open_ms = Some(metrics.file_open_ms);
+    trace.preview_decode_ms = Some(metrics.decode_ms);
+    trace.preview_texture_create_ms = Some(metrics.texture_create_ms);
+    trace.preview_worker_total_ms = Some(metrics.worker_total_ms);
+    trace.preview_main_thread_dispatch_ms = Some(metrics.main_thread_dispatch_ms);
+    trace.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
+}
+
+fn handle_selection_preview_outcome(
+    metrics: PreviewLoadMetrics,
+    click_trace_state: &Rc<RefCell<Option<ClickTrace>>>,
+    click_id: u64,
+    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
+    thumbnail_size: &Rc<RefCell<i32>>,
+    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+) {
+    PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
+    SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
+    refresh_realized_grid_thumbnails(realized_thumb_images, thumbnail_size, hash_cache);
+
+    if let Some(trace) = click_trace_state.borrow_mut().as_mut() {
+        if trace.id == click_id && !trace.finished {
+            apply_click_preview_metrics(trace, &metrics);
+            match metrics.outcome {
+                PreviewLoadOutcome::Displayed => {
+                    let thumb_total_now = THUMB_UI_CALLBACKS_TOTAL.load(AtomicOrdering::Relaxed);
+                    let thumb_skipped_now =
+                        THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW.load(AtomicOrdering::Relaxed);
+                    trace.thumb_ui_callbacks_total_until_preview = Some(
+                        thumb_total_now.saturating_sub(trace.thumb_ui_callbacks_total_at_click),
+                    );
+                    trace.thumb_ui_callbacks_skipped_until_preview = Some(
+                        thumb_skipped_now.saturating_sub(trace.thumb_ui_callbacks_skipped_at_click),
+                    );
+                    trace.mark_step("preview_displayed");
+                    trace.preview_displayed_at_ms =
+                        Some(trace.started.elapsed().as_secs_f64() * 1000.0);
+                    trace.preview_done = true;
+                }
+                PreviewLoadOutcome::Failed => {
+                    trace.mark_step("preview_failed");
+                    trace.preview_done = true;
+                }
+                PreviewLoadOutcome::StaleOrCancelled => {
+                    trace.mark_step("preview_stale_or_cancelled");
+                    trace.outcome = "cancelled".to_string();
+                    trace.finished = true;
+                    emit_click_report(trace);
+                }
+            }
+        }
+    }
+}
+
 fn mark_click_step(trace_state: &Rc<RefCell<Option<ClickTrace>>>, click_id: u64, step: &str) {
     if let Some(trace) = trace_state.borrow_mut().as_mut() {
         if trace.id == click_id && !trace.finished {
@@ -1685,57 +1810,9 @@ fn build_ui(app: &adw::Application) {
             return;
         };
         let path_str = item.string().to_string();
-        let click_id = CLICK_TRACE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
-        let active_thumbnail_jobs_at_click =
-            ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed);
-        let active_preview_jobs_at_click =
-            ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed);
-        let scan_buffer_depth_at_click = SCAN_BUFFER_DEPTH.load(AtomicOrdering::Relaxed);
-        let idle_drain_scheduled_at_click =
-            SCAN_DRAIN_SCHEDULED.load(AtomicOrdering::Relaxed) != 0;
-        let thumb_ui_callbacks_total_at_click =
-            THUMB_UI_CALLBACKS_TOTAL.load(AtomicOrdering::Relaxed);
-        let thumb_ui_callbacks_skipped_at_click =
-            THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW.load(AtomicOrdering::Relaxed);
-        let pending_idle_drain_cycles_est_at_click = if scan_buffer_depth_at_click == 0 {
-            0
-        } else {
-            scan_buffer_depth_at_click.div_ceil(SCAN_DRAIN_BATCH_SIZE)
-        };
-
-        {
-            let mut state = click_trace_state_sel.borrow_mut();
-            if let Some(prev) = state.as_mut() {
-                if !prev.finished {
-                    prev.mark_step("superseded_by_new_click");
-                    prev.outcome = "superseded".to_string();
-                    prev.finished = true;
-                    emit_click_report(prev);
-                }
-            }
-            let mut trace = ClickTrace::new(
-                click_id,
-                path_str.clone(),
-                active_thumbnail_jobs_at_click,
-                active_preview_jobs_at_click,
-                scan_buffer_depth_at_click,
-                idle_drain_scheduled_at_click,
-                pending_idle_drain_cycles_est_at_click,
-                thumb_ui_callbacks_total_at_click,
-                thumb_ui_callbacks_skipped_at_click,
-            );
-            trace.mark_step("selection_changed");
-            trace.mark_step(&format!(
-                "active_jobs_captured thumb={} preview={} scan_depth={} drain_scheduled={} thumb_cb_total={} thumb_cb_skipped={}",
-                active_thumbnail_jobs_at_click,
-                active_preview_jobs_at_click,
-                scan_buffer_depth_at_click,
-                idle_drain_scheduled_at_click,
-                thumb_ui_callbacks_total_at_click,
-                thumb_ui_callbacks_skipped_at_click
-            ));
-            *state = Some(trace);
-        }
+        let click_snapshot = capture_click_runtime_snapshot();
+        start_click_trace(&click_trace_state_sel, path_str.clone(), &click_snapshot);
+        let click_id = click_snapshot.id;
 
         mark_click_step(&click_trace_state_sel, click_id, "selected_item_resolved");
 
@@ -1778,94 +1855,14 @@ fn build_ui(app: &adw::Application) {
             &path_str,
             Some(520),
             Some(Box::new(move |metrics| {
-                match metrics.outcome {
-                    PreviewLoadOutcome::Displayed => {
-                        PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
-                        SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
-                        refresh_realized_grid_thumbnails(
-                            &realized_thumb_images_for_preview,
-                            &thumbnail_size_for_preview,
-                            &hash_cache_for_preview,
-                        );
-                        if let Some(trace) = click_trace_for_preview.borrow_mut().as_mut() {
-                            if trace.id == click_id && !trace.finished {
-                                trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
-                                trace.preview_file_open_ms = Some(metrics.file_open_ms);
-                                trace.preview_decode_ms = Some(metrics.decode_ms);
-                                trace.preview_texture_create_ms = Some(metrics.texture_create_ms);
-                                trace.preview_worker_total_ms = Some(metrics.worker_total_ms);
-                                trace.preview_main_thread_dispatch_ms =
-                                    Some(metrics.main_thread_dispatch_ms);
-                                trace.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
-                                // Mark preview display complete; metadata will complete separately.
-                                let thumb_total_now =
-                                    THUMB_UI_CALLBACKS_TOTAL.load(AtomicOrdering::Relaxed);
-                                let thumb_skipped_now =
-                                    THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW
-                                        .load(AtomicOrdering::Relaxed);
-                                trace.thumb_ui_callbacks_total_until_preview = Some(
-                                    thumb_total_now.saturating_sub(trace.thumb_ui_callbacks_total_at_click),
-                                );
-                                trace.thumb_ui_callbacks_skipped_until_preview = Some(
-                                    thumb_skipped_now.saturating_sub(trace.thumb_ui_callbacks_skipped_at_click),
-                                );
-                                trace.mark_step("preview_displayed");
-                                trace.preview_displayed_at_ms =
-                                    Some(trace.started.elapsed().as_secs_f64() * 1000.0);
-                                trace.preview_done = true;
-                            }
-                        }
-                    }
-                    PreviewLoadOutcome::Failed => {
-                        PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
-                        SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
-                        refresh_realized_grid_thumbnails(
-                            &realized_thumb_images_for_preview,
-                            &thumbnail_size_for_preview,
-                            &hash_cache_for_preview,
-                        );
-                        if let Some(trace) = click_trace_for_preview.borrow_mut().as_mut() {
-                            if trace.id == click_id && !trace.finished {
-                                trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
-                                trace.preview_file_open_ms = Some(metrics.file_open_ms);
-                                trace.preview_decode_ms = Some(metrics.decode_ms);
-                                trace.preview_texture_create_ms = Some(metrics.texture_create_ms);
-                                trace.preview_worker_total_ms = Some(metrics.worker_total_ms);
-                                trace.preview_main_thread_dispatch_ms =
-                                    Some(metrics.main_thread_dispatch_ms);
-                                trace.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
-                                trace.mark_step("preview_failed");
-                                trace.preview_done = true;
-                                // Metadata load continues in background; don't finalize yet.
-                            }
-                        }
-                    }
-                    PreviewLoadOutcome::StaleOrCancelled => {
-                        PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
-                        SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
-                        refresh_realized_grid_thumbnails(
-                            &realized_thumb_images_for_preview,
-                            &thumbnail_size_for_preview,
-                            &hash_cache_for_preview,
-                        );
-                        if let Some(trace) = click_trace_for_preview.borrow_mut().as_mut() {
-                            if trace.id == click_id && !trace.finished {
-                                trace.preview_queue_wait_ms = Some(metrics.queue_wait_ms);
-                                trace.preview_file_open_ms = Some(metrics.file_open_ms);
-                                trace.preview_decode_ms = Some(metrics.decode_ms);
-                                trace.preview_texture_create_ms = Some(metrics.texture_create_ms);
-                                trace.preview_worker_total_ms = Some(metrics.worker_total_ms);
-                                trace.preview_main_thread_dispatch_ms =
-                                    Some(metrics.main_thread_dispatch_ms);
-                                trace.preview_texture_apply_ms = Some(metrics.texture_apply_ms);
-                                trace.mark_step("preview_stale_or_cancelled");
-                                trace.outcome = "cancelled".to_string();
-                                trace.finished = true;
-                                emit_click_report(trace);
-                            }
-                        }
-                    }
-                }
+                handle_selection_preview_outcome(
+                    metrics,
+                    &click_trace_for_preview,
+                    click_id,
+                    &realized_thumb_images_for_preview,
+                    &thumbnail_size_for_preview,
+                    &hash_cache_for_preview,
+                );
             })),
         );
     });
