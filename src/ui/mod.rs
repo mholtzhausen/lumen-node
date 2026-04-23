@@ -3,6 +3,7 @@ pub mod controls;
 pub mod grid;
 pub mod keyboard;
 pub mod navigation;
+pub mod models;
 pub mod open_folder;
 pub mod preview;
 pub mod scan_runtime;

@@ -27,10 +27,9 @@ use byte_format::human_readable_bytes;
 use scan::ScanMessage;
 use recent_folders::push_recent_folder_entry;
 use scanner::scan_directory;
-use sort_flags::{compute_sort_fields, SortFields};
+use sort_flags::SortFields;
 use sort::{
-    normalize_sort_key, sort_index_for_key, SORT_KEY_DATE_DESC,
-    SORT_KEY_NAME_ASC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
+    normalize_sort_key, sort_index_for_key, SORT_KEY_NAME_ASC,
 };
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use tree_sidebar::reset_tree_root;
@@ -48,6 +47,7 @@ use ui::grid::{
     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
 };
 use ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps};
+use ui::models::{build_model_bundle, ModelAssemblyDeps};
 use ui::navigation::{install_navigation_handlers, NavigationDeps};
 use ui::open_folder::{build_open_folder_action, OpenFolderActionDeps};
 use ui::scan_runtime::{install_scan_runtime, ScanRuntimeDeps};
@@ -83,9 +83,8 @@ use std::{
 use libadwaita as adw;
 use adw::prelude::*;
 use gtk4::{
-    gio, glib, CustomFilter, CustomSorter, FilterListModel, Image, Label, ListItem,
-    ProgressBar, SignalListItemFactory, SingleSelection,
-    SortListModel, StringObject, TreeListRow,
+    gio, glib, Image, Label, ListItem, ProgressBar, SignalListItemFactory,
+    StringObject, TreeListRow,
 };
 
 pub(crate) static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -460,119 +459,18 @@ fn build_ui(app: &adw::Application) {
         start_scan_tree(path);
     });
 
-    // --- Filter model: wraps list_store, applies search text ---
-    let meta_cache_filter = meta_cache.clone();
-    let search_text_filter = search_text.clone();
-    let filter = CustomFilter::new(move |obj| {
-        let query = search_text_filter.borrow().to_lowercase();
-        if query.is_empty() {
-            return true;
-        }
-        let path_str = obj
-            .downcast_ref::<StringObject>()
-            .map(|s| s.string().to_string())
-            .unwrap_or_default();
-        // Match against filename.
-        let filename = std::path::Path::new(&path_str)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        if filename.contains(&query) {
-            return true;
-        }
-        // Match against cached metadata fields.
-        let cache = meta_cache_filter.borrow();
-        if let Some(meta) = cache.get(&path_str) {
-            let fields: [Option<&str>; 8] = [
-                meta.camera_make.as_deref(),
-                meta.camera_model.as_deref(),
-                meta.exposure.as_deref(),
-                meta.iso.as_deref(),
-                meta.prompt.as_deref(),
-                meta.negative_prompt.as_deref(),
-                meta.raw_parameters.as_deref(),
-                meta.workflow_json.as_deref(),
-            ];
-            for field in fields.iter().flatten() {
-                if field.to_lowercase().contains(&query) {
-                    return true;
-                }
-            }
-        }
-        false
+    let model_bundle = build_model_bundle(ModelAssemblyDeps {
+        list_store: list_store.clone(),
+        meta_cache: meta_cache.clone(),
+        search_text: search_text.clone(),
+        sort_key: sort_key.clone(),
+        sort_fields_cache: sort_fields_cache.clone(),
     });
-    let filter_model = FilterListModel::new(Some(list_store.clone()), Some(filter.clone()));
-
-    // --- Sort model: wraps filter_model, applies selected sort key ---
-    let sort_key_sorter = sort_key.clone();
-    let sort_fields_cache_sorter = sort_fields_cache.clone();
-    let sorter = CustomSorter::new(move |a, b| {
-        let path_a = a
-            .downcast_ref::<StringObject>()
-            .map(|s| s.string().to_string())
-            .unwrap_or_default();
-        let path_b = b
-            .downcast_ref::<StringObject>()
-            .map(|s| s.string().to_string())
-            .unwrap_or_default();
-        let key = sort_key_sorter.borrow().clone();
-        let cache = sort_fields_cache_sorter.borrow();
-        let fallback_a;
-        let fallback_b;
-        let fields_a = if let Some(fields) = cache.get(&path_a) {
-            fields
-        } else {
-            fallback_a = compute_sort_fields(&path_a);
-            &fallback_a
-        };
-        let fields_b = if let Some(fields) = cache.get(&path_b) {
-            fields
-        } else {
-            fallback_b = compute_sort_fields(&path_b);
-            &fallback_b
-        };
-        let ord = match normalize_sort_key(key.as_str()) {
-            "name_asc" | "name_desc" => {
-                let cmp = fields_a
-                    .filename_lower
-                    .cmp(&fields_b.filename_lower)
-                    .then_with(|| path_a.cmp(&path_b));
-                if key == SORT_KEY_NAME_DESC { cmp.reverse() } else { cmp }
-            }
-            "date_asc" | "date_desc" => {
-                let cmp = fields_a
-                    .modified
-                    .cmp(&fields_b.modified)
-                    .then_with(|| fields_a.filename_lower.cmp(&fields_b.filename_lower))
-                    .then_with(|| path_a.cmp(&path_b));
-                if key == SORT_KEY_DATE_DESC { cmp.reverse() } else { cmp }
-            }
-            "size_asc" | "size_desc" => {
-                let cmp = fields_a
-                    .size
-                    .cmp(&fields_b.size)
-                    .then_with(|| fields_a.filename_lower.cmp(&fields_b.filename_lower))
-                    .then_with(|| path_a.cmp(&path_b));
-                if key == SORT_KEY_SIZE_DESC { cmp.reverse() } else { cmp }
-            }
-            _ => std::cmp::Ordering::Equal,
-        };
-        match ord {
-            std::cmp::Ordering::Less => gtk4::Ordering::Smaller,
-            std::cmp::Ordering::Greater => gtk4::Ordering::Larger,
-            std::cmp::Ordering::Equal => gtk4::Ordering::Equal,
-        }
-    });
-    let sort_model = SortListModel::new(Some(filter_model.clone()), Some(sorter.clone()));
-
-    // --- Center: ViewStack with Grid + Single pages ---
-    let selection_model = SingleSelection::new(Some(sort_model.clone()));
-    let selection_for_default = selection_model.clone();
-    sort_model.connect_items_changed(move |model, _, _, _| {
-        if model.n_items() > 0 && selection_for_default.selected_item().is_none() {
-            selection_for_default.set_selected(0);
-        }
-    });
+    let filter = model_bundle.filter;
+    let sorter = model_bundle.sorter;
+    let _filter_model = model_bundle.filter_model;
+    let _sort_model = model_bundle.sort_model;
+    let selection_model = model_bundle.selection_model;
 
     let factory = SignalListItemFactory::new();
 
