@@ -42,6 +42,16 @@ pub fn db_path(folder: &Path) -> PathBuf {
     folder.join(".lumen-node.db")
 }
 
+/// Removes the per-folder DB file and SQLite sidecar files if they exist.
+pub fn remove_db_files(folder: &Path) {
+    let db = db_path(folder);
+    let wal = folder.join(".lumen-node.db-wal");
+    let shm = folder.join(".lumen-node.db-shm");
+    let _ = std::fs::remove_file(db);
+    let _ = std::fs::remove_file(wal);
+    let _ = std::fs::remove_file(shm);
+}
+
 /// Opens (or creates) the per-folder database and ensures the schema exists.
 pub fn open(folder: &Path) -> rusqlite::Result<Connection> {
     let path = db_path(folder);

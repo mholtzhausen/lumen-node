@@ -224,6 +224,34 @@ fn split_filename(path: &std::path::Path) -> (String, Option<String>) {
     (file_name, None)
 }
 
+fn clipboard_base_name_hint(raw_text: &str) -> Option<String> {
+    for line in raw_text.lines() {
+        let candidate = line.trim();
+        if candidate.is_empty() || candidate.starts_with('#') {
+            continue;
+        }
+        let name = if candidate.starts_with("file://") {
+            let file = gio::File::for_uri(candidate);
+            file.basename()
+                .map(|s| s.to_string_lossy().into_owned())
+        } else {
+            std::path::Path::new(candidate)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+        };
+        if let Some(name) = name {
+            let base = std::path::Path::new(&name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().trim().to_string())
+                .unwrap_or_default();
+            if !base.is_empty() {
+                return Some(base);
+            }
+        }
+    }
+    None
+}
+
 fn build_renamed_target(
     source_path: &std::path::Path,
     input_base_name: &str,
@@ -257,6 +285,7 @@ fn open_rename_dialog(
     start_scan_for_folder: &Rc<dyn Fn(std::path::PathBuf)>,
     current_folder: &Rc<RefCell<Option<std::path::PathBuf>>>,
     source_path: std::path::PathBuf,
+    initial_base_name: Option<String>,
 ) {
     let (current_base, ext) = split_filename(&source_path);
     let dialog = gtk4::Window::builder()
@@ -279,7 +308,7 @@ fn open_rename_dialog(
     content.append(&prompt);
 
     let entry = gtk4::Entry::new();
-    entry.set_text(&current_base);
+    entry.set_text(initial_base_name.as_deref().unwrap_or(&current_base));
     entry.set_hexpand(true);
     entry.select_region(0, -1);
     content.append(&entry);
@@ -366,6 +395,80 @@ fn open_rename_dialog(
             }
         }
         dialog_for_rename.close();
+    });
+
+    dialog.present();
+}
+
+fn open_delete_dialog(
+    window: &adw::ApplicationWindow,
+    toast_overlay: &adw::ToastOverlay,
+    start_scan_for_folder: &Rc<dyn Fn(std::path::PathBuf)>,
+    current_folder: &Rc<RefCell<Option<std::path::PathBuf>>>,
+    source_path: std::path::PathBuf,
+) {
+    let file_name = source_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| source_path.to_string_lossy().into_owned());
+    let dialog = gtk4::Window::builder()
+        .transient_for(window)
+        .modal(true)
+        .title("Delete file")
+        .default_width(420)
+        .build();
+
+    let content = gtk4::Box::new(Orientation::Vertical, 10);
+    content.set_margin_top(12);
+    content.set_margin_bottom(12);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+    dialog.set_child(Some(&content));
+
+    let prompt = Label::new(Some(&format!("Delete '{}'?", file_name)));
+    prompt.set_halign(gtk4::Align::Start);
+    content.append(&prompt);
+
+    let hint = Label::new(Some("This cannot be undone."));
+    hint.add_css_class("caption");
+    hint.set_halign(gtk4::Align::Start);
+    content.append(&hint);
+
+    let button_row = gtk4::Box::new(Orientation::Horizontal, 6);
+    button_row.set_halign(gtk4::Align::End);
+    let cancel_btn = gtk4::Button::with_label("Cancel");
+    let delete_btn = gtk4::Button::with_label("Delete");
+    delete_btn.add_css_class("destructive-action");
+    button_row.append(&cancel_btn);
+    button_row.append(&delete_btn);
+    content.append(&button_row);
+
+    let dialog_for_cancel = dialog.clone();
+    cancel_btn.connect_clicked(move |_| {
+        dialog_for_cancel.close();
+    });
+
+    let dialog_for_delete = dialog.clone();
+    let toast_overlay = toast_overlay.clone();
+    let start_scan_for_folder = start_scan_for_folder.clone();
+    let current_folder = current_folder.clone();
+    delete_btn.connect_clicked(move |_| {
+        match std::fs::remove_file(&source_path) {
+            Ok(()) => {
+                if let Some(folder) = current_folder.borrow().as_ref().cloned() {
+                    start_scan_for_folder(folder);
+                }
+                let toast = adw::Toast::new("File deleted");
+                toast.set_timeout(2);
+                toast_overlay.add_toast(toast);
+            }
+            Err(err) => {
+                let toast = adw::Toast::new(&format!("Delete failed: {}", err));
+                toast.set_timeout(3);
+                toast_overlay.add_toast(toast);
+            }
+        }
+        dialog_for_delete.close();
     });
 
     dialog.present();
@@ -1032,6 +1135,29 @@ fn build_ui(app: &adw::Application) {
         }
         .scroll-flag-pointer {
             color: alpha(@theme_fg_color, 0.95);
+        }
+        .thumbnail-card {
+            background-color: alpha(@theme_fg_color, 0.04);
+            border-radius: 8px;
+            padding: 4px;
+        }
+        gridview > child {
+            background-color: transparent;
+            border-color: transparent;
+            box-shadow: none;
+        }
+        gridview > child:hover {
+            background-color: transparent;
+        }
+        gridview > child:selected {
+            background-color: transparent;
+        }
+        gridview > child:hover .thumbnail-card {
+            background-color: alpha(@theme_fg_color, 0.10);
+            box-shadow: 0 2px 6px alpha(black, 0.14);
+        }
+        gridview > child:selected .thumbnail-card {
+            background-color: alpha(@accent_bg_color, 0.28);
         }
         ",
     );
@@ -1774,12 +1900,21 @@ fn build_ui(app: &adw::Application) {
     let toast_for_rename = toast_overlay.clone();
     let current_folder_for_rename = current_folder.clone();
     let start_scan_for_folder_rename = start_scan_for_folder.clone();
+    let window_for_delete = window.clone();
+    let toast_for_delete = toast_overlay.clone();
+    let current_folder_for_delete = current_folder.clone();
+    let start_scan_for_folder_delete = start_scan_for_folder.clone();
     factory.connect_setup(move |_, obj| {
         let list_item = obj.downcast_ref::<ListItem>().unwrap();
         let cell_box = gtk4::Box::new(Orientation::Vertical, 4);
+        cell_box.add_css_class("thumbnail-card");
         cell_box.set_halign(gtk4::Align::Center);
+        cell_box.set_margin_top(4);
+        cell_box.set_margin_bottom(4);
+        cell_box.set_margin_start(4);
+        cell_box.set_margin_end(4);
         let size = *thumbnail_size_setup.borrow();
-        cell_box.set_size_request(size + 4, size + 20);
+        cell_box.set_size_request(size + 12, size + 28);
         let thumb_image = Image::new();
         thumb_image.set_pixel_size(size);
         let generation_token = Rc::new(Cell::new(0_u64));
@@ -1797,6 +1932,12 @@ fn build_ui(app: &adw::Application) {
         rename_btn.set_tooltip_text(Some("Rename file"));
         rename_btn.set_opacity(0.0);
         rename_btn.set_focus_on_click(false);
+        let delete_btn = gtk4::Button::from_icon_name("user-trash-symbolic");
+        delete_btn.add_css_class("flat");
+        delete_btn.add_css_class("destructive-action");
+        delete_btn.set_tooltip_text(Some("Delete file"));
+        delete_btn.set_opacity(0.0);
+        delete_btn.set_focus_on_click(false);
         let window_for_btn = window_for_rename.clone();
         let toast_for_btn = toast_for_rename.clone();
         let current_folder_for_btn = current_folder_for_rename.clone();
@@ -1811,21 +1952,45 @@ fn build_ui(app: &adw::Application) {
                 &start_scan_for_folder_btn,
                 &current_folder_for_btn,
                 std::path::PathBuf::from(path),
+                None,
+            );
+        });
+        let window_for_btn = window_for_delete.clone();
+        let toast_for_btn = toast_for_delete.clone();
+        let current_folder_for_btn = current_folder_for_delete.clone();
+        let start_scan_for_folder_btn: Rc<dyn Fn(std::path::PathBuf)> =
+            start_scan_for_folder_delete.clone();
+        delete_btn.connect_clicked(move |btn| {
+            let path = unsafe { btn.data::<String>("bound-path").map(|s| s.as_ref().clone()) };
+            let Some(path) = path else { return };
+            open_delete_dialog(
+                &window_for_btn,
+                &toast_for_btn,
+                &start_scan_for_folder_btn,
+                &current_folder_for_btn,
+                std::path::PathBuf::from(path),
             );
         });
         let name_row = gtk4::Box::new(Orientation::Horizontal, 4);
         name_row.set_hexpand(true);
         name_row.set_halign(gtk4::Align::Fill);
+        let action_box = gtk4::Box::new(Orientation::Horizontal, 2);
+        action_box.append(&rename_btn);
+        action_box.append(&delete_btn);
         name_row.append(&name_label);
-        name_row.append(&rename_btn);
+        name_row.append(&action_box);
         let rename_btn_enter = rename_btn.clone();
         let rename_btn_leave = rename_btn.clone();
+        let delete_btn_enter = delete_btn.clone();
+        let delete_btn_leave = delete_btn.clone();
         let motion = EventControllerMotion::new();
         motion.connect_enter(move |_, _, _| {
             rename_btn_enter.set_opacity(1.0);
+            delete_btn_enter.set_opacity(1.0);
         });
         motion.connect_leave(move |_| {
             rename_btn_leave.set_opacity(0.0);
+            delete_btn_leave.set_opacity(0.0);
         });
         cell_box.add_controller(motion);
         cell_box.append(&thumb_image);
@@ -1848,9 +2013,11 @@ fn build_ui(app: &adw::Application) {
         let thumb_image = cell_box.first_child().and_downcast::<Image>().unwrap();
         let name_row = cell_box.last_child().and_downcast::<gtk4::Box>().unwrap();
         let name_label = name_row.first_child().and_downcast::<Label>().unwrap();
-        let rename_btn = name_row.last_child().and_downcast::<gtk4::Button>().unwrap();
+        let action_box = name_row.last_child().and_downcast::<gtk4::Box>().unwrap();
+        let rename_btn = action_box.first_child().and_downcast::<gtk4::Button>().unwrap();
+        let delete_btn = action_box.last_child().and_downcast::<gtk4::Button>().unwrap();
         let size = *thumbnail_size_bind.borrow();
-        cell_box.set_size_request(size + 4, size + 20);
+        cell_box.set_size_request(size + 12, size + 28);
         thumb_image.set_pixel_size(size);
 
         // Set filename label and placeholder icon synchronously (zero I/O).
@@ -1860,6 +2027,7 @@ fn build_ui(app: &adw::Application) {
             .unwrap_or_default();
         name_label.set_text(&filename);
         unsafe { rename_btn.set_data("bound-path", path_str.clone()); }
+        unsafe { delete_btn.set_data("bound-path", path_str.clone()); }
         let generation_token = unsafe {
             thumb_image
                 .data::<Rc<Cell<u64>>>("thumb-generation")
@@ -1899,9 +2067,17 @@ fn build_ui(app: &adw::Application) {
                 }
                 unsafe { image.steal_data::<String>("bound-path"); }
                 if let Some(name_row) = cell_box.last_child().and_downcast::<gtk4::Box>() {
-                    if let Some(rename_btn) = name_row.last_child().and_downcast::<gtk4::Button>()
-                    {
-                        unsafe { rename_btn.steal_data::<String>("bound-path"); }
+                    if let Some(action_box) = name_row.last_child().and_downcast::<gtk4::Box>() {
+                        if let Some(rename_btn) =
+                            action_box.first_child().and_downcast::<gtk4::Button>()
+                        {
+                            unsafe { rename_btn.steal_data::<String>("bound-path"); }
+                        }
+                        if let Some(delete_btn) =
+                            action_box.last_child().and_downcast::<gtk4::Button>()
+                        {
+                            unsafe { delete_btn.steal_data::<String>("bound-path"); }
+                        }
                     }
                 }
                 image.set_icon_name(Some("image-x-generic-symbolic"));
@@ -2247,6 +2423,7 @@ fn build_ui(app: &adw::Application) {
 
     let selection_for_actions = selection_model.clone();
     let window_for_actions = window.clone();
+    let toast_overlay_for_actions = toast_overlay.clone();
     copy_image_action.connect_activate(move |_, _| {
         let Some(path) = selected_image_path(&selection_for_actions) else {
             return;
@@ -2256,6 +2433,9 @@ fn build_ui(app: &adw::Application) {
             gtk4::prelude::WidgetExt::display(&window_for_actions)
                 .clipboard()
                 .set_texture(&texture);
+            let toast = adw::Toast::new("Image copied to clipboard");
+            toast.set_timeout(2);
+            toast_overlay_for_actions.add_toast(toast);
         }
     });
 
@@ -3104,11 +3284,92 @@ fn build_ui(app: &adw::Application) {
     let thumbnail_size_for_keys = thumbnail_size.clone();
     let toast_overlay_for_keys = toast_overlay.clone();
     let window_for_keys = window.clone();
+    let current_folder_for_keys = current_folder.clone();
+    let start_scan_for_folder_keys: Rc<dyn Fn(std::path::PathBuf)> = start_scan_for_folder.clone();
     let left_toggle_for_keys = left_toggle.clone();
     let right_toggle_for_keys = right_toggle.clone();
     let pre_fullview_left_keys = pre_fullview_left.clone();
     let pre_fullview_right_keys = pre_fullview_right.clone();
-    key_controller.connect_key_pressed(move |_, key, _, _| {
+    key_controller.connect_key_pressed(move |_, key, _, state| {
+        let ctrl_pressed = state.contains(gdk::ModifierType::CONTROL_MASK);
+        if ctrl_pressed && key == gdk::Key::c {
+            let Some(path) = selected_image_path(&selection_for_keys) else {
+                return glib::Propagation::Stop;
+            };
+            let file = gio::File::for_path(&path);
+            if let Ok(texture) = gdk::Texture::from_file(&file) {
+                gtk4::prelude::WidgetExt::display(&window_for_keys)
+                    .clipboard()
+                    .set_texture(&texture);
+                let toast = adw::Toast::new("Image copied to clipboard");
+                toast.set_timeout(2);
+                toast_overlay_for_keys.add_toast(toast);
+            }
+            return glib::Propagation::Stop;
+        }
+        if ctrl_pressed && key == gdk::Key::v {
+            let Some(folder) = current_folder_for_keys.borrow().as_ref().cloned() else {
+                let toast = adw::Toast::new("Open a folder before pasting");
+                toast.set_timeout(2);
+                toast_overlay_for_keys.add_toast(toast);
+                return glib::Propagation::Stop;
+            };
+            let display = gtk4::prelude::WidgetExt::display(&window_for_keys);
+            let clipboard = display.clipboard();
+            let toast_overlay = toast_overlay_for_keys.clone();
+            let window = window_for_keys.clone();
+            let current_folder = current_folder_for_keys.clone();
+            let start_scan_for_folder = start_scan_for_folder_keys.clone();
+            glib::MainContext::default().spawn_local(async move {
+                let Ok(Some(texture)) = clipboard.read_texture_future().await else {
+                    let toast = adw::Toast::new("Clipboard does not contain an image");
+                    toast.set_timeout(2);
+                    toast_overlay.add_toast(toast);
+                    return;
+                };
+                let suggested_name = clipboard
+                    .read_text_future()
+                    .await
+                    .ok()
+                    .flatten()
+                    .as_ref()
+                    .and_then(|text| clipboard_base_name_hint(text.as_str()));
+                let uuid_base = glib::uuid_string_random().to_string();
+                let target_path = folder.join(format!("{uuid_base}.png"));
+                match texture.save_to_png(&target_path) {
+                    Ok(()) => {
+                        start_scan_for_folder(folder.clone());
+                        open_rename_dialog(
+                            &window,
+                            &toast_overlay,
+                            &start_scan_for_folder,
+                            &current_folder,
+                            target_path,
+                            Some(suggested_name.unwrap_or(uuid_base)),
+                        );
+                    }
+                    Err(err) => {
+                        let toast = adw::Toast::new(&format!("Paste failed: {}", err));
+                        toast.set_timeout(3);
+                        toast_overlay.add_toast(toast);
+                    }
+                }
+            });
+            return glib::Propagation::Stop;
+        }
+        if key == gdk::Key::Delete {
+            let Some(path) = selected_image_path(&selection_for_keys) else {
+                return glib::Propagation::Stop;
+            };
+            open_delete_dialog(
+                &window_for_keys,
+                &toast_overlay_for_keys,
+                &start_scan_for_folder_keys,
+                &current_folder_for_keys,
+                path,
+            );
+            return glib::Propagation::Stop;
+        }
         if key == gdk::Key::Escape {
             let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
             if in_grid {

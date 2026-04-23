@@ -76,6 +76,13 @@ pub fn scan_directory(
 
         let _ = sender.send_blocking(ScanMessage::EnumerationComplete { generation });
 
+        // No images left in this folder: remove any stale per-folder DB files.
+        if paths.is_empty() {
+            db::remove_db_files(&dir);
+            let _ = sender.send_blocking(ScanMessage::ScanComplete { generation });
+            return;
+        }
+
         // Open (or create) the per-folder database.
         let conn = match db::open(&dir) {
             Ok(c) => c,
