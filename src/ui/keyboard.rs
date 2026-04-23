@@ -6,7 +6,7 @@ use crate::view_helpers::selected_image_path;
 use gtk4::prelude::*;
 use gtk4::{
     gdk, gio, glib, EventControllerKey, EventControllerScroll, EventControllerScrollFlags,
-    ListScrollFlags, StringObject,
+    ListScrollFlags, StringObject, Widget,
 };
 use libadwaita as adw;
 use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
@@ -111,10 +111,10 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             return glib::Propagation::Stop;
         }
         if key == gdk::Key::Delete {
-            let Some(path) = selected_image_path(&selection_for_keys) else {
-                return glib::Propagation::Proceed;
-            };
             if state.contains(gdk::ModifierType::SHIFT_MASK) {
+                let Some(path) = selected_image_path(&selection_for_keys) else {
+                    return glib::Propagation::Proceed;
+                };
                 open_delete_dialog(
                     &window_for_keys,
                     &toast_overlay_for_keys,
@@ -124,7 +124,17 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                 );
                 return glib::Propagation::Stop;
             }
-            // Plain Delete: let `Application` accel run `ctx.move-to-trash` (trash dialog).
+            if focus_in_text_input(&window_for_keys) {
+                return glib::Propagation::Proceed;
+            }
+            if selected_image_path(&selection_for_keys).is_none() {
+                return glib::Propagation::Proceed;
+            }
+            if gtk4::prelude::WidgetExt::activate_action(&window_for_keys, "ctx.move-to-trash", None)
+                .is_ok()
+            {
+                return glib::Propagation::Stop;
+            }
             return glib::Propagation::Proceed;
         }
         if key == gdk::Key::Escape {
@@ -286,4 +296,26 @@ pub(crate) fn install_scroll_navigation_handlers(
         });
         meta_preview.add_controller(scroll);
     }
+}
+
+fn focus_in_text_input(window: &adw::ApplicationWindow) -> bool {
+    let Some(focus) = gtk4::prelude::RootExt::focus(window.upcast_ref::<gtk4::Root>()) else {
+        return false;
+    };
+    widget_is_or_inside_text_input(&focus)
+}
+
+fn widget_is_or_inside_text_input(widget: &Widget) -> bool {
+    let mut current: Option<Widget> = Some(widget.clone());
+    while let Some(w) = current {
+        if w.is::<gtk4::SearchEntry>()
+            || w.is::<gtk4::Entry>()
+            || w.is::<gtk4::TextView>()
+            || w.is::<gtk4::SpinButton>()
+        {
+            return true;
+        }
+        current = w.parent();
+    }
+    false
 }

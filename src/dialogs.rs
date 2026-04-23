@@ -257,8 +257,10 @@ pub fn open_trash_dialog(
                 if let Some(folder) = current_folder.borrow().as_ref().cloned() {
                     start_scan_for_folder(folder);
                 }
-                let toast = adw::Toast::new("Moved to trash");
-                toast.set_timeout(2);
+                let toast = adw::Toast::new(
+                    "Moved to trash — Shift+Delete skips trash and deletes permanently",
+                );
+                toast.set_timeout(3);
                 toast_overlay.add_toast(toast);
             }
             Err(err) => {
