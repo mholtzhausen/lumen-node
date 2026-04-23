@@ -119,9 +119,7 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
         .filter_map(|r| r.ok())
         .collect();
     if !cols.iter().any(|c| c == "favourite") {
-        conn.execute_batch(
-            "ALTER TABLE images ADD COLUMN favourite INTEGER NOT NULL DEFAULT 0;",
-        )?;
+        conn.execute_batch("ALTER TABLE images ADD COLUMN favourite INTEGER NOT NULL DEFAULT 0;")?;
     }
 
     Ok(())
@@ -161,7 +159,11 @@ pub fn load_ui_state(folder: &Path) -> Option<UiState> {
         }
     }
 
-    if has_any_value { Some(state) } else { None }
+    if has_any_value {
+        Some(state)
+    } else {
+        None
+    }
 }
 
 pub fn save_ui_state(folder: &Path, state: &UiState) -> rusqlite::Result<()> {

@@ -477,7 +477,8 @@ fn try_finalize_click_trace(trace_state: &Rc<RefCell<Option<ClickTrace>>>, click
     let trace_state_idle = trace_state.clone();
     glib::timeout_add_local_once(Duration::from_millis(16), move || {
         if let Some(trace) = trace_state_idle.borrow_mut().as_mut() {
-            if trace.id == click_id && trace.preview_done && trace.metadata_done && !trace.finished {
+            if trace.id == click_id && trace.preview_done && trace.metadata_done && !trace.finished
+            {
                 let ui_idle_ms = trace.started.elapsed().as_secs_f64() * 1000.0;
                 trace.mark_step("ui_idle_settled");
                 if let Some(preview_ms) = trace.preview_displayed_at_ms {

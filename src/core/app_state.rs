@@ -42,7 +42,8 @@ pub(crate) fn build_app_state(
     default_thumbnail_size: i32,
 ) -> AppState {
     let current_folder: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
-    let recent_folders: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(app_config.recent_folders.clone()));
+    let recent_folders: Rc<RefCell<Vec<PathBuf>>> =
+        Rc::new(RefCell::new(app_config.recent_folders.clone()));
     {
         let mut history = recent_folders.borrow_mut();
         let mut sanitized = Vec::new();
@@ -63,8 +64,9 @@ pub(crate) fn build_app_state(
             .unwrap_or(default_sort_key)
             .to_string(),
     ));
-    let search_text: Rc<RefCell<String>> =
-        Rc::new(RefCell::new(app_config.search_text.clone().unwrap_or_default()));
+    let search_text: Rc<RefCell<String>> = Rc::new(RefCell::new(
+        app_config.search_text.clone().unwrap_or_default(),
+    ));
     let initial_thumbnail_size =
         normalize_thumbnail_size(app_config.thumbnail_size.unwrap_or(default_thumbnail_size));
     let thumbnail_size: Rc<RefCell<i32>> = Rc::new(RefCell::new(initial_thumbnail_size));

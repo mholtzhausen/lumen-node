@@ -1,6 +1,8 @@
 use crate::timing_report::write_timing_report;
 use crate::ui::grid::{enter_single_view_mode, ACTIVE_THUMBNAIL_TASKS};
-use crate::ui::preview::{load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
+use crate::ui::preview::{
+    load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS,
+};
 use gtk4::prelude::*;
 use gtk4::{GestureClick, StringObject};
 use libadwaita as adw;
@@ -135,7 +137,11 @@ fn apply_full_view_metrics(trace: &Rc<RefCell<FullViewTrace>>, metrics: PreviewL
     emit_full_view_report(&t);
 }
 
-fn dispatch_full_view_load(picture: &gtk4::Picture, path_str: &str, trace: Rc<RefCell<FullViewTrace>>) {
+fn dispatch_full_view_load(
+    picture: &gtk4::Picture,
+    path_str: &str,
+    trace: Rc<RefCell<FullViewTrace>>,
+) {
     let trace_for_cb = trace.clone();
     load_picture_async(
         picture,

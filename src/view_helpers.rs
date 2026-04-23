@@ -1,7 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{
-    gdk, gio, GestureClick, PopoverMenu, SingleSelection, StringObject,
-};
+use gtk4::{gdk, gio, GestureClick, PopoverMenu, SingleSelection, StringObject};
 use std::path::PathBuf;
 
 pub fn attach_context_menu<W: IsA<gtk4::Widget>>(widget: &W, menu_model: &gio::Menu) {

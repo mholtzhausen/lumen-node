@@ -1,9 +1,9 @@
 use crate::ui::sidebar::{
-    append_meta_paned_to_sidebar, connect_meta_paned_dirty_tracking,
-    create_meta_content_container, create_meta_expander, create_meta_paned,
-    create_meta_position_programmatic, create_meta_preview_picture, create_meta_scroll_list,
-    create_meta_split_before_auto_collapse, create_meta_split_dirty_flag,
-    create_pane_restore_complete_flag, create_right_sidebar, initialize_meta_paned_position,
+    append_meta_paned_to_sidebar, connect_meta_paned_dirty_tracking, create_meta_content_container,
+    create_meta_expander, create_meta_paned, create_meta_position_programmatic,
+    create_meta_preview_picture, create_meta_scroll_list, create_meta_split_before_auto_collapse,
+    create_meta_split_dirty_flag, create_pane_restore_complete_flag, create_right_sidebar,
+    initialize_meta_paned_position,
 };
 use gtk4::prelude::*;
 

@@ -1,6 +1,6 @@
 mod byte_format;
-mod core;
 mod config;
+mod core;
 mod db;
 mod dialogs;
 mod file_name_ops;
@@ -12,58 +12,46 @@ mod metadata_view;
 mod recent_folders;
 mod scan;
 mod scanner;
+mod services;
 mod sort;
 mod sort_flags;
-mod thumbnails;
 mod thumbnail_sizing;
+mod thumbnails;
 mod timing_report;
 mod tree_sidebar;
 mod ui;
-mod services;
 mod updater;
 mod view_helpers;
 mod window_math;
 
-use metadata::ImageMetadata;
 use byte_format::human_readable_bytes;
 use core::app_state::build_app_state;
 use core::scan_coordinator::{build_start_scan_for_folder, ScanCoordinatorDeps};
+use metadata::ImageMetadata;
 use scan::ScanMessage;
-use recent_folders::push_recent_folder_entry;
-use sort::{
-    sort_index_for_key, SORT_KEY_NAME_ASC,
-};
-use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
-use tree_sidebar::reset_tree_root;
+use sort::SORT_KEY_NAME_ASC;
 use ui::center::{build_center_content, CenterContentDeps};
-use ui::layout::{
-    assemble_and_mount_layout, compute_startup_pane_metrics, LayoutMountDeps,
-};
+use ui::chrome::build_left_chrome;
+use ui::layout::{assemble_and_mount_layout, compute_startup_pane_metrics, LayoutMountDeps};
 use ui::lifecycle::{install_lifecycle, LifecycleDeps};
 use ui::models::{build_model_bundle, ModelAssemblyDeps};
 use ui::navigation::{install_navigation_handlers, NavigationDeps};
 use ui::right_sidebar::{build_right_sidebar, RightSidebarDeps};
 use ui::scan_runtime::{install_scan_runtime, ScanRuntimeDeps};
-use ui::shell::{
-    build_header_controls, create_progress_widgets, create_window_with_defaults,
-};
+use ui::shell::{create_progress_widgets, create_window_with_defaults};
 use ui::sidebar::connect_sidebar_visibility_toggles;
-use ui::tree::build_tree_widgets;
+use ui::tree::{install_tree_folder_selection, TreeFolderSelectionDeps};
 use ui::wiring::{
     install_context_menu_wiring, install_controls_wiring, install_open_folder_wiring,
-    install_selection_wiring, ContextMenuWiringDeps, ControlsWiringDeps,
-    OpenFolderWiringDeps, SelectionWiringDeps,
+    install_selection_wiring, ContextMenuWiringDeps, ControlsWiringDeps, OpenFolderWiringDeps,
+    SelectionWiringDeps,
 };
 
-use std::{
-    cell::Cell,
-    rc::Rc,
-    sync::atomic::AtomicU64,
-};
+use std::{cell::Cell, rc::Rc, sync::atomic::AtomicU64};
 
-use libadwaita as adw;
 use adw::prelude::*;
-use gtk4::{gio, glib, Label, ProgressBar, TreeListRow};
+use gtk4::{glib, Label, ProgressBar};
+use libadwaita as adw;
 
 pub(crate) static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub(crate) static PREVIEW_REQUEST_PENDING: AtomicU64 = AtomicU64::new(0);
@@ -186,7 +174,6 @@ pub(crate) fn sync_progress_widgets(
     progress_bar.set_text(Some(&format!("{:.0}%", fraction * 100.0)));
 }
 
-
 // ---------------------------------------------------------------------------
 // UI construction
 // ---------------------------------------------------------------------------
@@ -230,7 +217,6 @@ fn build_ui(app: &adw::Application) {
 
     // Reusable multi-phase progress indicator shown while scanning/indexing.
     let (progress_box, progress_label, progress_bar) = create_progress_widgets();
-    let progress_state = app_state.progress_state.clone();
 
     // Toast overlay wraps all main content for non-intrusive notifications.
     let toast_overlay = adw::ToastOverlay::new();
@@ -258,35 +244,10 @@ fn build_ui(app: &adw::Application) {
     });
 
     // -----------------------------------------------------------------------
-    // AdwHeaderBar — window chrome
+    // Header chrome + left file-system tree (tree visibility follows header toggle)
     // -----------------------------------------------------------------------
-    let header_controls = build_header_controls(&app_config, initial_thumbnail_size);
-    let header_bar = header_controls.header_bar;
-    let sort_dropdown = header_controls.sort_dropdown;
-    let size_buttons = header_controls.size_buttons;
-    let search_entry = header_controls.search_entry;
-    let clear_btn = header_controls.clear_btn;
-    let left_toggle = header_controls.left_toggle;
-    let right_toggle = header_controls.right_toggle;
-    let open_btn = header_controls.open_btn;
-    let history_list = header_controls.history_list;
-    let history_popover = header_controls.history_popover;
-    let initial_left_sidebar_visible = header_controls.initial_left_sidebar_visible;
-    let initial_right_sidebar_visible = header_controls.initial_right_sidebar_visible;
-
-    // -----------------------------------------------------------------------
-    // Three-pane layout: [left sidebar] | [center] | [right sidebar]
-    // -----------------------------------------------------------------------
-    // --- Left sidebar: file system tree ---
-    let tree_widgets = build_tree_widgets(
-        app_config.last_folder.as_ref(),
-        initial_left_sidebar_visible,
-    );
-    let left_sidebar = tree_widgets.left_sidebar;
-    let tree_root = tree_widgets.tree_root;
-    let tree_model = tree_widgets.tree_model;
-    let tree_selection = tree_widgets.tree_selection;
-    let tree_list_view = tree_widgets.tree_list_view;
+    let left_chrome = build_left_chrome(&app_config, initial_thumbnail_size);
+    let chrome = left_chrome.wiring_handles();
 
     let start_scan_for_folder = build_start_scan_for_folder(ScanCoordinatorDeps {
         app_state: app_state.clone(),
@@ -296,62 +257,11 @@ fn build_ui(app: &adw::Application) {
         progress_bar: progress_bar.clone(),
     });
 
-    // Wire tree folder selection → clear grid, start scan.
-    let current_folder_tree = current_folder.clone();
-    let start_scan_tree = start_scan_for_folder.clone();
-    let recent_folders_tree = recent_folders.clone();
-    let tree_root_tree = tree_root.clone();
-    let sort_key_tree = sort_key.clone();
-    let search_text_tree = search_text.clone();
-    let thumbnail_size_tree = thumbnail_size.clone();
-    let sort_dropdown_tree = sort_dropdown.clone();
-    let search_entry_tree = search_entry.clone();
-    let size_buttons_tree = size_buttons.clone();
-    let progress_state_tree = progress_state.clone();
-    tree_selection.connect_selection_changed(move |model, _, _| {
-        let Some(row) = model.selected_item().and_downcast::<TreeListRow>() else {
-            return;
-        };
-        let Some(file) = row.item().and_downcast::<gio::File>() else {
-            return;
-        };
-        let Some(path) = file.path() else { return };
-        // Skip if this folder is already loaded (e.g. during startup restore).
-        if current_folder_tree.borrow().as_deref() == Some(path.as_path()) {
-            return;
-        }
-
-        if let Some(saved_ui_state) = db::load_ui_state(path.as_path()) {
-            let selected_sort = sort_index_for_key(&saved_ui_state.sort_key);
-            *sort_key_tree.borrow_mut() = saved_ui_state.sort_key;
-            *search_text_tree.borrow_mut() = saved_ui_state.search_text.clone();
-            *thumbnail_size_tree.borrow_mut() = normalize_thumbnail_size(saved_ui_state.thumbnail_size);
-
-            if sort_dropdown_tree.selected() != selected_sort {
-                sort_dropdown_tree.set_selected(selected_sort);
-            }
-            search_entry_tree.set_text(&saved_ui_state.search_text);
-            for (i, btn) in size_buttons_tree.iter().enumerate() {
-                btn.set_active(thumbnail_size_options()[i] == *thumbnail_size_tree.borrow());
-            }
-        } else {
-            let seeded_state = db::UiState {
-                sort_key: sort_key_tree.borrow().clone(),
-                search_text: search_text_tree.borrow().clone(),
-                thumbnail_size: *thumbnail_size_tree.borrow(),
-            };
-            let _ = db::save_ui_state(path.as_path(), &seeded_state);
-        }
-
-        *current_folder_tree.borrow_mut() = Some(path.clone());
-        progress_state_tree.borrow_mut().current_folder_path = path.display().to_string();
-        {
-            let mut history = recent_folders_tree.borrow_mut();
-            push_recent_folder_entry(&mut history, path.as_path(), RECENT_FOLDERS_LIMIT);
-            config::save_recent_state(Some(path.as_path()), &history);
-        }
-        reset_tree_root(&tree_root_tree, path.as_path());
-        start_scan_tree(path);
+    install_tree_folder_selection(TreeFolderSelectionDeps {
+        app_state: app_state.clone(),
+        chrome: chrome.clone(),
+        start_scan_for_folder: start_scan_for_folder.clone(),
+        recent_folders_limit: RECENT_FOLDERS_LIMIT,
     });
 
     let model_bundle = build_model_bundle(ModelAssemblyDeps {
@@ -401,7 +311,7 @@ fn build_ui(app: &adw::Application) {
     );
 
     let right_sidebar_bundle = build_right_sidebar(RightSidebarDeps {
-        initial_right_sidebar_visible,
+        initial_right_sidebar_visible: chrome.initial_right_sidebar_visible,
         meta_pane_start_px: pane_metrics.meta_pane_start_px,
     });
     let right_sidebar = right_sidebar_bundle.right_sidebar;
@@ -434,7 +344,12 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Wire: sidebar toggle buttons → show/hide panels
     // -----------------------------------------------------------------------
-    connect_sidebar_visibility_toggles(&left_toggle, &left_sidebar, &right_toggle, &right_sidebar);
+    connect_sidebar_visibility_toggles(
+        &chrome.left_toggle,
+        &chrome.left_sidebar,
+        &chrome.right_toggle,
+        &right_sidebar,
+    );
 
     let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
@@ -443,8 +358,8 @@ fn build_ui(app: &adw::Application) {
         view_stack: view_stack.clone(),
         single_picture: single_picture.clone(),
         selection_model: selection_model.clone(),
-        left_toggle: left_toggle.clone(),
-        right_toggle: right_toggle.clone(),
+        left_toggle: chrome.left_toggle.clone(),
+        right_toggle: chrome.right_toggle.clone(),
         pre_fullview_left: pre_fullview_left.clone(),
         pre_fullview_right: pre_fullview_right.clone(),
         meta_preview: meta_preview.clone(),
@@ -467,18 +382,10 @@ fn build_ui(app: &adw::Application) {
     let open_folder_action = install_open_folder_wiring(OpenFolderWiringDeps {
         app_state: app_state.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
-        tree_root: tree_root.clone(),
-        tree_model: tree_model.clone(),
-        tree_list_view: tree_list_view.clone(),
-        sort_dropdown: sort_dropdown.clone(),
-        search_entry: search_entry.clone(),
+        chrome: chrome.clone(),
         filter: filter.clone(),
         sorter: sorter.clone(),
-        size_buttons: size_buttons.clone(),
         recent_folders_limit: RECENT_FOLDERS_LIMIT,
-        history_popover: history_popover.clone(),
-        history_list: history_list.clone(),
-        open_btn: open_btn.clone(),
         window: window.clone(),
     });
 
@@ -487,25 +394,22 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     install_controls_wiring(ControlsWiringDeps {
         app_state: app_state.clone(),
-        sort_dropdown: sort_dropdown.clone(),
+        chrome: chrome.clone(),
         sorter: sorter.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
-        search_entry: search_entry.clone(),
         filter: filter.clone(),
-        clear_btn: clear_btn.clone(),
-        size_buttons: size_buttons.clone(),
         grid_view: grid_view.clone(),
     });
 
     let layout_bundle = assemble_and_mount_layout(LayoutMountDeps {
-        left_sidebar: left_sidebar.clone(),
+        left_sidebar: chrome.left_sidebar.clone(),
         center_box: center_box.clone(),
         right_sidebar: right_sidebar.clone(),
         pane_restore_complete: pane_restore_complete.clone(),
         left_pane_start_px: pane_metrics.left_pane_start_px,
         inner_pane_start_px: pane_metrics.inner_pane_start_px,
         window: window.clone(),
-        header_bar: header_bar.clone(),
+        header_bar: chrome.header_bar.clone(),
         toast_overlay: toast_overlay.clone(),
         progress_box: progress_box.clone(),
     });
@@ -530,8 +434,7 @@ fn build_ui(app: &adw::Application) {
         toast_overlay: toast_overlay.clone(),
         current_folder: current_folder.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
-        left_toggle: left_toggle.clone(),
-        right_toggle: right_toggle.clone(),
+        chrome: chrome.clone(),
         pre_fullview_left: pre_fullview_left.clone(),
         pre_fullview_right: pre_fullview_right.clone(),
         meta_preview: meta_preview.clone(),
@@ -554,8 +457,6 @@ fn build_ui(app: &adw::Application) {
         min_meta_split_px: MIN_META_SPLIT_PX,
         app_config,
         open_folder_action: open_folder_action.clone(),
-        sort_dropdown: sort_dropdown.clone(),
-        search_entry: search_entry.clone(),
         filter: filter.clone(),
         outer_position_programmatic: outer_position_programmatic.clone(),
         inner_position_programmatic: inner_position_programmatic.clone(),

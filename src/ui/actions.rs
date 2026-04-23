@@ -226,8 +226,11 @@ pub fn install_context_menu(
                 .borrow_mut()
                 .insert(path_key, row.hash);
             refresh_metadata_sidebar_for_actions(&row.meta);
-            meta_position_programmatic_for_actions
-                .set(meta_position_programmatic_for_actions.get().saturating_add(1));
+            meta_position_programmatic_for_actions.set(
+                meta_position_programmatic_for_actions
+                    .get()
+                    .saturating_add(1),
+            );
             apply_metadata_section_state(
                 &row.meta,
                 &meta_expander_for_actions,
@@ -235,8 +238,11 @@ pub fn install_context_menu(
                 &meta_split_before_auto_collapse_for_actions,
                 min_meta_split_px,
             );
-            meta_position_programmatic_for_actions
-                .set(meta_position_programmatic_for_actions.get().saturating_sub(1));
+            meta_position_programmatic_for_actions.set(
+                meta_position_programmatic_for_actions
+                    .get()
+                    .saturating_sub(1),
+            );
 
             let toast = adw::Toast::new("Metadata refreshed");
             toast.set_timeout(2);
@@ -252,7 +258,8 @@ pub fn install_context_menu(
             return;
         };
 
-        let cached_hashes: Vec<String> = hash_cache_for_actions.borrow().values().cloned().collect();
+        let cached_hashes: Vec<String> =
+            hash_cache_for_actions.borrow().values().cloned().collect();
         for hash in cached_hashes {
             thumbnails::remove_hash_thumbnail_variants(&hash);
         }
@@ -269,7 +276,10 @@ pub fn install_context_menu(
 
         let mut paths = Vec::new();
         for i in 0..list_store_for_actions.n_items() {
-            if let Some(item) = list_store_for_actions.item(i).and_downcast::<StringObject>() {
+            if let Some(item) = list_store_for_actions
+                .item(i)
+                .and_downcast::<StringObject>()
+            {
                 paths.push(PathBuf::from(item.string().as_str()));
             }
         }
@@ -298,9 +308,15 @@ pub fn install_context_menu(
     let menu_model = gio::Menu::new();
     let prompt_section = gio::Menu::new();
     prompt_section.append(Some("Copy Prompt"), Some("ctx.copy-prompt"));
-    prompt_section.append(Some("Copy Negative Prompt"), Some("ctx.copy-negative-prompt"));
+    prompt_section.append(
+        Some("Copy Negative Prompt"),
+        Some("ctx.copy-negative-prompt"),
+    );
     prompt_section.append(Some("Copy Seed"), Some("ctx.copy-seed"));
-    prompt_section.append(Some("Copy Generation Command"), Some("ctx.copy-generation-command"));
+    prompt_section.append(
+        Some("Copy Generation Command"),
+        Some("ctx.copy-generation-command"),
+    );
     menu_model.append_section(None, &prompt_section);
 
     let clipboard_section = gio::Menu::new();

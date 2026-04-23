@@ -1,9 +1,9 @@
 use crate::config::AppConfig;
 use crate::window_math::monitor_bounds_for_window;
-use gtk4::{gio, Orientation, Paned, ProgressBar};
-use gtk4::prelude::*;
-use libadwaita as adw;
 use adw::prelude::*;
+use gtk4::prelude::*;
+use gtk4::{gio, Orientation, Paned, ProgressBar};
+use libadwaita as adw;
 use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc};
 
 pub(crate) struct PanedLayout {
@@ -36,9 +36,8 @@ pub(crate) fn build_header_controls(
 ) -> HeaderControls {
     let header_bar = adw::HeaderBar::new();
 
-    let sort_options = gtk4::StringList::new(&[
-        "Name ↑", "Name ↓", "Date ↑", "Date ↓", "Size ↑", "Size ↓",
-    ]);
+    let sort_options =
+        gtk4::StringList::new(&["Name ↑", "Name ↓", "Date ↑", "Date ↓", "Size ↑", "Size ↓"]);
     let sort_dropdown = gtk4::DropDown::new(Some(sort_options), gtk4::Expression::NONE);
     sort_dropdown.set_tooltip_text(Some("Sort order"));
 
@@ -401,10 +400,15 @@ pub(crate) fn install_history_popover_handler(
             let row_remove = row.clone();
             let current_folder_remove = current_folder_history.clone();
             remove_btn.connect_clicked(move |_| {
-                recent_folders_remove.borrow_mut().retain(|entry| entry != &path);
+                recent_folders_remove
+                    .borrow_mut()
+                    .retain(|entry| entry != &path);
                 {
                     let history = recent_folders_remove.borrow();
-                    crate::config::save_recent_state(current_folder_remove.borrow().as_deref(), &history);
+                    crate::config::save_recent_state(
+                        current_folder_remove.borrow().as_deref(),
+                        &history,
+                    );
                 }
                 history_list_remove.remove(&row_remove);
             });

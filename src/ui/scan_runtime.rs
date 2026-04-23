@@ -4,15 +4,14 @@ use crate::sort_flags::compute_sort_fields;
 use crate::ui::grid::{
     refresh_realized_grid_thumbnails, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
 };
-use crate::{sync_progress_widgets, SCAN_BUFFER_DEPTH, SCAN_DRAIN_BATCH_SIZE, SCAN_DRAIN_SCHEDULED};
+use crate::{
+    sync_progress_widgets, SCAN_BUFFER_DEPTH, SCAN_DRAIN_BATCH_SIZE, SCAN_DRAIN_SCHEDULED,
+};
 use gtk4::prelude::*;
 use gtk4::{glib, Label, ProgressBar, StringObject};
 use libadwaita as adw;
 use std::{
-    cell::RefCell,
-    collections::VecDeque,
-    rc::Rc,
-    sync::atomic::Ordering as AtomicOrdering,
+    cell::RefCell, collections::VecDeque, rc::Rc, sync::atomic::Ordering as AtomicOrdering,
     time::Duration,
 };
 

@@ -1,12 +1,14 @@
 pub mod actions;
 pub mod center;
+pub mod chrome;
 pub mod controls;
 pub mod grid;
 pub mod keyboard;
 pub mod layout;
+pub mod left_chrome_wiring;
 pub mod lifecycle;
-pub mod navigation;
 pub mod models;
+pub mod navigation;
 pub mod open_folder;
 pub mod preview;
 pub mod right_sidebar;

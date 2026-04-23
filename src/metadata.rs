@@ -234,11 +234,7 @@ fn extract_comfyui_prompts(prompt_str: &str) -> (Option<String>, Option<String>)
 
     let mut clips: Vec<String> = nodes
         .values()
-        .filter(|n| {
-            n.get("class_type")
-                .and_then(|v| v.as_str())
-                == Some("CLIPTextEncode")
-        })
+        .filter(|n| n.get("class_type").and_then(|v| v.as_str()) == Some("CLIPTextEncode"))
         .filter_map(|n| {
             n.get("inputs")
                 .and_then(|i| i.get("text"))
@@ -325,7 +321,9 @@ fn extract_primary_prompt_from_workflow(workflow_str: &str) -> Option<String> {
                     score -= 500;
                 }
 
-                let replace = best.as_ref().map_or(true, |(best_score, _)| score > *best_score);
+                let replace = best
+                    .as_ref()
+                    .map_or(true, |(best_score, _)| score > *best_score);
                 if replace {
                     *best = Some((score, text.to_owned()));
                 }

@@ -178,7 +178,10 @@ pub fn save_recent_state(last_folder: Option<&Path>, recent_folders: &[PathBuf])
     let content = if suffix.is_empty() {
         format!("last_folder: {}\n{}\n", folder_str, recent_folder_lines)
     } else {
-        format!("last_folder: {}\n{}\n{}\n", folder_str, recent_folder_lines, suffix)
+        format!(
+            "last_folder: {}\n{}\n{}\n",
+            folder_str, recent_folder_lines, suffix
+        )
     };
     let _ = std::fs::write(&path, content);
 }

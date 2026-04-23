@@ -1,5 +1,5 @@
-use serde_json::Value as JsonValue;
 use gtk4::prelude::*;
+use serde_json::Value as JsonValue;
 
 fn json_copy_text(value: &JsonValue) -> String {
     match value {

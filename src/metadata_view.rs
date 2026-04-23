@@ -57,7 +57,10 @@ pub fn format_generation_command(meta: &ImageMetadata) -> String {
     }
 
     if let Some(neg_prompt) = &meta.negative_prompt {
-        parts.push(format!("--negative \"{}\" ", neg_prompt.replace('"', "\\\"")));
+        parts.push(format!(
+            "--negative \"{}\" ",
+            neg_prompt.replace('"', "\\\"")
+        ));
     }
 
     if let Some(seed) = extract_seed_from_parameters(meta) {

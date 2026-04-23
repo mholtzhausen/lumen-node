@@ -4,8 +4,8 @@ use crate::recent_folders::push_recent_folder_entry;
 use crate::sort::sort_index_for_key;
 use crate::thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use crate::tree_sidebar::{reset_tree_root, sync_tree_to_path};
-use gtk4::gio;
 use crate::ScanProgressState;
+use gtk4::gio;
 use gtk4::prelude::*;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
@@ -28,9 +28,7 @@ pub(crate) struct OpenFolderActionDeps {
     pub(crate) recent_folders_limit: usize,
 }
 
-pub(crate) fn build_open_folder_action(
-    deps: OpenFolderActionDeps,
-) -> Rc<dyn Fn(PathBuf, bool)> {
+pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(PathBuf, bool)> {
     Rc::new(move |path: PathBuf, sync_tree: bool| {
         if deps.current_folder.borrow().as_deref() == Some(path.as_path()) {
             return;
@@ -40,7 +38,8 @@ pub(crate) fn build_open_folder_action(
             let selected_sort = sort_index_for_key(&saved_ui_state.sort_key);
             *deps.sort_key.borrow_mut() = saved_ui_state.sort_key;
             *deps.search_text.borrow_mut() = saved_ui_state.search_text.clone();
-            *deps.thumbnail_size.borrow_mut() = normalize_thumbnail_size(saved_ui_state.thumbnail_size);
+            *deps.thumbnail_size.borrow_mut() =
+                normalize_thumbnail_size(saved_ui_state.thumbnail_size);
 
             if deps.sort_dropdown.selected() != selected_sort {
                 deps.sort_dropdown.set_selected(selected_sort);

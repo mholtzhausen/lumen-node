@@ -3,13 +3,7 @@ use crate::sort::{sort_key_for_index, SORT_KEY_NAME_ASC};
 use crate::ui::grid::apply_thumbnail_size_change;
 use gtk4::prelude::*;
 use gtk4::{glib, CustomFilter, CustomSorter, Image};
-use std::{
-    cell::Cell,
-    cell::RefCell,
-    collections::HashMap,
-    path::PathBuf,
-    rc::Rc,
-};
+use std::{cell::Cell, cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
 
 pub(crate) fn install_sort_dropdown_handler(
     sort_dropdown: &gtk4::DropDown,

@@ -1,16 +1,10 @@
-use crate::{config, db};
 use crate::sort::sort_index_for_key;
 use crate::window_math::{pct_to_px, px_to_pct};
+use crate::{config, db};
 use gtk4::prelude::*;
 use gtk4::{glib, CustomFilter};
 use libadwaita as adw;
-use std::{
-    cell::Cell,
-    cell::RefCell,
-    path::PathBuf,
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 
 pub(crate) struct ClosePersistenceDeps {
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
@@ -68,7 +62,8 @@ pub(crate) fn install_close_persistence_handler(deps: ClosePersistenceDeps) {
         } else {
             deps.configured_right_pane_pos.unwrap_or(inner_pos)
         };
-        let right_width_for_save = window_width.saturating_sub(left_pos_for_save + inner_pos_for_save);
+        let right_width_for_save =
+            window_width.saturating_sub(left_pos_for_save + inner_pos_for_save);
         let meta_pos_for_save = if deps.meta_split_dirty.get() {
             meta_pos
         } else {

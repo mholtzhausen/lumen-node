@@ -1,10 +1,10 @@
 use crate::core::app_state::AppState;
-use crate::sort::{
-    normalize_sort_key, SORT_KEY_DATE_DESC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
-};
+use crate::sort::{normalize_sort_key, SORT_KEY_DATE_DESC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC};
 use crate::sort_flags::compute_sort_fields;
 use gtk4::prelude::*;
-use gtk4::{CustomFilter, CustomSorter, FilterListModel, SingleSelection, SortListModel, StringObject};
+use gtk4::{
+    CustomFilter, CustomSorter, FilterListModel, SingleSelection, SortListModel, StringObject,
+};
 use std::path::Path;
 
 pub(crate) struct ModelAssemblyDeps {
@@ -61,8 +61,10 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
         }
         false
     });
-    let filter_model =
-        FilterListModel::new(Some(deps.app_state.list_store.clone()), Some(filter.clone()));
+    let filter_model = FilterListModel::new(
+        Some(deps.app_state.list_store.clone()),
+        Some(filter.clone()),
+    );
 
     // Sort model: wraps filter_model, applies selected sort key.
     let sort_key_sorter = deps.app_state.sort_key.clone();

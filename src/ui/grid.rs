@@ -183,7 +183,9 @@ pub fn track_realized_grid_widgets(
     thumb_image: &Image,
 ) {
     realized_cell_boxes.borrow_mut().push(cell_box.downgrade());
-    realized_thumb_images.borrow_mut().push(thumb_image.downgrade());
+    realized_thumb_images
+        .borrow_mut()
+        .push(thumb_image.downgrade());
 }
 
 pub fn refresh_realized_grid_cell_sizes(
@@ -222,7 +224,12 @@ pub fn setup_grid_list_item(
     unsafe {
         thumb_image.set_data("thumb-generation", generation_token);
     }
-    track_realized_grid_widgets(realized_cell_boxes, realized_thumb_images, &cell_box, &thumb_image);
+    track_realized_grid_widgets(
+        realized_cell_boxes,
+        realized_thumb_images,
+        &cell_box,
+        &thumb_image,
+    );
     let name_label = Label::new(None);
     name_label.set_max_width_chars(16);
     name_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
@@ -529,7 +536,11 @@ pub fn install_grid_scroll_speed_gate(
                 .and_downcast::<StringObject>()
                 .and_then(|obj| {
                     let path = obj.string().to_string();
-                    sort_flag_text_for_path(&path, &sort_key_adj.borrow(), &sort_fields_cache_adj.borrow())
+                    sort_flag_text_for_path(
+                        &path,
+                        &sort_key_adj.borrow(),
+                        &sort_fields_cache_adj.borrow(),
+                    )
                 });
 
             if let Some(text) = text.filter(|t| !t.is_empty()) {
@@ -539,12 +550,14 @@ pub fn install_grid_scroll_speed_gate(
                 let page_size = adj.page_size().clamp(1.0, upper);
                 let range = (upper - page_size).max(1.0);
                 let ratio = (adj.value() / range).clamp(0.0, 1.0);
-                let thumb_height = ((page_size / upper) * viewport_height).clamp(18.0, viewport_height);
+                let thumb_height =
+                    ((page_size / upper) * viewport_height).clamp(18.0, viewport_height);
                 let thumb_top = ratio * (viewport_height - thumb_height);
                 let thumb_center = thumb_top + (thumb_height * 0.5);
                 let flag_height = 32.0;
                 let y = (thumb_center - (flag_height * 0.5))
-                    .clamp(0.0, (viewport_height - flag_height).max(0.0)) as i32;
+                    .clamp(0.0, (viewport_height - flag_height).max(0.0))
+                    as i32;
                 scroll_flag_box.set_margin_top(y);
                 scroll_flag_box.set_visible(true);
             } else {

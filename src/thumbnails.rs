@@ -185,7 +185,11 @@ pub fn hash_thumb_path_for_size(hash: &str, size: i32) -> PathBuf {
 /// Returns the size-specific hash-based thumbnail path if it already exists on disk.
 pub fn hash_thumb_if_exists_for_size(hash: &str, size: i32) -> Option<PathBuf> {
     let p = hash_thumb_path_for_size(hash, size);
-    if p.exists() { Some(p) } else { None }
+    if p.exists() {
+        Some(p)
+    } else {
+        None
+    }
 }
 
 /// Generates and saves a thumbnail keyed by content hash.
@@ -201,13 +205,7 @@ pub fn generate_hash_thumbnail_for_size(source: &Path, hash: &str, size: i32) ->
     if thumb.exists() {
         return Some(thumb);
     }
-    let pixbuf = Pixbuf::from_file_at_scale(
-        source,
-        size,
-        size,
-        true,
-    )
-    .ok()?;
+    let pixbuf = Pixbuf::from_file_at_scale(source, size, size, true).ok()?;
 
     if let Some(parent) = thumb.parent() {
         let _ = std::fs::create_dir_all(parent);

@@ -1,14 +1,10 @@
 use crate::core::app_state::AppState;
 use crate::scan::ScanMessage;
 use crate::scanner::scan_directory;
-use crate::ui::grid::DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE;
 use crate::sync_progress_widgets;
+use crate::ui::grid::DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE;
 use gtk4::{Label, ProgressBar};
-use std::{
-    path::PathBuf,
-    rc::Rc,
-    sync::atomic::Ordering as AtomicOrdering,
-};
+use std::{path::PathBuf, rc::Rc, sync::atomic::Ordering as AtomicOrdering};
 
 pub(crate) struct ScanCoordinatorDeps {
     pub(crate) app_state: AppState,
@@ -18,9 +14,7 @@ pub(crate) struct ScanCoordinatorDeps {
     pub(crate) progress_bar: ProgressBar,
 }
 
-pub(crate) fn build_start_scan_for_folder(
-    deps: ScanCoordinatorDeps,
-) -> Rc<dyn Fn(PathBuf)> {
+pub(crate) fn build_start_scan_for_folder(deps: ScanCoordinatorDeps) -> Rc<dyn Fn(PathBuf)> {
     Rc::new(move |folder: PathBuf| {
         let generation = deps
             .app_state

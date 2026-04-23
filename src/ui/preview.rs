@@ -116,13 +116,9 @@ pub fn load_picture_async(
 
         let decode_started = Instant::now();
         let pixbuf = match max_dimension {
-            Some(dim) => gdk_pixbuf::Pixbuf::from_stream_at_scale(
-                &stream,
-                dim,
-                dim,
-                true,
-                Some(&cancel_bg),
-            ),
+            Some(dim) => {
+                gdk_pixbuf::Pixbuf::from_stream_at_scale(&stream, dim, dim, true, Some(&cancel_bg))
+            }
             None => gdk_pixbuf::Pixbuf::from_stream(&stream, Some(&cancel_bg)),
         };
         let decode_ms = decode_started.elapsed().as_secs_f64() * 1000.0;
@@ -194,8 +190,10 @@ pub fn load_picture_async(
             return;
         };
 
-        let callback_started_since_enqueue_ms =
-            Instant::now().duration_since(enqueued_at_main).as_secs_f64() * 1000.0;
+        let callback_started_since_enqueue_ms = Instant::now()
+            .duration_since(enqueued_at_main)
+            .as_secs_f64()
+            * 1000.0;
         metrics.main_thread_dispatch_ms =
             (callback_started_since_enqueue_ms - metrics.worker_done_since_enqueue_ms).max(0.0);
 

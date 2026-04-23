@@ -1,8 +1,12 @@
 use crate::config::AppConfig;
 use crate::services::update_checker::install_update_checker;
-use crate::ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps};
+use crate::ui::keyboard::{
+    install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps,
+};
+use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::session::{
-    install_close_persistence_handler, restore_session_state, ClosePersistenceDeps, RestoreSessionDeps,
+    install_close_persistence_handler, restore_session_state, ClosePersistenceDeps,
+    RestoreSessionDeps,
 };
 use libadwaita as adw;
 use std::{
@@ -23,8 +27,7 @@ pub(crate) struct LifecycleDeps {
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
-    pub(crate) left_toggle: gtk4::ToggleButton,
-    pub(crate) right_toggle: gtk4::ToggleButton,
+    pub(crate) chrome: LeftChromeWiring,
     pub(crate) pre_fullview_left: Rc<Cell<bool>>,
     pub(crate) pre_fullview_right: Rc<Cell<bool>>,
     pub(crate) meta_preview: gtk4::Picture,
@@ -47,8 +50,6 @@ pub(crate) struct LifecycleDeps {
     pub(crate) min_meta_split_px: i32,
     pub(crate) app_config: AppConfig,
     pub(crate) open_folder_action: Rc<dyn Fn(PathBuf, bool)>,
-    pub(crate) sort_dropdown: gtk4::DropDown,
-    pub(crate) search_entry: gtk4::SearchEntry,
     pub(crate) filter: gtk4::CustomFilter,
     pub(crate) outer_position_programmatic: Rc<Cell<u32>>,
     pub(crate) inner_position_programmatic: Rc<Cell<u32>>,
@@ -73,14 +74,18 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         toast_overlay: deps.toast_overlay.clone(),
         current_folder: deps.current_folder.clone(),
         start_scan_for_folder: deps.start_scan_for_folder.clone(),
-        left_toggle: deps.left_toggle.clone(),
-        right_toggle: deps.right_toggle.clone(),
+        left_toggle: deps.chrome.left_toggle.clone(),
+        right_toggle: deps.chrome.right_toggle.clone(),
         pre_fullview_left: deps.pre_fullview_left.clone(),
         pre_fullview_right: deps.pre_fullview_right.clone(),
     });
 
     // Scroll on single-view / meta-preview -> navigate images.
-    install_scroll_navigation_handlers(&deps.selection_model, &deps.single_picture, &deps.meta_preview);
+    install_scroll_navigation_handlers(
+        &deps.selection_model,
+        &deps.single_picture,
+        &deps.meta_preview,
+    );
 
     install_close_persistence_handler(ClosePersistenceDeps {
         current_folder: deps.current_folder.clone(),
@@ -92,8 +97,8 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         search_text: deps.search_text.clone(),
         thumbnail_size: deps.thumbnail_size.clone(),
         recent_folders: deps.recent_folders.clone(),
-        left_toggle: deps.left_toggle.clone(),
-        right_toggle: deps.right_toggle.clone(),
+        left_toggle: deps.chrome.left_toggle.clone(),
+        right_toggle: deps.chrome.right_toggle.clone(),
         window: deps.window.clone(),
         outer_split_dirty: deps.outer_split_dirty.clone(),
         inner_split_dirty: deps.inner_split_dirty.clone(),
@@ -112,8 +117,8 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         open_folder_action: deps.open_folder_action,
         sort_key: deps.sort_key,
         search_text: deps.search_text,
-        sort_dropdown: deps.sort_dropdown,
-        search_entry: deps.search_entry,
+        sort_dropdown: deps.chrome.sort_dropdown,
+        search_entry: deps.chrome.search_entry,
         filter: deps.filter,
         window: deps.window,
         outer_paned: deps.outer_paned,

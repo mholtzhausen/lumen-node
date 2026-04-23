@@ -69,18 +69,16 @@ pub fn open_rename_dialog(
         let candidate_target = candidate_target.clone();
         let rename_btn = rename_btn.clone();
         let error_label = error_label.clone();
-        move |value: &str| {
-            match build_renamed_target(&source_path, value) {
-                Ok(path) => {
-                    *candidate_target.borrow_mut() = Some(path);
-                    error_label.set_text("");
-                    rename_btn.set_sensitive(true);
-                }
-                Err(message) => {
-                    *candidate_target.borrow_mut() = None;
-                    error_label.set_text(&message);
-                    rename_btn.set_sensitive(false);
-                }
+        move |value: &str| match build_renamed_target(&source_path, value) {
+            Ok(path) => {
+                *candidate_target.borrow_mut() = Some(path);
+                error_label.set_text("");
+                rename_btn.set_sensitive(true);
+            }
+            Err(message) => {
+                *candidate_target.borrow_mut() = None;
+                error_label.set_text(&message);
+                rename_btn.set_sensitive(false);
             }
         }
     });

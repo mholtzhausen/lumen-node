@@ -3,10 +3,7 @@ use crate::metadata::ImageMetadata;
 #[derive(Debug)]
 pub enum ScanMessage {
     /// Scan has started and the final candidate image count is known.
-    ScanStarted {
-        total_count: u32,
-        generation: u64,
-    },
+    ScanStarted { total_count: u32, generation: u64 },
     /// A path was found during the fast enumeration phase (no metadata yet).
     ImageEnumerated { path: String, generation: u64 },
     /// Enumeration is done; enrichment phase is starting.

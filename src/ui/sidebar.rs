@@ -70,10 +70,7 @@ pub fn create_pane_restore_complete_flag() -> std::rc::Rc<std::cell::Cell<bool>>
     std::rc::Rc::new(std::cell::Cell::new(false))
 }
 
-pub fn create_meta_paned(
-    meta_preview: &gtk4::Picture,
-    meta_content: &gtk4::Box,
-) -> gtk4::Paned {
+pub fn create_meta_paned(meta_preview: &gtk4::Picture, meta_content: &gtk4::Box) -> gtk4::Paned {
     let meta_paned = gtk4::Paned::new(gtk4::Orientation::Vertical);
     meta_paned.set_vexpand(true);
     meta_paned.set_start_child(Some(meta_preview));
@@ -160,7 +157,9 @@ pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) 
         copy_button.add_css_class("flat");
         copy_button.set_tooltip_text(Some("Copy"));
         copy_button.connect_clicked(move |btn| {
-            gtk4::prelude::WidgetExt::display(btn).clipboard().set_text(&copy_text);
+            gtk4::prelude::WidgetExt::display(btn)
+                .clipboard()
+                .set_text(&copy_text);
         });
         row.add_suffix(&copy_button);
         listbox.append(&row);
@@ -197,7 +196,9 @@ pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) 
         copy_button.add_css_class("flat");
         copy_button.set_tooltip_text(Some("Copy"));
         copy_button.connect_clicked(move |btn| {
-            gtk4::prelude::WidgetExt::display(btn).clipboard().set_text(&copy_text);
+            gtk4::prelude::WidgetExt::display(btn)
+                .clipboard()
+                .set_text(&copy_text);
         });
         header_box.append(&copy_button);
         row_box.append(&header_box);

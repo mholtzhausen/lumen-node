@@ -8,13 +8,7 @@ use gtk4::{
     ListScrollFlags, StringObject,
 };
 use libadwaita as adw;
-use std::{
-    cell::Cell,
-    cell::RefCell,
-    path::PathBuf,
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 
 pub(crate) struct KeyboardDeps {
     pub(crate) window: adw::ApplicationWindow,
@@ -219,7 +213,9 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             };
             if next != cur {
                 selection_for_keys.set_selected(next);
-                if let Some(item) = selection_for_keys.selected_item().and_downcast::<StringObject>()
+                if let Some(item) = selection_for_keys
+                    .selected_item()
+                    .and_downcast::<StringObject>()
                 {
                     load_picture_async(&picture_for_keys, &item.string().to_string(), None, None);
                 }

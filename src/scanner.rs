@@ -134,13 +134,25 @@ pub fn scan_directory(
 fn sort_paths(paths: &mut Vec<PathBuf>, sort_key: &str) {
     match normalize_sort_key(sort_key) {
         SORT_KEY_NAME_ASC => paths.sort_by(|a, b| {
-            let na = a.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
-            let nb = b.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
+            let na = a
+                .file_name()
+                .map(|n| n.to_ascii_lowercase())
+                .unwrap_or_default();
+            let nb = b
+                .file_name()
+                .map(|n| n.to_ascii_lowercase())
+                .unwrap_or_default();
             na.cmp(&nb)
         }),
         SORT_KEY_NAME_DESC => paths.sort_by(|a, b| {
-            let na = a.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
-            let nb = b.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
+            let na = a
+                .file_name()
+                .map(|n| n.to_ascii_lowercase())
+                .unwrap_or_default();
+            let nb = b
+                .file_name()
+                .map(|n| n.to_ascii_lowercase())
+                .unwrap_or_default();
             nb.cmp(&na)
         }),
         SORT_KEY_DATE_ASC => paths.sort_by(|a, b| {
@@ -166,4 +178,3 @@ fn sort_paths(paths: &mut Vec<PathBuf>, sort_key: &str) {
         _ => unreachable!("normalize_sort_key always returns a known key"),
     }
 }
-
