@@ -51,6 +51,10 @@ use ui::grid::{
 };
 use ui::preview::{load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS};
 use ui::selection::{handle_selection_change_event, ClickTrace};
+use ui::shell::{
+    assemble_paned_layout, create_progress_widgets, create_window_with_defaults,
+    mount_window_content,
+};
 use ui::sidebar::{
     append_meta_paned_to_sidebar, connect_meta_paned_dirty_tracking, connect_sidebar_visibility_toggles,
     create_meta_content_container, create_meta_expander, create_meta_paned, create_meta_position_programmatic,
@@ -59,7 +63,7 @@ use ui::sidebar::{
     initialize_meta_paned_position, populate_metadata_sidebar,
 };
 use view_helpers::selected_image_path;
-use window_math::{monitor_bounds_for_window, pct_to_px, px_to_pct};
+use window_math::{pct_to_px, px_to_pct};
 
 use std::{
     cell::Cell,
@@ -76,7 +80,7 @@ use adw::prelude::*;
 use gtk4::{
     gdk, gio, glib, CustomFilter, CustomSorter, EventControllerKey, EventControllerScroll,
     EventControllerMotion, EventControllerScrollFlags, FilterListModel, GestureClick, Image, Label,
-    ListItem, ListView, ListScrollFlags, Orientation, Paned, ProgressBar, ScrolledWindow,
+    ListItem, ListView, ListScrollFlags, Orientation, ProgressBar, ScrolledWindow,
     SignalListItemFactory, SingleSelection, SortListModel, StringObject, TreeExpander, TreeListModel,
     TreeListRow,
 };
@@ -345,65 +349,20 @@ fn dispatch_full_view_load(
 // ---------------------------------------------------------------------------
 
 fn build_ui(app: &adw::Application) {
-    let window = adw::ApplicationWindow::new(app);
-    window.set_title(Some("LumenNode"));
+    let app_config = config::load();
+    let window = create_window_with_defaults(
+        app,
+        &app_config,
+        DEFAULT_WINDOW_WIDTH,
+        DEFAULT_WINDOW_HEIGHT,
+        MIN_LEFT_PANE_PX,
+        MIN_CENTER_PANE_PX,
+        MIN_RIGHT_PANE_PX,
+        MIN_META_SPLIT_PX,
+    );
 
     // Load persisted config (last folder).
-    let app_config = config::load();
     let initial_recent_folders = app_config.recent_folders.clone();
-    let (monitor_width, monitor_height) = monitor_bounds_for_window(&window);
-    let min_window_width = MIN_LEFT_PANE_PX + MIN_CENTER_PANE_PX + MIN_RIGHT_PANE_PX;
-    let min_window_height = (MIN_META_SPLIT_PX * 2).max(360);
-    let initial_window_width = app_config
-        .window_width
-        .unwrap_or(DEFAULT_WINDOW_WIDTH)
-        .clamp(min_window_width, monitor_width.max(min_window_width));
-    let initial_window_height = app_config
-        .window_height
-        .unwrap_or(DEFAULT_WINDOW_HEIGHT)
-        .clamp(min_window_height, monitor_height.max(min_window_height));
-    window.set_default_size(initial_window_width, initial_window_height);
-    let css = gtk4::CssProvider::new();
-    css.load_from_string(
-        "
-        .scroll-flag-bubble {
-            background-color: alpha(@theme_bg_color, 0.86);
-            border-radius: 8px;
-            padding: 6px 12px;
-        }
-        .scroll-flag-pointer {
-            color: alpha(@theme_fg_color, 0.95);
-        }
-        .thumbnail-card {
-            background-color: alpha(@theme_fg_color, 0.04);
-            border-radius: 8px;
-            padding: 4px;
-        }
-        gridview > child {
-            background-color: transparent;
-            border-color: transparent;
-            box-shadow: none;
-        }
-        gridview > child:hover {
-            background-color: transparent;
-        }
-        gridview > child:selected {
-            background-color: transparent;
-        }
-        gridview > child:hover .thumbnail-card {
-            background-color: alpha(@theme_fg_color, 0.10);
-            box-shadow: 0 2px 6px alpha(black, 0.14);
-        }
-        gridview > child:selected .thumbnail-card {
-            background-color: alpha(@accent_bg_color, 0.28);
-        }
-        ",
-    );
-    gtk4::style_context_add_provider_for_display(
-        &gtk4::prelude::WidgetExt::display(&window),
-        &css,
-        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
     let configured_right_pane_width_pct = app_config.right_pane_width_pct;
     let configured_right_pane_pos = app_config.right_pane_pos;
     let configured_left_pane_width_pct = app_config.left_pane_width_pct;
@@ -439,21 +398,7 @@ fn build_ui(app: &adw::Application) {
     let view_stack = adw::ViewStack::new();
 
     // Reusable multi-phase progress indicator shown while scanning/indexing.
-    let progress_box = gtk4::Box::new(Orientation::Horizontal, 6);
-    progress_box.set_visible(true);
-    progress_box.set_halign(gtk4::Align::Start);
-    progress_box.set_valign(gtk4::Align::Center);
-    let progress_label = Label::new(Some("Scanning folder..."));
-    progress_label.add_css_class("caption");
-    progress_label.set_halign(gtk4::Align::Start);
-    let progress_bar = ProgressBar::new();
-    progress_bar.set_hexpand(false);
-    progress_bar.set_show_text(true);
-    progress_bar.set_width_request(180);
-    progress_bar.set_height_request(8);
-    progress_bar.set_text(Some("--%"));
-    progress_box.append(&progress_label);
-    progress_box.append(&progress_bar);
+    let (progress_box, progress_label, progress_bar) = create_progress_widgets();
     let progress_state: Rc<RefCell<ScanProgressState>> =
         Rc::new(RefCell::new(ScanProgressState::default()));
 
@@ -1756,92 +1701,28 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Assemble three-pane layout with resizable Paned dividers
     // -----------------------------------------------------------------------
-    // Inner paned: center | right sidebar
-    let inner_paned = Paned::new(Orientation::Horizontal);
-    inner_paned.set_start_child(Some(&center_box));
-    inner_paned.set_end_child(Some(&right_sidebar));
-    inner_paned.set_resize_start_child(true);
-    inner_paned.set_resize_end_child(false);
-    inner_paned.set_shrink_start_child(false);
-    inner_paned.set_shrink_end_child(false);
-    let inner_position_programmatic = Rc::new(Cell::new(0_u32));
-    let inner_split_dirty = Rc::new(Cell::new(false));
-    inner_position_programmatic.set(inner_position_programmatic.get().saturating_add(1));
-    inner_paned.set_position(inner_pane_start_px);
-    inner_position_programmatic.set(inner_position_programmatic.get().saturating_sub(1));
-    {
-        let inner_position_programmatic = inner_position_programmatic.clone();
-        let inner_split_dirty = inner_split_dirty.clone();
-        let pane_restore_complete = pane_restore_complete.clone();
-        inner_paned.connect_notify_local(Some("position"), move |_, _| {
-            if !pane_restore_complete.get() {
-                return;
-            }
-            if inner_position_programmatic.get() != 0 {
-                return;
-            }
-            inner_split_dirty.set(true);
-        });
-    }
+    let paned_layout = assemble_paned_layout(
+        &left_sidebar,
+        &center_box,
+        &right_sidebar,
+        &pane_restore_complete,
+        left_pane_start_px,
+        inner_pane_start_px,
+    );
+    let inner_paned = paned_layout.inner_paned.clone();
+    let outer_paned = paned_layout.outer_paned.clone();
+    let inner_position_programmatic = paned_layout.inner_position_programmatic.clone();
+    let inner_split_dirty = paned_layout.inner_split_dirty.clone();
+    let outer_position_programmatic = paned_layout.outer_position_programmatic.clone();
+    let outer_split_dirty = paned_layout.outer_split_dirty.clone();
 
-    // Outer paned: left sidebar | (center + right)
-    let outer_paned = Paned::new(Orientation::Horizontal);
-    outer_paned.set_start_child(Some(&left_sidebar));
-    outer_paned.set_end_child(Some(&inner_paned));
-    outer_paned.set_resize_start_child(false);
-    outer_paned.set_resize_end_child(true);
-    outer_paned.set_shrink_start_child(false);
-    outer_paned.set_shrink_end_child(false);
-    let outer_position_programmatic = Rc::new(Cell::new(0_u32));
-    let outer_split_dirty = Rc::new(Cell::new(false));
-    outer_position_programmatic.set(outer_position_programmatic.get().saturating_add(1));
-    outer_paned.set_position(left_pane_start_px);
-    outer_position_programmatic.set(outer_position_programmatic.get().saturating_sub(1));
-    {
-        let outer_position_programmatic = outer_position_programmatic.clone();
-        let outer_split_dirty = outer_split_dirty.clone();
-        let pane_restore_complete = pane_restore_complete.clone();
-        outer_paned.connect_notify_local(Some("position"), move |_, _| {
-            if !pane_restore_complete.get() {
-                return;
-            }
-            if outer_position_programmatic.get() != 0 {
-                return;
-            }
-            outer_split_dirty.set(true);
-        });
-    }
-
-    // Wrap content in ToastOverlay + bottom status bar → ToolbarView → window
-    toast_overlay.set_child(Some(&outer_paned));
-    toast_overlay.set_hexpand(true);
-    toast_overlay.set_vexpand(true);
-
-    let status_bar = gtk4::Box::new(Orientation::Horizontal, 0);
-    status_bar.set_hexpand(true);
-    status_bar.set_halign(gtk4::Align::Fill);
-    status_bar.set_margin_start(8);
-    status_bar.set_margin_end(8);
-    status_bar.set_margin_top(2);
-    status_bar.set_margin_bottom(2);
-    status_bar.append(&progress_box);
-
-    let update_banner = adw::Banner::new("");
-    update_banner.set_button_label(Some("View release"));
-    update_banner.set_revealed(false);
-
-    let content_with_status = gtk4::Box::new(Orientation::Vertical, 0);
-    content_with_status.set_hexpand(true);
-    content_with_status.set_vexpand(true);
-    content_with_status.append(&update_banner);
-    content_with_status.append(&toast_overlay);
-    content_with_status.append(&status_bar);
-
-    let toolbar_view = adw::ToolbarView::new();
-    toolbar_view.add_top_bar(&header_bar);
-    toolbar_view.set_content(Some(&content_with_status));
-
-    window.set_content(Some(&toolbar_view));
+    let update_banner = mount_window_content(
+        &window,
+        &header_bar,
+        &toast_overlay,
+        &outer_paned,
+        &progress_box,
+    );
 
     // Check for updates in a background thread; show banner if a newer release exists.
     let (update_tx, update_rx) = async_channel::bounded::<updater::UpdateInfo>(1);
