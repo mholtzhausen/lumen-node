@@ -36,6 +36,9 @@ use tree_sidebar::reset_tree_root;
 use ui::center::{build_center_content, CenterContentDeps};
 use ui::grid::DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE;
 use ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps};
+use ui::layout::{
+    assemble_and_mount_layout, compute_startup_pane_metrics, LayoutMountDeps,
+};
 use ui::models::{build_model_bundle, ModelAssemblyDeps};
 use ui::navigation::{install_navigation_handlers, NavigationDeps};
 use ui::right_sidebar::{build_right_sidebar, RightSidebarDeps};
@@ -45,8 +48,7 @@ use ui::session::{
     RestoreSessionDeps,
 };
 use ui::shell::{
-    assemble_paned_layout, build_header_controls, create_progress_widgets,
-    create_window_with_defaults, mount_window_content,
+    build_header_controls, create_progress_widgets, create_window_with_defaults,
 };
 use ui::sidebar::connect_sidebar_visibility_toggles;
 use ui::tree::build_tree_widgets;
@@ -55,7 +57,6 @@ use ui::wiring::{
     install_selection_wiring, ContextMenuWiringDeps, ControlsWiringDeps,
     OpenFolderWiringDeps, SelectionWiringDeps,
 };
-use window_math::pct_to_px;
 
 use std::{
     cell::Cell,
@@ -482,41 +483,19 @@ fn build_ui(app: &adw::Application) {
 
     let startup_window_width = DEFAULT_WINDOW_WIDTH;
     let startup_window_height = DEFAULT_WINDOW_HEIGHT;
-    let left_pane_start_px = app_config
-        .left_pane_width_pct
-        .map(|pct| pct_to_px(startup_window_width, pct))
-        .or(app_config.left_pane_pos)
-        .unwrap_or(220)
-        .clamp(
-            MIN_LEFT_PANE_PX,
-            startup_window_width - MIN_CENTER_PANE_PX - MIN_RIGHT_PANE_PX,
-        );
-    let right_pane_width_px = app_config
-        .right_pane_width_pct
-        .map(|pct| pct_to_px(startup_window_width, pct))
-        .or_else(|| {
-            app_config.right_pane_pos.map(|inner_pos| {
-                startup_window_width.saturating_sub(left_pane_start_px + inner_pos)
-            })
-        })
-        .unwrap_or(260);
-    let max_right_pane_width_px = startup_window_width
-        .saturating_sub(left_pane_start_px + MIN_CENTER_PANE_PX)
-        .max(MIN_RIGHT_PANE_PX);
-    let right_pane_width_px = right_pane_width_px.clamp(MIN_RIGHT_PANE_PX, max_right_pane_width_px);
-    let inner_pane_start_px = startup_window_width
-        .saturating_sub(left_pane_start_px + right_pane_width_px)
-        .max(MIN_CENTER_PANE_PX);
-    let meta_pane_start_px = app_config
-        .meta_pane_height_pct
-        .map(|pct| pct_to_px(startup_window_height, pct))
-        .or(app_config.meta_pane_pos)
-        .unwrap_or(200)
-        .clamp(MIN_META_SPLIT_PX, startup_window_height - MIN_META_SPLIT_PX);
+    let pane_metrics = compute_startup_pane_metrics(
+        &app_config,
+        startup_window_width,
+        startup_window_height,
+        MIN_LEFT_PANE_PX,
+        MIN_CENTER_PANE_PX,
+        MIN_RIGHT_PANE_PX,
+        MIN_META_SPLIT_PX,
+    );
 
     let right_sidebar_bundle = build_right_sidebar(RightSidebarDeps {
         initial_right_sidebar_visible,
-        meta_pane_start_px,
+        meta_pane_start_px: pane_metrics.meta_pane_start_px,
     });
     let right_sidebar = right_sidebar_bundle.right_sidebar;
     let meta_preview = right_sidebar_bundle.meta_preview;
@@ -630,31 +609,26 @@ fn build_ui(app: &adw::Application) {
         hash_cache: hash_cache.clone(),
     });
 
-    // -----------------------------------------------------------------------
-    // Assemble three-pane layout with resizable Paned dividers
-    // -----------------------------------------------------------------------
-    let paned_layout = assemble_paned_layout(
-        &left_sidebar,
-        &center_box,
-        &right_sidebar,
-        &pane_restore_complete,
-        left_pane_start_px,
-        inner_pane_start_px,
-    );
+    let layout_bundle = assemble_and_mount_layout(LayoutMountDeps {
+        left_sidebar: left_sidebar.clone(),
+        center_box: center_box.clone(),
+        right_sidebar: right_sidebar.clone(),
+        pane_restore_complete: pane_restore_complete.clone(),
+        left_pane_start_px: pane_metrics.left_pane_start_px,
+        inner_pane_start_px: pane_metrics.inner_pane_start_px,
+        window: window.clone(),
+        header_bar: header_bar.clone(),
+        toast_overlay: toast_overlay.clone(),
+        progress_box: progress_box.clone(),
+    });
+    let paned_layout = layout_bundle.paned_layout;
     let inner_paned = paned_layout.inner_paned.clone();
     let outer_paned = paned_layout.outer_paned.clone();
     let inner_position_programmatic = paned_layout.inner_position_programmatic.clone();
     let inner_split_dirty = paned_layout.inner_split_dirty.clone();
     let outer_position_programmatic = paned_layout.outer_position_programmatic.clone();
     let outer_split_dirty = paned_layout.outer_split_dirty.clone();
-
-    let update_banner = mount_window_content(
-        &window,
-        &header_bar,
-        &toast_overlay,
-        &outer_paned,
-        &progress_box,
-    );
+    let update_banner = layout_bundle.update_banner;
 
     // Check for updates in a background thread; show banner if a newer release exists.
     let (update_tx, update_rx) = async_channel::bounded::<updater::UpdateInfo>(1);

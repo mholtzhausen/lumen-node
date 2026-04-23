@@ -3,6 +3,7 @@ pub mod center;
 pub mod controls;
 pub mod grid;
 pub mod keyboard;
+pub mod layout;
 pub mod navigation;
 pub mod models;
 pub mod open_folder;
