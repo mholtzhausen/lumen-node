@@ -57,6 +57,13 @@ make build && make run    # that's it
 - [Architecture](#architecture)
 - [Internals Deep-Dive](#internals-deep-dive)
 - [Roadmap](#roadmap)
+- [Module layout (developer)](ARCHITECTURE.md)
+
+---
+
+## Screenshots
+
+There are no screenshots checked into this repository yet. Run `make run` after [building from source](#building-from-source) to try the UI locally.
 
 ---
 
@@ -68,10 +75,10 @@ make build && make run    # that's it
 |---|---|
 | ⚡ | **Progressive loading** — folder opens instantly, thumbnails fill in behind |
 | 🖼️ | **Grid + single-view** — grid for browsing, click for focus, Escape to return |
-| 📐 | **4 thumbnail sizes** — 128 → 245px, adjustable in one click |
+| 📐 | **4 thumbnail sizes** — 128px base with larger steps up to 240px (128, 160, 208, 240), adjustable in one click |
 | 🔍 | **Live search** — filters grid by filename and metadata in real time |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |
-| 💾 | **Session persistence** — last/recent folders and pane layout are global; sort/search/thumbnail size persist per folder |
+| 💾 | **Session persistence** — window, pane positions, and recent folders in `~/.lumen-node/config.yml`; sort, search, and thumbnail size per folder in `.lumen-node.db` (`ui_state`). Optional `sort_key` / `search_text` / `thumbnail_size` in YAML are read at startup as defaults only (not written back by the app) |
 
 ### For AI artists
 
@@ -106,7 +113,7 @@ chmod +x LumenNode-x86_64.AppImage
 ### Install to `~/.local` (desktop integration)
 
 ```bash
-git clone https://github.com/your-username/lumen-node
+git clone https://github.com/mholtzhausen/lumen-node.git
 cd lumen-node
 make install
 ```
@@ -145,7 +152,9 @@ make run        # build + run
 make clean      # wipe build artifacts
 ```
 
-> **Always use `make`**, not bare `cargo`. The Makefile sets `PKG_CONFIG_PATH` required for GTK4/libadwaita linking.
+Additional Makefile targets for packaging and maintenance: `uninstall`, `appimage`, `release`, `release-preflight` (see `Makefile`).
+
+> **Prefer `make`** for builds: the Makefile exports `PKG_CONFIG_PATH` so `pkg-config` finds GTK4/libadwaita on Debian-like systems. If your distro already resolves those packages, `cargo build` may work; match the Makefile’s `PKG_CONFIG_PATH` when linking fails.
 
 ---
 
@@ -167,26 +176,13 @@ Home / End      → ends
 
 ### The context menu
 
-Right-click any image thumbnail, the single-view image, or the sidebar preview to get:
+Right-click any image thumbnail, the single-view image, or the sidebar preview. Sections match the live `gio::Menu` in `src/ui/actions.rs`:
 
-```
-Prompt Actions ──────────────
-  Copy Prompt
-  Copy Negative Prompt
-  Copy Seed
-  Copy Generation Command        ← rebuilds CLI invocation
-─────────────────────────────
-Clipboard ───────────────────
-  Copy Image                     ← pixel data to clipboard
-  Copy Path
-  Copy Metadata
-─────────────────────────────
-Refresh ─────────────────────
-  Refresh Thumbnail
-  Refresh Metadata
-  Refresh Folder Thumbnails
-  Refresh Folder Metadata
-```
+- **Prompt:** Copy Prompt, Copy Negative Prompt, Copy Seed, Copy Generation Command (rebuilds a CLI-style invocation)
+- **Clipboard:** Copy Image (pixels), Copy Path, Copy Metadata
+- **Open:** Open in File Manager, Open in External Editor (optional `external_editor` in config; otherwise the default image app)
+- **Organise:** Favourite (toggle), Move to Trash
+- **Refresh** (submenu): Refresh Thumbnail, Refresh Metadata, Refresh Folder Thumbnails, Refresh Folder Metadata
 
 ### Pane layout
 
@@ -200,9 +196,11 @@ Refresh ─────────────────────
 │          ├──────────────────────────┤               │
 │          │   Sidebar Detail / Meta  │               │
 ├──────────┴──────────────────────────┴───────────────┤
-│  ████████████████░░░░  Enum 412/412 | Thumbs 201/412 │  ← progress
+│  ████████████████░░░░  Enum a/b | Thumbs a/b | Index a/b (gen g, cached c) │  ← progress while scanning
 └──────────────────────────────────────────────────────┘
 ```
+
+While a folder scan is active, the footer shows **Enum**, **Thumbs**, and **Index** counts plus how many enrichments were generated vs served from cache. When the progress bar hides (idle), the same line shows image count, human-readable folder size, and the folder path.
 
 The `◧` and `◨` buttons in the header toggle the folder tree and metadata panes. All three dividers are draggable; proportions are saved on exit.
 
@@ -210,7 +208,7 @@ The `◧` and `◨` buttons in the header toggle the folder tree and metadata pa
 
 ## AI Metadata Support
 
-LumenNode reads PNG `tEXt` chunks written by AI generation tools. No configuration needed — it detects the format automatically.
+LumenNode reads PNG text chunks (`tEXt`, `zTXt`, `iTXt`) written by AI generation tools, and can combine them with camera EXIF from a PNG **eXIf** chunk when present. No configuration needed — it detects the format automatically.
 
 ### Automatic1111 / Stable Diffusion WebUI
 
@@ -262,6 +260,10 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `Escape` | Grid | Quit (toast warns, second press confirms) |
 | `←` / `→` | Single view | Previous / next image |
 | `Escape` | Single view | Return to grid |
+| `Ctrl+C` | Selection | Copy image pixels to clipboard |
+| `Ctrl+V` | Grid (folder open) | Paste clipboard image as PNG into the folder (then rename flow when applicable) |
+| `Delete` | Grid (selection, not in a text field) | Move selection to trash (same as context menu) |
+| `Shift+Delete` | Grid | Permanent delete (confirmation) |
 
 ---
 
@@ -269,35 +271,46 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 
 Config lives at `~/.lumen-node/config.yml` — a plain-text `key: value` file you can edit by hand.
 
+On exit, the app writes **window geometry**, **three GtkPaned positions** (`left_pane_pos`, `right_pane_pos`, `meta_pane_pos`), **percentage splits** (`left_pane_width_pct`, `right_pane_width_pct`, `meta_pane_height_pct`), **sidebar visibility**, **last folder**, and **recent folder** lines. It does **not** write `sort_key`, `search_text`, `thumbnail_size`, or `external_editor` back on save; those keys are only read when present (for defaults or tooling paths).
+
 | Key | Default | Description |
 |-----|---------|-------------|
 | `last_folder` | — | Folder reopened at launch |
 | `window_width` / `window_height` | 1280×800 | Window size |
 | `window_maximized` | false | Maximized state |
+| `left_pane_pos` / `right_pane_pos` / `meta_pane_pos` | — | Integer GtkPaned divider positions persisted on exit |
 | `left_pane_width_pct` | derived from pane split | Folder tree width (% of window) |
 | `right_pane_width_pct` | derived from pane split | Metadata sidebar width (%) |
 | `meta_pane_height_pct` | derived from pane split | Metadata/detail split in the right pane (%) |
 | `left_sidebar_visible` | false | Folder tree visibility |
 | `right_sidebar_visible` | true | Metadata pane visibility |
 | `recent_folder` | — | Repeated entry for recent folder history |
+| `sort_key` / `search_text` / `thumbnail_size` | — | Optional startup defaults (read only; per-folder values live in SQLite `ui_state`) |
+| `external_editor` | — | Optional path to an editor binary for “Open in External Editor” |
 
-Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites plus folder-scoped UI state (`sort_key`, `search_text`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
+Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites plus folder-scoped UI state in the **`ui_state`** table (`sort_key`, `search_text`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
 
 ---
 
 ## Architecture
 
-LumenNode is organized into focused Rust modules.
+LumenNode is organized into focused Rust modules. For a developer-oriented map of `src/ui/`, `src/core/`, and scan flow, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ```
 src/
-├── main.rs        UI construction, event wiring, all GTK state
-├── scanner.rs     Background scan thread, async-channel messaging
-├── db.rs          Per-folder SQLite cache, staleness validation
-├── metadata.rs    Format-dispatched metadata extraction
-├── thumbnails.rs  Freedesktop spec + content-hash thumbnail stores
-├── config.rs      ~/.lumen-node/config.yml read/write
-└── updater.rs     Version check stub
+├── main.rs            Composition root, scan progress state, global flags, wiring entry
+├── ui/                GTK widgets, actions, keyboard, layout, scan runtime, selection, …
+├── core/              app_state, scan_coordinator (folder switches, generation IDs)
+├── services/          Background helpers (e.g. update check integration)
+├── scan.rs            ScanMessage enum (worker → UI channel)
+├── scanner.rs         Background scan thread → async-channel
+├── db.rs              Per-folder SQLite + ui_state
+├── metadata.rs        Format-dispatched metadata extraction
+├── thumbnails.rs      Freedesktop spec + content-hash thumbnail stores
+├── thumbnail_sizing.rs Discrete thumbnail size steps
+├── config.rs          ~/.lumen-node/config.yml read/write
+├── dialogs.rs         Rename/delete and related flows
+└── updater.rs         Release check via ureq (GitHub API URL must match the real repo)
 ```
 
 ### Data flow
@@ -348,25 +361,18 @@ scan_directory()  ──── background thread ──────────�
 ### Module details
 
 <details>
-<summary><strong>main.rs</strong> — the god node</summary>
+<summary><strong>main.rs</strong> — composition root</summary>
 
-`build_ui()` constructs the entire window imperatively — no `.ui` XML, no GtkBuilder. It wires together:
-- `GtkGridView` with `SignalListItemFactory` (custom cell renderer)
-- `GtkPicture` for single-view (async decode via `gio::spawn_blocking`, cancellable)
-- `TreeListModel` for the folder tree (filesystem hierarchy, dotfile-filtered)
-- `FilterListModel` + `SortListModel` wrapping a `GListStore`
-- Three `GtkPaned` panels with percent-based proportion restore on resize
-- `GtkHeaderBar` with sort dropdown, search entry, and pane-toggle buttons
-- Progress bar with three-phase weighted progress text
+`build_ui()` still constructs the window imperatively (no `.ui` XML), but most widgets and handlers live under **`src/ui/`** (`shell`, `layout`, `center`, `chrome`, `wiring`, `scan_runtime`, etc.). `main.rs` wires those pieces together and owns shared pieces such as **`ScanProgressState`** (progress label text and weighted bar), **`SUPPRESS_SIDEBAR_DURING_PREVIEW`**, and the scan message receiver scheduling.
 
-`build_ui()` has 39 outgoing edges in the call graph — intentionally a single large function to keep all GTK state co-located and avoid lifetime tangles.
+Together, the UI modules provide: `GtkGridView` + factory, `GtkPicture` for single-view, folder tree models, filtered/sorted list stores, three `GtkPaned` panels, header controls, and the progress widgets.
 
 </details>
 
 <details>
 <summary><strong>scanner.rs</strong> — two-phase scan</summary>
 
-`scan_directory()` spawns a `std::thread` and sends `ScanMessage` variants over an `async-channel`:
+`scan_directory()` spawns a `std::thread` and sends **`ScanMessage`** variants (defined in **`src/scan.rs`**) over an `async-channel`:
 
 ```rust
 pub enum ScanMessage {
@@ -409,6 +415,8 @@ CREATE TABLE images (
 CREATE INDEX idx_images_hash ON images(hash);
 ```
 
+A companion **`ui_state`** table stores string key-value rows for the current folder’s sort mode, search text, and thumbnail size (`db::save_ui_state` / `load_ui_state`).
+
 `ensure_indexed_with_outcome()` checks `mtime + size` for staleness. A match returns the cached row in microseconds. A mismatch triggers the full slow path: SHA-256 hash → metadata extraction → thumbnail generation → DB write.
 
 WAL mode + `PRAGMA synchronous=NORMAL` keeps writes fast without risking corruption.
@@ -421,7 +429,7 @@ WAL mode + `PRAGMA synchronous=NORMAL` keeps writes fast without risking corrupt
 Metadata extraction is dispatched by file extension:
 
 - **JPEG / TIFF**: `kamadak-exif` reads EXIF tags (Make, Model, ExposureTime, ISOSpeedRatings)
-- **PNG**: `png` crate iterates `tEXt` chunks; key-based dispatch:
+- **PNG**: `png` crate reads **eXIf** when present for camera EXIF, then text chunks **`tEXt`**, **`zTXt`**, and **`iTXt`** with key-based dispatch:
   - `"parameters"` → Auto1111 parser (regex for `Seed: NNN`, splits on `Negative prompt:`)
   - `"prompt"` → ComfyUI JSON parser (finds `CLIPTextEncode` nodes, sorts by text length)
   - `"workflow"` → ComfyUI workflow summariser (human-readable node list)
@@ -444,11 +452,11 @@ Both stores use `gdk_pixbuf::Pixbuf` for scaling, preserving aspect ratio.
 <details>
 <summary><strong>Performance instrumentation</strong></summary>
 
-`main.rs` contains timing infrastructure (`ClickTrace`, `FullViewTrace`) that records step-by-step millisecond timestamps for click-to-preview and full-view-activation paths. Counters track:
+**`ClickTrace`** (click → sidebar preview) lives in **`src/ui/selection.rs`**. **`FullViewTrace`** (single-view activation) lives in **`src/ui/navigation.rs`**. Concurrency helpers include:
 
-- `ACTIVE_THUMBNAIL_TASKS` — capped at 64 concurrent thumbnail loads
-- `SUPPRESS_SIDEBAR_DURING_PREVIEW` — skips thumbnail callbacks during full-image decode
-- `DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE` — holds thumbnail dispatch until Phase 1 finishes
+- **`ACTIVE_THUMBNAIL_TASKS`** in **`src/ui/grid.rs`** — capped concurrent thumbnail loads
+- **`SUPPRESS_SIDEBAR_DURING_PREVIEW`** in **`main.rs`** — skips certain thumbnail callbacks during full-image decode
+- **`DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE`** in **`src/ui/grid.rs`** (toggled from **`core/scan_coordinator.rs`** and scan runtime) — defers grid thumbnail work until enumeration completes
 
 All timing data flows to `write_timing_report()` (currently inactive, ready for a profiling UI).
 
@@ -459,7 +467,7 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 | Format | Extensions | Metadata |
 |--------|-----------|---------|
 | JPEG | `.jpg` `.jpeg` | EXIF (camera, exposure, ISO) |
-| PNG | `.png` | EXIF + AI tEXt chunks (Auto1111, ComfyUI, InvokeAI) |
+| PNG | `.png` | EXIF (including PNG eXIf when present) + AI text chunks (Auto1111, ComfyUI, InvokeAI) |
 | TIFF | `.tiff` `.tif` | EXIF |
 | WebP | `.webp` | Thumbnail only |
 | GIF | `.gif` | Thumbnail only |
@@ -479,17 +487,18 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 | `async-channel` 2 | Bounded MPMC channel (worker ↔ main thread) |
 | `rusqlite` 0.31 | SQLite (bundled) |
 | `sha2` + `md-5` 0.10 | SHA-256 content hash, MD5 thumbnail URI |
+| `ureq` 2 | HTTP client for GitHub release checks (`updater.rs`) |
 
 ---
 
 ## Roadmap
 
-- [ ] **Favourite filtering** — schema ready; filter UI not yet wired
-- [ ] **Trash / delete** — move to XDG trash from context menu
-- [ ] **External open** — open in GIMP, Krita, or default app
+- [ ] **Favourite filtering** — schema and toggle exist; “show only favourites” (or similar) in the chrome is not wired yet
+- [x] **Trash / delete** — move to trash from context menu and `Delete`; permanent delete via `Shift+Delete` with confirmation
+- [x] **External open** — file manager and external editor (optional `external_editor` config); per-format custom apps remain a possible enhancement
 - [ ] **Side-by-side compare** — pin reference image, diff against selection
 - [ ] **Free-form tags** — label images beyond favourite/unfavourite
-- [ ] **Version checker** — `updater.rs` stub is in place
+- [ ] **Version checker** — background check and in-app banner exist; point **`updater.rs`** at the real `api.github.com/repos/.../releases/latest` URL (replace `OWNER/REPO`) so updates surface for your fork
 
 ---
 
