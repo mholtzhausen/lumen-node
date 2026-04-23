@@ -1,18 +1,16 @@
+use crate::core::app_state::AppState;
 use crate::scan::ScanMessage;
 use crate::sort_flags::compute_sort_fields;
 use crate::ui::grid::{
     refresh_realized_grid_thumbnails, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
 };
-use crate::{
-    sync_progress_widgets, ImageMetadata, ScanProgressState, SCAN_BUFFER_DEPTH,
-    SCAN_DRAIN_BATCH_SIZE, SCAN_DRAIN_SCHEDULED,
-};
+use crate::{sync_progress_widgets, SCAN_BUFFER_DEPTH, SCAN_DRAIN_BATCH_SIZE, SCAN_DRAIN_SCHEDULED};
 use gtk4::prelude::*;
-use gtk4::{gio, glib, Image, Label, ProgressBar, StringObject};
+use gtk4::{glib, Label, ProgressBar, StringObject};
 use libadwaita as adw;
 use std::{
-    cell::{Cell, RefCell},
-    collections::{HashMap, VecDeque},
+    cell::RefCell,
+    collections::VecDeque,
     rc::Rc,
     sync::atomic::Ordering as AtomicOrdering,
     time::Duration,
@@ -20,16 +18,8 @@ use std::{
 
 pub(crate) struct ScanRuntimeDeps {
     pub(crate) receiver: async_channel::Receiver<ScanMessage>,
-    pub(crate) list_store: gio::ListStore,
+    pub(crate) app_state: AppState,
     pub(crate) toast_overlay: adw::ToastOverlay,
-    pub(crate) meta_cache: Rc<RefCell<HashMap<String, ImageMetadata>>>,
-    pub(crate) hash_cache: Rc<RefCell<HashMap<String, String>>>,
-    pub(crate) sort_fields_cache: Rc<RefCell<HashMap<String, crate::sort_flags::SortFields>>>,
-    pub(crate) active_scan_generation: Rc<Cell<u64>>,
-    pub(crate) scan_in_progress: Rc<Cell<bool>>,
-    pub(crate) thumbnail_size: Rc<RefCell<i32>>,
-    pub(crate) realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    pub(crate) progress_state: Rc<RefCell<ScanProgressState>>,
     pub(crate) progress_box: gtk4::Box,
     pub(crate) progress_label: Label,
     pub(crate) progress_bar: ProgressBar,
@@ -47,19 +37,19 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
     let schedule_drain = {
         let buffer = buffer.clone();
         let drain_scheduled = drain_scheduled.clone();
-        let list_store_recv = deps.list_store.clone();
-        let hash_cache_recv = deps.hash_cache.clone();
-        let meta_cache_recv = deps.meta_cache.clone();
-        let sort_fields_cache_recv = deps.sort_fields_cache.clone();
-        let active_scan_generation_recv = deps.active_scan_generation.clone();
-        let scan_in_progress_recv = deps.scan_in_progress.clone();
+        let list_store_recv = deps.app_state.list_store.clone();
+        let hash_cache_recv = deps.app_state.hash_cache.clone();
+        let meta_cache_recv = deps.app_state.meta_cache.clone();
+        let sort_fields_cache_recv = deps.app_state.sort_fields_cache.clone();
+        let active_scan_generation_recv = deps.app_state.active_scan_generation.clone();
+        let scan_in_progress_recv = deps.app_state.scan_in_progress.clone();
         let toast_recv = deps.toast_overlay.clone();
-        let progress_state_recv = deps.progress_state.clone();
+        let progress_state_recv = deps.app_state.progress_state.clone();
         let progress_box_recv = deps.progress_box.clone();
         let progress_label_recv = deps.progress_label.clone();
         let progress_bar_recv = deps.progress_bar.clone();
-        let thumbnail_size_recv = deps.thumbnail_size.clone();
-        let realized_thumb_images_recv = deps.realized_thumb_images.clone();
+        let thumbnail_size_recv = deps.app_state.thumbnail_size.clone();
+        let realized_thumb_images_recv = deps.app_state.realized_thumb_images.clone();
         Rc::new(move || {
             if *drain_scheduled.borrow() {
                 return;

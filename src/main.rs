@@ -26,12 +26,12 @@ mod window_math;
 
 use metadata::ImageMetadata;
 use byte_format::human_readable_bytes;
+use core::app_state::build_app_state;
 use core::scan_coordinator::{build_start_scan_for_folder, ScanCoordinatorDeps};
 use scan::ScanMessage;
 use recent_folders::push_recent_folder_entry;
-use sort_flags::SortFields;
 use sort::{
-    normalize_sort_key, sort_index_for_key, SORT_KEY_NAME_ASC,
+    sort_index_for_key, SORT_KEY_NAME_ASC,
 };
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use tree_sidebar::reset_tree_root;
@@ -57,16 +57,13 @@ use ui::wiring::{
 
 use std::{
     cell::Cell,
-    cell::RefCell,
-    collections::HashMap,
     rc::Rc,
     sync::atomic::AtomicU64,
-    time::Instant,
 };
 
 use libadwaita as adw;
 use adw::prelude::*;
-use gtk4::{gio, glib, Image, Label, ProgressBar, StringObject, TreeListRow};
+use gtk4::{gio, glib, Label, ProgressBar, TreeListRow};
 
 pub(crate) static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub(crate) static PREVIEW_REQUEST_PENDING: AtomicU64 = AtomicU64::new(0);
@@ -208,7 +205,6 @@ fn build_ui(app: &adw::Application) {
     );
 
     // Load persisted config (last folder).
-    let initial_recent_folders = app_config.recent_folders.clone();
     let configured_right_pane_width_pct = app_config.right_pane_width_pct;
     let configured_right_pane_pos = app_config.right_pane_pos;
     let configured_left_pane_width_pct = app_config.left_pane_width_pct;
@@ -216,25 +212,14 @@ fn build_ui(app: &adw::Application) {
     let configured_meta_pane_height_pct = app_config.meta_pane_height_pct;
     let configured_meta_pane_pos = app_config.meta_pane_pos;
 
-    // Tracks the most recently scanned folder for config persistence.
-    let current_folder: Rc<RefCell<Option<std::path::PathBuf>>> =
-        Rc::new(RefCell::new(None));
-    let recent_folders: Rc<RefCell<Vec<std::path::PathBuf>>> =
-        Rc::new(RefCell::new(initial_recent_folders));
-    {
-        let mut history = recent_folders.borrow_mut();
-        let mut sanitized = Vec::new();
-        for folder in history.iter() {
-            if folder.is_dir() && !sanitized.iter().any(|entry| entry == folder) {
-                sanitized.push(folder.clone());
-            }
-        }
-        *history = sanitized;
-        history.truncate(RECENT_FOLDERS_LIMIT);
-    }
-
-    // Shared model: each item holds the absolute path of one image.
-    let list_store = gio::ListStore::new::<StringObject>();
+    let app_state = build_app_state(
+        &app_config,
+        RECENT_FOLDERS_LIMIT,
+        SORT_KEY_NAME_ASC,
+        thumbnails::THUMB_NORMAL_SIZE,
+    );
+    let current_folder = app_state.current_folder.clone();
+    let recent_folders = app_state.recent_folders.clone();
 
     // Async channel: background scan thread → GTK main thread.
     // Bounded to provide backpressure when the UI can't keep up.
@@ -245,68 +230,28 @@ fn build_ui(app: &adw::Application) {
 
     // Reusable multi-phase progress indicator shown while scanning/indexing.
     let (progress_box, progress_label, progress_bar) = create_progress_widgets();
-    let progress_state: Rc<RefCell<ScanProgressState>> =
-        Rc::new(RefCell::new(ScanProgressState::default()));
+    let progress_state = app_state.progress_state.clone();
 
     // Toast overlay wraps all main content for non-intrusive notifications.
     let toast_overlay = adw::ToastOverlay::new();
 
-    // Hash cache: path → content hash (for hash-based thumbnail lookup).
-    let hash_cache: Rc<RefCell<HashMap<String, String>>> =
-        Rc::new(RefCell::new(HashMap::new()));
-
-    // Metadata cache: path → extracted metadata (for search filtering).
-    let meta_cache: Rc<RefCell<HashMap<String, ImageMetadata>>> =
-        Rc::new(RefCell::new(HashMap::new()));
-
-    // Sort cache: path -> precomputed fields used by UI comparator.
-    let sort_fields_cache: Rc<RefCell<HashMap<String, SortFields>>> =
-        Rc::new(RefCell::new(HashMap::new()));
-
-    // Generation guards stale scan messages after restarts/superseding scans.
-    let active_scan_generation = Rc::new(Cell::new(0_u64));
-    let scan_in_progress = Rc::new(Cell::new(false));
-
-    // Sort key: name/date/size ascending or descending.
-    let sort_key: Rc<RefCell<String>> = Rc::new(RefCell::new(
-        app_config
-            .sort_key
-            .as_deref()
-            .map(normalize_sort_key)
-            .unwrap_or(SORT_KEY_NAME_ASC)
-            .to_string(),
-    ));
-
-    // Search text.
-    let search_text: Rc<RefCell<String>> = Rc::new(RefCell::new(
-        app_config.search_text.clone().unwrap_or_default(),
-    ));
-
-    let initial_thumbnail_size =
-        normalize_thumbnail_size(app_config.thumbnail_size.unwrap_or(thumbnails::THUMB_NORMAL_SIZE));
-    let thumbnail_size: Rc<RefCell<i32>> = Rc::new(RefCell::new(initial_thumbnail_size));
-    let realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>> =
-        Rc::new(RefCell::new(Vec::new()));
-    let realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>> =
-        Rc::new(RefCell::new(Vec::new()));
-
-    let fast_scroll_active: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-    let scroll_last_pos: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
-    let scroll_last_time: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
-    let scroll_debounce_gen: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+    let hash_cache = app_state.hash_cache.clone();
+    let sort_fields_cache = app_state.sort_fields_cache.clone();
+    let sort_key = app_state.sort_key.clone();
+    let search_text = app_state.search_text.clone();
+    let initial_thumbnail_size = app_state.initial_thumbnail_size;
+    let thumbnail_size = app_state.thumbnail_size.clone();
+    let realized_thumb_images = app_state.realized_thumb_images.clone();
+    let realized_cell_boxes = app_state.realized_cell_boxes.clone();
+    let fast_scroll_active = app_state.fast_scroll_active.clone();
+    let scroll_last_pos = app_state.scroll_last_pos.clone();
+    let scroll_last_time = app_state.scroll_last_time.clone();
+    let scroll_debounce_gen = app_state.scroll_debounce_gen.clone();
 
     install_scan_runtime(ScanRuntimeDeps {
         receiver,
-        list_store: list_store.clone(),
+        app_state: app_state.clone(),
         toast_overlay: toast_overlay.clone(),
-        meta_cache: meta_cache.clone(),
-        hash_cache: hash_cache.clone(),
-        sort_fields_cache: sort_fields_cache.clone(),
-        active_scan_generation: active_scan_generation.clone(),
-        scan_in_progress: scan_in_progress.clone(),
-        thumbnail_size: thumbnail_size.clone(),
-        realized_thumb_images: realized_thumb_images.clone(),
-        progress_state: progress_state.clone(),
         progress_box: progress_box.clone(),
         progress_label: progress_label.clone(),
         progress_bar: progress_bar.clone(),
@@ -344,15 +289,8 @@ fn build_ui(app: &adw::Application) {
     let tree_list_view = tree_widgets.tree_list_view;
 
     let start_scan_for_folder = build_start_scan_for_folder(ScanCoordinatorDeps {
-        list_store: list_store.clone(),
+        app_state: app_state.clone(),
         sender: sender.clone(),
-        hash_cache: hash_cache.clone(),
-        meta_cache: meta_cache.clone(),
-        sort_fields_cache: sort_fields_cache.clone(),
-        sort_key: sort_key.clone(),
-        active_scan_generation: active_scan_generation.clone(),
-        scan_in_progress: scan_in_progress.clone(),
-        progress_state: progress_state.clone(),
         progress_box: progress_box.clone(),
         progress_label: progress_label.clone(),
         progress_bar: progress_bar.clone(),
@@ -417,11 +355,7 @@ fn build_ui(app: &adw::Application) {
     });
 
     let model_bundle = build_model_bundle(ModelAssemblyDeps {
-        list_store: list_store.clone(),
-        meta_cache: meta_cache.clone(),
-        search_text: search_text.clone(),
-        sort_key: sort_key.clone(),
-        sort_fields_cache: sort_fields_cache.clone(),
+        app_state: app_state.clone(),
     });
     let filter = model_bundle.filter;
     let sorter = model_bundle.sorter;
@@ -481,20 +415,16 @@ fn build_ui(app: &adw::Application) {
     let pane_restore_complete = right_sidebar_bundle.pane_restore_complete;
 
     install_context_menu_wiring(ContextMenuWiringDeps {
+        app_state: app_state.clone(),
         window: window.clone(),
         toast_overlay: toast_overlay.clone(),
         selection_model: selection_model.clone(),
-        meta_cache: meta_cache.clone(),
-        hash_cache: hash_cache.clone(),
-        thumbnail_size: thumbnail_size.clone(),
         meta_expander: meta_expander.clone(),
         meta_paned: meta_paned.clone(),
         meta_split_before_auto_collapse: meta_split_before_auto_collapse.clone(),
         meta_position_programmatic: meta_position_programmatic.clone(),
         min_meta_split_px: MIN_META_SPLIT_PX,
-        current_folder: current_folder.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
-        list_store: list_store.clone(),
         meta_listbox: meta_listbox.clone(),
         grid_view: grid_view.clone(),
         single_picture: single_picture.clone(),
@@ -521,38 +451,30 @@ fn build_ui(app: &adw::Application) {
     });
 
     install_selection_wiring(SelectionWiringDeps {
+        app_state: app_state.clone(),
         selection_model: selection_model.clone(),
-        meta_cache: meta_cache.clone(),
         meta_listbox: meta_listbox.clone(),
         meta_expander: meta_expander.clone(),
         meta_paned: meta_paned.clone(),
         meta_split_before_auto_collapse: meta_split_before_auto_collapse.clone(),
         meta_position_programmatic: meta_position_programmatic.clone(),
         meta_preview: meta_preview.clone(),
-        realized_thumb_images: realized_thumb_images.clone(),
-        thumbnail_size: thumbnail_size.clone(),
-        hash_cache: hash_cache.clone(),
     });
 
     // -----------------------------------------------------------------------
     // Wire: open_btn → FileDialog → start scan (quick-jump shortcut)
     // -----------------------------------------------------------------------
     let open_folder_action = install_open_folder_wiring(OpenFolderWiringDeps {
-        current_folder: current_folder.clone(),
+        app_state: app_state.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
         tree_root: tree_root.clone(),
         tree_model: tree_model.clone(),
         tree_list_view: tree_list_view.clone(),
-        recent_folders: recent_folders.clone(),
-        sort_key: sort_key.clone(),
-        search_text: search_text.clone(),
-        thumbnail_size: thumbnail_size.clone(),
         sort_dropdown: sort_dropdown.clone(),
         search_entry: search_entry.clone(),
         filter: filter.clone(),
         sorter: sorter.clone(),
         size_buttons: size_buttons.clone(),
-        progress_state: progress_state.clone(),
         recent_folders_limit: RECENT_FOLDERS_LIMIT,
         history_popover: history_popover.clone(),
         history_list: history_list.clone(),
@@ -564,22 +486,15 @@ fn build_ui(app: &adw::Application) {
     // Wire: sort/search/clear/thumbnail-size controls
     // -----------------------------------------------------------------------
     install_controls_wiring(ControlsWiringDeps {
+        app_state: app_state.clone(),
         sort_dropdown: sort_dropdown.clone(),
-        sort_key: sort_key.clone(),
         sorter: sorter.clone(),
-        current_folder: current_folder.clone(),
-        scan_in_progress: scan_in_progress.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
         search_entry: search_entry.clone(),
-        search_text: search_text.clone(),
         filter: filter.clone(),
         clear_btn: clear_btn.clone(),
-        thumbnail_size: thumbnail_size.clone(),
         size_buttons: size_buttons.clone(),
         grid_view: grid_view.clone(),
-        realized_thumb_images: realized_thumb_images.clone(),
-        realized_cell_boxes: realized_cell_boxes.clone(),
-        hash_cache: hash_cache.clone(),
     });
 
     let layout_bundle = assemble_and_mount_layout(LayoutMountDeps {

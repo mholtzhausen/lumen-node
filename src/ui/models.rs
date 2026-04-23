@@ -1,18 +1,14 @@
+use crate::core::app_state::AppState;
 use crate::sort::{
     normalize_sort_key, SORT_KEY_DATE_DESC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC,
 };
-use crate::sort_flags::{compute_sort_fields, SortFields};
-use crate::ImageMetadata;
+use crate::sort_flags::compute_sort_fields;
 use gtk4::prelude::*;
-use gtk4::{gio, CustomFilter, CustomSorter, FilterListModel, SingleSelection, SortListModel, StringObject};
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
+use gtk4::{CustomFilter, CustomSorter, FilterListModel, SingleSelection, SortListModel, StringObject};
+use std::path::Path;
 
 pub(crate) struct ModelAssemblyDeps {
-    pub(crate) list_store: gio::ListStore,
-    pub(crate) meta_cache: Rc<RefCell<HashMap<String, ImageMetadata>>>,
-    pub(crate) search_text: Rc<RefCell<String>>,
-    pub(crate) sort_key: Rc<RefCell<String>>,
-    pub(crate) sort_fields_cache: Rc<RefCell<HashMap<String, SortFields>>>,
+    pub(crate) app_state: AppState,
 }
 
 pub(crate) struct ModelBundle {
@@ -25,8 +21,8 @@ pub(crate) struct ModelBundle {
 
 pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
     // Filter model: wraps list_store, applies search text.
-    let meta_cache_filter = deps.meta_cache.clone();
-    let search_text_filter = deps.search_text.clone();
+    let meta_cache_filter = deps.app_state.meta_cache.clone();
+    let search_text_filter = deps.app_state.search_text.clone();
     let filter = CustomFilter::new(move |obj| {
         let query = search_text_filter.borrow().to_lowercase();
         if query.is_empty() {
@@ -65,11 +61,12 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
         }
         false
     });
-    let filter_model = FilterListModel::new(Some(deps.list_store.clone()), Some(filter.clone()));
+    let filter_model =
+        FilterListModel::new(Some(deps.app_state.list_store.clone()), Some(filter.clone()));
 
     // Sort model: wraps filter_model, applies selected sort key.
-    let sort_key_sorter = deps.sort_key.clone();
-    let sort_fields_cache_sorter = deps.sort_fields_cache.clone();
+    let sort_key_sorter = deps.app_state.sort_key.clone();
+    let sort_fields_cache_sorter = deps.app_state.sort_fields_cache.clone();
     let sorter = CustomSorter::new(move |a, b| {
         let path_a = a
             .downcast_ref::<StringObject>()
