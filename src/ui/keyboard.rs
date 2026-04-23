@@ -1,5 +1,6 @@
 use crate::dialogs::{open_delete_dialog, open_rename_dialog};
 use crate::file_name_ops::clipboard_base_name_hint;
+use crate::ui::center::CenterContentBundle;
 use crate::ui::preview::load_picture_async;
 use crate::view_helpers::selected_image_path;
 use gtk4::prelude::*;
@@ -12,11 +13,8 @@ use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 
 pub(crate) struct KeyboardDeps {
     pub(crate) window: adw::ApplicationWindow,
-    pub(crate) view_stack: adw::ViewStack,
+    pub(crate) center: CenterContentBundle,
     pub(crate) selection_model: gtk4::SingleSelection,
-    pub(crate) single_picture: gtk4::Picture,
-    pub(crate) grid_view: gtk4::GridView,
-    pub(crate) grid_scroll: gtk4::ScrolledWindow,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
@@ -31,11 +29,11 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
     let esc_pending: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let key_controller = EventControllerKey::new();
     key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
-    let stack_for_keys = deps.view_stack.clone();
+    let stack_for_keys = deps.center.view_stack.clone();
     let selection_for_keys = deps.selection_model.clone();
-    let picture_for_keys = deps.single_picture.clone();
-    let grid_view_for_keys = deps.grid_view.clone();
-    let grid_scroll_for_keys = deps.grid_scroll.clone();
+    let picture_for_keys = deps.center.single_picture.clone();
+    let grid_view_for_keys = deps.center.grid_view.clone();
+    let grid_scroll_for_keys = deps.center.grid_scroll.clone();
     let thumbnail_size_for_keys = deps.thumbnail_size.clone();
     let toast_overlay_for_keys = deps.toast_overlay.clone();
     let window_for_keys = deps.window.clone();

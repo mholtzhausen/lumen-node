@@ -16,7 +16,6 @@ use std::{
 };
 
 pub(crate) struct CenterContentDeps {
-    pub(crate) view_stack: adw::ViewStack,
     pub(crate) selection_model: SingleSelection,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
@@ -34,7 +33,9 @@ pub(crate) struct CenterContentDeps {
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
 }
 
+#[derive(Clone)]
 pub(crate) struct CenterContentBundle {
+    pub(crate) view_stack: adw::ViewStack,
     pub(crate) center_box: gtk4::Box,
     pub(crate) grid_view: gtk4::GridView,
     pub(crate) grid_scroll: gtk4::ScrolledWindow,
@@ -42,6 +43,8 @@ pub(crate) struct CenterContentBundle {
 }
 
 pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBundle {
+    let view_stack = adw::ViewStack::new();
+
     let factory = install_grid_factory(GridFactoryDeps {
         thumbnail_size: deps.thumbnail_size.clone(),
         realized_cell_boxes: deps.realized_cell_boxes.clone(),
@@ -78,13 +81,14 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
         &scroll_flag,
     );
 
-    attach_grid_page(&deps.view_stack, &grid_overlay);
+    attach_grid_page(&view_stack, &grid_overlay);
     let single_picture = create_single_picture();
-    attach_single_page(&deps.view_stack, &single_picture);
-    set_default_grid_page(&deps.view_stack);
-    let center_box = create_center_box(&deps.view_stack);
+    attach_single_page(&view_stack, &single_picture);
+    set_default_grid_page(&view_stack);
+    let center_box = create_center_box(&view_stack);
 
     CenterContentBundle {
+        view_stack,
         center_box,
         grid_view,
         grid_scroll,

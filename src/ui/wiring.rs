@@ -2,44 +2,36 @@ use crate::core::app_state::AppState;
 use crate::metadata::ImageMetadata;
 use crate::thumbnail_sizing::thumbnail_size_options;
 use crate::ui::actions::install_context_menu;
+use crate::ui::center::CenterContentBundle;
 use crate::ui::controls::{
     install_clear_button_handler, install_search_entry_handler, install_sort_dropdown_handler,
     install_thumbnail_size_handlers,
 };
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::open_folder::{build_open_folder_action, OpenFolderActionDeps};
+use crate::ui::right_sidebar::RightSidebarBundle;
 use crate::ui::selection::{handle_selection_change_event, ClickTrace};
 use crate::ui::shell::{install_history_popover_handler, install_open_button_handler};
 use crate::ui::sidebar::populate_metadata_sidebar;
 use gtk4::prelude::*;
 use gtk4::StringObject;
 use libadwaita as adw;
-use std::{
-    cell::{Cell, RefCell},
-    path::PathBuf,
-    rc::Rc,
-};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 pub(crate) struct ContextMenuWiringDeps {
     pub(crate) app_state: AppState,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) selection_model: gtk4::SingleSelection,
-    pub(crate) meta_expander: gtk4::Expander,
-    pub(crate) meta_paned: gtk4::Paned,
-    pub(crate) meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
-    pub(crate) meta_position_programmatic: Rc<Cell<u32>>,
+    pub(crate) center: CenterContentBundle,
+    pub(crate) right: RightSidebarBundle,
     pub(crate) min_meta_split_px: i32,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
-    pub(crate) meta_listbox: gtk4::ListBox,
-    pub(crate) grid_view: gtk4::GridView,
-    pub(crate) single_picture: gtk4::Picture,
-    pub(crate) meta_preview: gtk4::Picture,
 }
 
 pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) {
     let refresh_metadata_sidebar: Rc<dyn Fn(&ImageMetadata)> = Rc::new({
-        let meta_listbox = deps.meta_listbox.clone();
+        let meta_listbox = deps.right.meta_listbox.clone();
         move |meta: &ImageMetadata| populate_metadata_sidebar(&meta_listbox, meta)
     });
     let start_scan_for_folder: Rc<dyn Fn(PathBuf)> = deps.start_scan_for_folder.clone();
@@ -50,41 +42,36 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) {
         &deps.app_state.meta_cache,
         &deps.app_state.hash_cache,
         &deps.app_state.thumbnail_size,
-        &deps.meta_expander,
-        &deps.meta_paned,
-        &deps.meta_split_before_auto_collapse,
-        &deps.meta_position_programmatic,
+        &deps.right.meta_expander,
+        &deps.right.meta_paned,
+        &deps.right.meta_split_before_auto_collapse,
+        &deps.right.meta_position_programmatic,
         deps.min_meta_split_px,
         &deps.app_state.current_folder,
         &start_scan_for_folder,
         &deps.app_state.list_store,
         &refresh_metadata_sidebar,
-        &deps.grid_view,
-        &deps.single_picture,
-        &deps.meta_preview,
+        &deps.center.grid_view,
+        &deps.center.single_picture,
+        &deps.right.meta_preview,
     );
 }
 
 pub(crate) struct SelectionWiringDeps {
     pub(crate) app_state: AppState,
     pub(crate) selection_model: gtk4::SingleSelection,
-    pub(crate) meta_listbox: gtk4::ListBox,
-    pub(crate) meta_expander: gtk4::Expander,
-    pub(crate) meta_paned: gtk4::Paned,
-    pub(crate) meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
-    pub(crate) meta_position_programmatic: Rc<Cell<u32>>,
-    pub(crate) meta_preview: gtk4::Picture,
+    pub(crate) right: RightSidebarBundle,
 }
 
 pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
     let click_trace_state: Rc<RefCell<Option<ClickTrace>>> = Rc::new(RefCell::new(None));
     let click_trace_state_sel = click_trace_state.clone();
-    let meta_listbox_sel = deps.meta_listbox.clone();
-    let meta_expander_sel = deps.meta_expander.clone();
-    let meta_paned_sel = deps.meta_paned.clone();
-    let meta_split_before_auto_collapse_sel = deps.meta_split_before_auto_collapse.clone();
-    let meta_position_programmatic_sel = deps.meta_position_programmatic.clone();
-    let meta_preview_sel = deps.meta_preview.clone();
+    let meta_listbox_sel = deps.right.meta_listbox.clone();
+    let meta_expander_sel = deps.right.meta_expander.clone();
+    let meta_paned_sel = deps.right.meta_paned.clone();
+    let meta_split_before_auto_collapse_sel = deps.right.meta_split_before_auto_collapse.clone();
+    let meta_position_programmatic_sel = deps.right.meta_position_programmatic.clone();
+    let meta_preview_sel = deps.right.meta_preview.clone();
     let meta_cache_sel = deps.app_state.meta_cache.clone();
     let realized_thumb_images_sel = deps.app_state.realized_thumb_images.clone();
     let thumbnail_size_sel = deps.app_state.thumbnail_size.clone();
@@ -163,10 +150,10 @@ pub(crate) fn install_open_folder_wiring(deps: OpenFolderWiringDeps) -> Rc<dyn F
 pub(crate) struct ControlsWiringDeps {
     pub(crate) app_state: AppState,
     pub(crate) chrome: LeftChromeWiring,
+    pub(crate) center: CenterContentBundle,
     pub(crate) sorter: gtk4::CustomSorter,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) filter: gtk4::CustomFilter,
-    pub(crate) grid_view: gtk4::GridView,
 }
 
 pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
@@ -199,7 +186,7 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.chrome.size_buttons,
         thumbnail_size_options(),
         &deps.app_state.thumbnail_size,
-        &deps.grid_view,
+        &deps.center.grid_view,
         &deps.app_state.realized_thumb_images,
         &deps.app_state.realized_cell_boxes,
         &deps.app_state.hash_cache,

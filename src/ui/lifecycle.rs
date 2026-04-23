@@ -1,9 +1,11 @@
 use crate::config::AppConfig;
 use crate::services::update_checker::install_update_checker;
+use crate::ui::center::CenterContentBundle;
 use crate::ui::keyboard::{
     install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps,
 };
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
+use crate::ui::right_sidebar::RightSidebarBundle;
 use crate::ui::session::{
     install_close_persistence_handler, restore_session_state, ClosePersistenceDeps,
     RestoreSessionDeps,
@@ -18,11 +20,9 @@ use std::{
 pub(crate) struct LifecycleDeps {
     pub(crate) update_banner: adw::Banner,
     pub(crate) window: adw::ApplicationWindow,
-    pub(crate) view_stack: adw::ViewStack,
+    pub(crate) center: CenterContentBundle,
+    pub(crate) right: RightSidebarBundle,
     pub(crate) selection_model: gtk4::SingleSelection,
-    pub(crate) single_picture: gtk4::Picture,
-    pub(crate) grid_view: gtk4::GridView,
-    pub(crate) grid_scroll: gtk4::ScrolledWindow,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
@@ -30,17 +30,13 @@ pub(crate) struct LifecycleDeps {
     pub(crate) chrome: LeftChromeWiring,
     pub(crate) pre_fullview_left: Rc<Cell<bool>>,
     pub(crate) pre_fullview_right: Rc<Cell<bool>>,
-    pub(crate) meta_preview: gtk4::Picture,
     pub(crate) outer_paned: gtk4::Paned,
     pub(crate) inner_paned: gtk4::Paned,
-    pub(crate) meta_paned: gtk4::Paned,
-    pub(crate) meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
     pub(crate) recent_folders: Rc<RefCell<Vec<PathBuf>>>,
     pub(crate) outer_split_dirty: Rc<Cell<bool>>,
     pub(crate) inner_split_dirty: Rc<Cell<bool>>,
-    pub(crate) meta_split_dirty: Rc<Cell<bool>>,
     pub(crate) configured_left_pane_pos: Option<i32>,
     pub(crate) configured_right_pane_pos: Option<i32>,
     pub(crate) configured_meta_pane_pos: Option<i32>,
@@ -53,8 +49,6 @@ pub(crate) struct LifecycleDeps {
     pub(crate) filter: gtk4::CustomFilter,
     pub(crate) outer_position_programmatic: Rc<Cell<u32>>,
     pub(crate) inner_position_programmatic: Rc<Cell<u32>>,
-    pub(crate) meta_position_programmatic: Rc<Cell<u32>>,
-    pub(crate) pane_restore_complete: Rc<Cell<bool>>,
     pub(crate) min_left_pane_px: i32,
     pub(crate) min_right_pane_px: i32,
     pub(crate) min_center_pane_px: i32,
@@ -65,11 +59,8 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
 
     install_keyboard_handler(KeyboardDeps {
         window: deps.window.clone(),
-        view_stack: deps.view_stack.clone(),
+        center: deps.center.clone(),
         selection_model: deps.selection_model.clone(),
-        single_picture: deps.single_picture.clone(),
-        grid_view: deps.grid_view.clone(),
-        grid_scroll: deps.grid_scroll.clone(),
         thumbnail_size: deps.thumbnail_size.clone(),
         toast_overlay: deps.toast_overlay.clone(),
         current_folder: deps.current_folder.clone(),
@@ -83,16 +74,16 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
     // Scroll on single-view / meta-preview -> navigate images.
     install_scroll_navigation_handlers(
         &deps.selection_model,
-        &deps.single_picture,
-        &deps.meta_preview,
+        &deps.center.single_picture,
+        &deps.right.meta_preview,
     );
 
     install_close_persistence_handler(ClosePersistenceDeps {
         current_folder: deps.current_folder.clone(),
         outer_paned: deps.outer_paned.clone(),
         inner_paned: deps.inner_paned.clone(),
-        meta_paned: deps.meta_paned.clone(),
-        meta_split_before_auto_collapse: deps.meta_split_before_auto_collapse.clone(),
+        meta_paned: deps.right.meta_paned.clone(),
+        meta_split_before_auto_collapse: deps.right.meta_split_before_auto_collapse.clone(),
         sort_key: deps.sort_key.clone(),
         search_text: deps.search_text.clone(),
         thumbnail_size: deps.thumbnail_size.clone(),
@@ -102,7 +93,7 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         window: deps.window.clone(),
         outer_split_dirty: deps.outer_split_dirty.clone(),
         inner_split_dirty: deps.inner_split_dirty.clone(),
-        meta_split_dirty: deps.meta_split_dirty.clone(),
+        meta_split_dirty: deps.right.meta_split_dirty.clone(),
         configured_left_pane_pos: deps.configured_left_pane_pos,
         configured_right_pane_pos: deps.configured_right_pane_pos,
         configured_meta_pane_pos: deps.configured_meta_pane_pos,
@@ -123,11 +114,11 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         window: deps.window,
         outer_paned: deps.outer_paned,
         inner_paned: deps.inner_paned,
-        meta_paned: deps.meta_paned,
+        meta_paned: deps.right.meta_paned,
         outer_position_programmatic: deps.outer_position_programmatic,
         inner_position_programmatic: deps.inner_position_programmatic,
-        meta_position_programmatic: deps.meta_position_programmatic,
-        pane_restore_complete: deps.pane_restore_complete,
+        meta_position_programmatic: deps.right.meta_position_programmatic,
+        pane_restore_complete: deps.right.pane_restore_complete,
         min_left_pane_px: deps.min_left_pane_px,
         min_right_pane_px: deps.min_right_pane_px,
         min_center_pane_px: deps.min_center_pane_px,

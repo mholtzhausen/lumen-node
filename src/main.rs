@@ -212,9 +212,6 @@ fn build_ui(app: &adw::Application) {
     // Bounded to provide backpressure when the UI can't keep up.
     let (sender, receiver) = async_channel::bounded::<ScanMessage>(200);
 
-    // ViewStack — toggled programmatically (no visible tab switcher).
-    let view_stack = adw::ViewStack::new();
-
     // Reusable multi-phase progress indicator shown while scanning/indexing.
     let (progress_box, progress_label, progress_bar) = create_progress_widgets();
 
@@ -273,8 +270,7 @@ fn build_ui(app: &adw::Application) {
     let _sort_model = model_bundle.sort_model;
     let selection_model = model_bundle.selection_model;
 
-    let center_content = build_center_content(CenterContentDeps {
-        view_stack: view_stack.clone(),
+    let center = build_center_content(CenterContentDeps {
         selection_model: selection_model.clone(),
         thumbnail_size: thumbnail_size.clone(),
         realized_cell_boxes: realized_cell_boxes.clone(),
@@ -291,10 +287,6 @@ fn build_ui(app: &adw::Application) {
         start_scan_for_folder: start_scan_for_folder.clone(),
         current_folder: current_folder.clone(),
     });
-    let center_box = center_content.center_box;
-    let grid_view = center_content.grid_view;
-    let grid_scroll = center_content.grid_scroll;
-    let single_picture = center_content.single_picture;
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---
 
@@ -310,35 +302,20 @@ fn build_ui(app: &adw::Application) {
         MIN_META_SPLIT_PX,
     );
 
-    let right_sidebar_bundle = build_right_sidebar(RightSidebarDeps {
+    let right = build_right_sidebar(RightSidebarDeps {
         initial_right_sidebar_visible: chrome.initial_right_sidebar_visible,
         meta_pane_start_px: pane_metrics.meta_pane_start_px,
     });
-    let right_sidebar = right_sidebar_bundle.right_sidebar;
-    let meta_preview = right_sidebar_bundle.meta_preview;
-    let meta_listbox = right_sidebar_bundle.meta_listbox;
-    let meta_expander = right_sidebar_bundle.meta_expander;
-    let meta_split_before_auto_collapse = right_sidebar_bundle.meta_split_before_auto_collapse;
-    let meta_paned = right_sidebar_bundle.meta_paned;
-    let meta_position_programmatic = right_sidebar_bundle.meta_position_programmatic;
-    let meta_split_dirty = right_sidebar_bundle.meta_split_dirty;
-    let pane_restore_complete = right_sidebar_bundle.pane_restore_complete;
 
     install_context_menu_wiring(ContextMenuWiringDeps {
         app_state: app_state.clone(),
         window: window.clone(),
         toast_overlay: toast_overlay.clone(),
         selection_model: selection_model.clone(),
-        meta_expander: meta_expander.clone(),
-        meta_paned: meta_paned.clone(),
-        meta_split_before_auto_collapse: meta_split_before_auto_collapse.clone(),
-        meta_position_programmatic: meta_position_programmatic.clone(),
+        center: center.clone(),
+        right: right.clone(),
         min_meta_split_px: MIN_META_SPLIT_PX,
         start_scan_for_folder: start_scan_for_folder.clone(),
-        meta_listbox: meta_listbox.clone(),
-        grid_view: grid_view.clone(),
-        single_picture: single_picture.clone(),
-        meta_preview: meta_preview.clone(),
     });
 
     // -----------------------------------------------------------------------
@@ -348,32 +325,25 @@ fn build_ui(app: &adw::Application) {
         &chrome.left_toggle,
         &chrome.left_sidebar,
         &chrome.right_toggle,
-        &right_sidebar,
+        &right.right_sidebar,
     );
 
     let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     install_navigation_handlers(NavigationDeps {
-        grid_view: grid_view.clone(),
-        view_stack: view_stack.clone(),
-        single_picture: single_picture.clone(),
+        center: center.clone(),
+        right: right.clone(),
         selection_model: selection_model.clone(),
         left_toggle: chrome.left_toggle.clone(),
         right_toggle: chrome.right_toggle.clone(),
         pre_fullview_left: pre_fullview_left.clone(),
         pre_fullview_right: pre_fullview_right.clone(),
-        meta_preview: meta_preview.clone(),
     });
 
     install_selection_wiring(SelectionWiringDeps {
         app_state: app_state.clone(),
         selection_model: selection_model.clone(),
-        meta_listbox: meta_listbox.clone(),
-        meta_expander: meta_expander.clone(),
-        meta_paned: meta_paned.clone(),
-        meta_split_before_auto_collapse: meta_split_before_auto_collapse.clone(),
-        meta_position_programmatic: meta_position_programmatic.clone(),
-        meta_preview: meta_preview.clone(),
+        right: right.clone(),
     });
 
     // -----------------------------------------------------------------------
@@ -395,17 +365,17 @@ fn build_ui(app: &adw::Application) {
     install_controls_wiring(ControlsWiringDeps {
         app_state: app_state.clone(),
         chrome: chrome.clone(),
+        center: center.clone(),
         sorter: sorter.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
         filter: filter.clone(),
-        grid_view: grid_view.clone(),
     });
 
     let layout_bundle = assemble_and_mount_layout(LayoutMountDeps {
         left_sidebar: chrome.left_sidebar.clone(),
-        center_box: center_box.clone(),
-        right_sidebar: right_sidebar.clone(),
-        pane_restore_complete: pane_restore_complete.clone(),
+        center_box: center.center_box.clone(),
+        right_sidebar: right.right_sidebar.clone(),
+        pane_restore_complete: right.pane_restore_complete.clone(),
         left_pane_start_px: pane_metrics.left_pane_start_px,
         inner_pane_start_px: pane_metrics.inner_pane_start_px,
         window: window.clone(),
@@ -425,11 +395,9 @@ fn build_ui(app: &adw::Application) {
     install_lifecycle(LifecycleDeps {
         update_banner,
         window: window.clone(),
-        view_stack: view_stack.clone(),
+        center: center.clone(),
+        right: right.clone(),
         selection_model: selection_model.clone(),
-        single_picture: single_picture.clone(),
-        grid_view: grid_view.clone(),
-        grid_scroll: grid_scroll.clone(),
         thumbnail_size: thumbnail_size.clone(),
         toast_overlay: toast_overlay.clone(),
         current_folder: current_folder.clone(),
@@ -437,17 +405,13 @@ fn build_ui(app: &adw::Application) {
         chrome: chrome.clone(),
         pre_fullview_left: pre_fullview_left.clone(),
         pre_fullview_right: pre_fullview_right.clone(),
-        meta_preview: meta_preview.clone(),
         outer_paned: outer_paned.clone(),
         inner_paned: inner_paned.clone(),
-        meta_paned: meta_paned.clone(),
-        meta_split_before_auto_collapse: meta_split_before_auto_collapse.clone(),
         sort_key: sort_key.clone(),
         search_text: search_text.clone(),
         recent_folders: recent_folders.clone(),
         outer_split_dirty: outer_split_dirty.clone(),
         inner_split_dirty: inner_split_dirty.clone(),
-        meta_split_dirty: meta_split_dirty.clone(),
         configured_left_pane_pos,
         configured_right_pane_pos,
         configured_meta_pane_pos,
@@ -460,8 +424,6 @@ fn build_ui(app: &adw::Application) {
         filter: filter.clone(),
         outer_position_programmatic: outer_position_programmatic.clone(),
         inner_position_programmatic: inner_position_programmatic.clone(),
-        meta_position_programmatic: meta_position_programmatic.clone(),
-        pane_restore_complete: pane_restore_complete.clone(),
         min_left_pane_px: MIN_LEFT_PANE_PX,
         min_right_pane_px: MIN_RIGHT_PANE_PX,
         min_center_pane_px: MIN_CENTER_PANE_PX,

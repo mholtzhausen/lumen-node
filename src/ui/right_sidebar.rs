@@ -12,6 +12,7 @@ pub(crate) struct RightSidebarDeps {
     pub(crate) meta_pane_start_px: i32,
 }
 
+#[derive(Clone)]
 pub(crate) struct RightSidebarBundle {
     pub(crate) right_sidebar: gtk4::Box,
     pub(crate) meta_preview: gtk4::Picture,

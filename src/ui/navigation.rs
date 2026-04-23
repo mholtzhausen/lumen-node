@@ -1,11 +1,12 @@
 use crate::timing_report::write_timing_report;
+use crate::ui::center::CenterContentBundle;
 use crate::ui::grid::{enter_single_view_mode, ACTIVE_THUMBNAIL_TASKS};
 use crate::ui::preview::{
     load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS,
 };
+use crate::ui::right_sidebar::RightSidebarBundle;
 use gtk4::prelude::*;
 use gtk4::{GestureClick, StringObject};
-use libadwaita as adw;
 use std::{
     cell::Cell,
     cell::RefCell,
@@ -154,26 +155,24 @@ fn dispatch_full_view_load(
 }
 
 pub(crate) struct NavigationDeps {
-    pub(crate) grid_view: gtk4::GridView,
-    pub(crate) view_stack: adw::ViewStack,
-    pub(crate) single_picture: gtk4::Picture,
+    pub(crate) center: CenterContentBundle,
+    pub(crate) right: RightSidebarBundle,
     pub(crate) selection_model: gtk4::SingleSelection,
     pub(crate) left_toggle: gtk4::ToggleButton,
     pub(crate) right_toggle: gtk4::ToggleButton,
     pub(crate) pre_fullview_left: Rc<Cell<bool>>,
     pub(crate) pre_fullview_right: Rc<Cell<bool>>,
-    pub(crate) meta_preview: gtk4::Picture,
 }
 
 pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
-    let stack_for_grid = deps.view_stack.clone();
-    let picture_for_grid = deps.single_picture.clone();
+    let stack_for_grid = deps.center.view_stack.clone();
+    let picture_for_grid = deps.center.single_picture.clone();
     let selection_for_grid = deps.selection_model.clone();
     let left_toggle_grid = deps.left_toggle.clone();
     let right_toggle_grid = deps.right_toggle.clone();
     let pre_fullview_left_grid = deps.pre_fullview_left.clone();
     let pre_fullview_right_grid = deps.pre_fullview_right.clone();
-    deps.grid_view.connect_activate(move |_, pos| {
+    deps.center.grid_view.connect_activate(move |_, pos| {
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
             let path_str = item.string().to_string();
             let trace = new_full_view_trace(path_str.clone());
@@ -188,8 +187,8 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
         );
     });
 
-    let stack_for_preview = deps.view_stack.clone();
-    let picture_for_preview = deps.single_picture.clone();
+    let stack_for_preview = deps.center.view_stack.clone();
+    let picture_for_preview = deps.center.single_picture.clone();
     let selection_for_preview = deps.selection_model.clone();
     let left_toggle_preview = deps.left_toggle.clone();
     let right_toggle_preview = deps.right_toggle.clone();
@@ -217,5 +216,5 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
             &pre_fullview_right_preview,
         );
     });
-    deps.meta_preview.add_controller(dbl_click);
+    deps.right.meta_preview.add_controller(dbl_click);
 }
