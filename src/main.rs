@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod image_types;
 mod metadata;
 mod scan;
 mod scanner;

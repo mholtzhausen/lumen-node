@@ -13,6 +13,7 @@
 //! metadata, followed by [`ScanMessage::ScanComplete`].
 
 use crate::db;
+use crate::image_types::is_supported_image_path;
 use crate::scan::ScanMessage;
 use crate::sort::{
     normalize_sort_key, SORT_KEY_DATE_ASC, SORT_KEY_DATE_DESC, SORT_KEY_NAME_ASC,
@@ -20,11 +21,6 @@ use crate::sort::{
 };
 use async_channel::Sender;
 use std::path::PathBuf;
-
-/// Image file extensions recognised by LumenNode.
-const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "tiff", "tif", "bmp", "avif",
-];
 
 /// Spawns a background thread that scans `dir` for image files.
 ///
@@ -47,7 +43,7 @@ pub fn scan_directory(
         let mut paths: Vec<PathBuf> = Vec::new();
         for entry in read_dir.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if path.is_file() && is_image(&path) {
+            if path.is_file() && is_supported_image_path(&path) {
                 paths.push(path);
             }
         }
@@ -171,9 +167,3 @@ fn sort_paths(paths: &mut Vec<PathBuf>, sort_key: &str) {
     }
 }
 
-fn is_image(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
-}
