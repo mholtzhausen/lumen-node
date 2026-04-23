@@ -36,9 +36,17 @@ appimage:
 	bash packaging/build-appimage.sh
 
 release: appimage
-	git tag -a v$(VERSION) -m "Release v$(VERSION)"
-	git push origin v$(VERSION)
-	gh release create v$(VERSION) \
-		packaging/LumenNode-x86_64.AppImage \
-		--title "LumenNode v$(VERSION)" \
-		--generate-notes
+	@if git tag | grep -q "^v$(VERSION)$$"; then \
+		echo "Tag v$(VERSION) already exists. Skipping tag creation."; \
+	else \
+		git tag -a v$(VERSION) -m "Release v$(VERSION)"; \
+		git push origin v$(VERSION); \
+	fi
+	@if gh release view v$(VERSION) >/dev/null 2>&1; then \
+		echo "GitHub release v$(VERSION) already exists. Skipping release creation."; \
+	else \
+		gh release create v$(VERSION) \
+			packaging/LumenNode-x86_64.AppImage \
+			--title "LumenNode v$(VERSION)" \
+			--generate-notes; \
+	fi
