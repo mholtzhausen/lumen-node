@@ -34,18 +34,12 @@ use sort::{
 use thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use tree_sidebar::reset_tree_root;
 use ui::actions::install_context_menu;
+use ui::center::{build_center_content, CenterContentDeps};
 use ui::controls::{
     install_clear_button_handler, install_search_entry_handler, install_sort_dropdown_handler,
     install_thumbnail_size_handlers,
 };
-use ui::grid::{
-    add_scroll_flag_overlay, attach_grid_page, attach_single_page,
-    bind_grid_list_item, build_scroll_flag_overlay, create_center_box, create_grid_overlay,
-    create_grid_scroll, create_grid_view, create_single_picture,
-    install_grid_scroll_speed_gate, make_delete_action, make_rename_action,
-    set_default_grid_page, setup_grid_list_item, unbind_grid_list_item,
-    DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
-};
+use ui::grid::DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE;
 use ui::keyboard::{install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps};
 use ui::models::{build_model_bundle, ModelAssemblyDeps};
 use ui::navigation::{install_navigation_handlers, NavigationDeps};
@@ -82,10 +76,7 @@ use std::{
 
 use libadwaita as adw;
 use adw::prelude::*;
-use gtk4::{
-    gio, glib, Image, Label, ListItem, ProgressBar, SignalListItemFactory,
-    StringObject, TreeListRow,
-};
+use gtk4::{gio, glib, Image, Label, ProgressBar, StringObject, TreeListRow};
 
 pub(crate) static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub(crate) static PREVIEW_REQUEST_PENDING: AtomicU64 = AtomicU64::new(0);
@@ -472,85 +463,28 @@ fn build_ui(app: &adw::Application) {
     let _sort_model = model_bundle.sort_model;
     let selection_model = model_bundle.selection_model;
 
-    let factory = SignalListItemFactory::new();
-
-    let thumbnail_size_setup = thumbnail_size.clone();
-    let realized_thumb_images_setup = realized_thumb_images.clone();
-    let realized_cell_boxes_setup = realized_cell_boxes.clone();
-    let on_rename = make_rename_action(
-        window.clone(),
-        toast_overlay.clone(),
-        start_scan_for_folder.clone(),
-        current_folder.clone(),
-    );
-    let on_delete = make_delete_action(
-        window.clone(),
-        toast_overlay.clone(),
-        start_scan_for_folder.clone(),
-        current_folder.clone(),
-    );
-    factory.connect_setup(move |_, obj| {
-        let list_item = obj.downcast_ref::<ListItem>().unwrap();
-        setup_grid_list_item(
-            list_item,
-            &thumbnail_size_setup,
-            &realized_cell_boxes_setup,
-            &realized_thumb_images_setup,
-            on_rename.clone(),
-            on_delete.clone(),
-        );
+    let center_content = build_center_content(CenterContentDeps {
+        view_stack: view_stack.clone(),
+        selection_model: selection_model.clone(),
+        thumbnail_size: thumbnail_size.clone(),
+        realized_cell_boxes: realized_cell_boxes.clone(),
+        realized_thumb_images: realized_thumb_images.clone(),
+        fast_scroll_active: fast_scroll_active.clone(),
+        scroll_last_pos: scroll_last_pos.clone(),
+        scroll_last_time: scroll_last_time.clone(),
+        scroll_debounce_gen: scroll_debounce_gen.clone(),
+        hash_cache: hash_cache.clone(),
+        sort_key: sort_key.clone(),
+        sort_fields_cache: sort_fields_cache.clone(),
+        window: window.clone(),
+        toast_overlay: toast_overlay.clone(),
+        start_scan_for_folder: start_scan_for_folder.clone(),
+        current_folder: current_folder.clone(),
     });
-
-    let hash_cache_bind = hash_cache.clone();
-    let thumbnail_size_bind = thumbnail_size.clone();
-    let fast_scroll_active_bind = fast_scroll_active.clone();
-    factory.connect_bind(move |_, obj| {
-        let list_item = obj.downcast_ref::<ListItem>().unwrap();
-        bind_grid_list_item(
-            list_item,
-            &thumbnail_size_bind,
-            &fast_scroll_active_bind,
-            hash_cache_bind.clone(),
-        );
-    });
-
-    factory.connect_unbind(|_, obj| {
-        let list_item = obj.downcast_ref::<ListItem>().unwrap();
-        unbind_grid_list_item(list_item);
-    });
-
-    let grid_view = create_grid_view(&selection_model, &factory);
-    let grid_scroll = create_grid_scroll(&grid_view);
-    let grid_overlay = create_grid_overlay(&grid_scroll);
-
-    let (scroll_flag_box, scroll_flag) = build_scroll_flag_overlay();
-    add_scroll_flag_overlay(&grid_overlay, &scroll_flag_box);
-
-    // Scroll-speed gate: suppress thumbnail spawning while scrolling faster than
-    // 5 rows/sec, then refresh visible cells 150 ms after scrolling quiets down.
-    install_grid_scroll_speed_gate(
-        &grid_scroll,
-        &grid_view,
-        &fast_scroll_active,
-        &scroll_last_pos,
-        &scroll_last_time,
-        &scroll_debounce_gen,
-        &thumbnail_size,
-        &realized_thumb_images,
-        &hash_cache,
-        &selection_model,
-        &sort_key,
-        &sort_fields_cache,
-        &scroll_flag_box,
-        &scroll_flag,
-    );
-
-    attach_grid_page(&view_stack, &grid_overlay);
-
-    let single_picture = create_single_picture();
-    attach_single_page(&view_stack, &single_picture);
-    set_default_grid_page(&view_stack);
-    let center_box = create_center_box(&view_stack);
+    let center_box = center_content.center_box;
+    let grid_view = center_content.grid_view;
+    let grid_scroll = center_content.grid_scroll;
+    let single_picture = center_content.single_picture;
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---
     let right_sidebar = create_right_sidebar(initial_right_sidebar_visible);

@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod center;
 pub mod controls;
 pub mod grid;
 pub mod keyboard;

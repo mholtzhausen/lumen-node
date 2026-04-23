@@ -1,12 +1,12 @@
 use gtk4::prelude::*;
 use gtk4::{
     gdk, gio, glib, Box as GtkBox, Button, EventControllerMotion, GridView, Image, Label, ListItem,
-    Orientation, ScrolledWindow, SingleSelection, StringObject,
+    Orientation, ScrolledWindow, SignalListItemFactory, SingleSelection, StringObject,
 };
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
@@ -26,6 +26,70 @@ pub fn create_grid_view(
     grid_view.set_max_columns(12);
     grid_view.set_min_columns(2);
     grid_view
+}
+
+pub struct GridFactoryDeps {
+    pub thumbnail_size: Rc<RefCell<i32>>,
+    pub realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<GtkBox>>>>,
+    pub realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
+    pub fast_scroll_active: Rc<Cell<bool>>,
+    pub hash_cache: Rc<RefCell<HashMap<String, String>>>,
+    pub window: adw::ApplicationWindow,
+    pub toast_overlay: adw::ToastOverlay,
+    pub start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
+    pub current_folder: Rc<RefCell<Option<PathBuf>>>,
+}
+
+pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
+    let factory = SignalListItemFactory::new();
+
+    let on_rename = make_rename_action(
+        deps.window.clone(),
+        deps.toast_overlay.clone(),
+        deps.start_scan_for_folder.clone(),
+        deps.current_folder.clone(),
+    );
+    let on_delete = make_delete_action(
+        deps.window.clone(),
+        deps.toast_overlay.clone(),
+        deps.start_scan_for_folder.clone(),
+        deps.current_folder.clone(),
+    );
+
+    let thumbnail_size_setup = deps.thumbnail_size.clone();
+    let realized_thumb_images_setup = deps.realized_thumb_images.clone();
+    let realized_cell_boxes_setup = deps.realized_cell_boxes.clone();
+    factory.connect_setup(move |_, obj| {
+        let list_item = obj.downcast_ref::<ListItem>().unwrap();
+        setup_grid_list_item(
+            list_item,
+            &thumbnail_size_setup,
+            &realized_cell_boxes_setup,
+            &realized_thumb_images_setup,
+            on_rename.clone(),
+            on_delete.clone(),
+        );
+    });
+
+    let hash_cache_bind = deps.hash_cache.clone();
+    let thumbnail_size_bind = deps.thumbnail_size.clone();
+    let fast_scroll_active_bind = deps.fast_scroll_active.clone();
+    factory.connect_bind(move |_, obj| {
+        let list_item = obj.downcast_ref::<ListItem>().unwrap();
+        bind_grid_list_item(
+            list_item,
+            &thumbnail_size_bind,
+            &fast_scroll_active_bind,
+            hash_cache_bind.clone(),
+        );
+    });
+
+    factory.connect_unbind(|_, obj| {
+        let list_item = obj.downcast_ref::<ListItem>().unwrap();
+        unbind_grid_list_item(list_item);
+    });
+
+    factory
 }
 
 pub fn create_grid_scroll(grid_view: &GridView) -> ScrolledWindow {
