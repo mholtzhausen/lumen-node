@@ -1,3 +1,14 @@
+## 1.1.0 (b293a81)
+### Features and Improvements
+- Enhanced build and runtime diagnostics via Makefile and runtime reporting updates.
+- Added runtime environment reporting and a configuration dialog for improved visibility and control.
+
+### Bugfixes
+- None in this release.
+
+### Deprecations
+- None in this release.
+
 ## 1.0.0 (baf519d)
 ### Features and Improvements
 - Large-scale modularization: scan runtime and coordination, app state, layout, navigation, open-folder flow, tree and header controls, center grid, preview loading, metadata and JSON tree views, dialogs, and keyboard/UI wiring.

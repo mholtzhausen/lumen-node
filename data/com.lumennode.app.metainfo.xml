@@ -9,6 +9,7 @@
     <p>A GTK4 desktop image gallery with EXIF metadata support and AI-generated image metadata parsing.</p>
   </description>
   <releases>
+    <release version="1.1.0" date="2026-04-24"/>
     <release version="1.0.0" date="2026-04-24"/>
     <release version="0.2.0" date="2026-04-23"/>
   </releases>
