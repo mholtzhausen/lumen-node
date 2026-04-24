@@ -50,7 +50,7 @@ use ui::wiring::{
 use std::{cell::Cell, rc::Rc, sync::atomic::AtomicU64};
 
 use adw::prelude::*;
-use gtk4::{glib, Label, ProgressBar};
+use gtk4::{gio, glib, Label, ProgressBar};
 use libadwaita as adw;
 
 pub(crate) static CLICK_TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -167,6 +167,19 @@ fn runtime_environment_report() -> String {
         .unwrap_or_else(|_| std::path::PathBuf::from(&home).join(".local/share").display().to_string());
     let appimage = std::env::var("APPIMAGE").unwrap_or_else(|_| "<unset>".to_string());
     let appdir = std::env::var("APPDIR").unwrap_or_else(|_| "<unset>".to_string());
+    let gtk_theme = std::env::var("GTK_THEME").unwrap_or_else(|_| "<unset>".to_string());
+    let gdk_scale = std::env::var("GDK_SCALE").unwrap_or_else(|_| "<unset>".to_string());
+    let gdk_dpi_scale = std::env::var("GDK_DPI_SCALE").unwrap_or_else(|_| "<unset>".to_string());
+    let xdg_session_type =
+        std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "<unset>".to_string());
+    let wayland_display =
+        std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "<unset>".to_string());
+    let display_env = std::env::var("DISPLAY").unwrap_or_else(|_| "<unset>".to_string());
+    let app_id = std::env::var("LUMEN_NODE_APP_ID")
+        .unwrap_or_else(|_| "com.lumennode.app".to_string());
+    let non_unique = std::env::var("LUMEN_NODE_NON_UNIQUE").unwrap_or_else(|_| "<unset>".to_string());
+    let pin_theme = std::env::var("LUMEN_NODE_PIN_THEME").unwrap_or_else(|_| "<unset>".to_string());
+    let pin_scale = std::env::var("LUMEN_NODE_PIN_SCALE").unwrap_or_else(|_| "<unset>".to_string());
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "<unavailable>".to_string());
@@ -188,11 +201,86 @@ fn runtime_environment_report() -> String {
         format!("XDG_DATA_HOME: {xdg_data_home}"),
         format!("APPIMAGE: {appimage}"),
         format!("APPDIR: {appdir}"),
+        format!("GTK_THEME: {gtk_theme}"),
+        format!("GDK_SCALE: {gdk_scale}"),
+        format!("GDK_DPI_SCALE: {gdk_dpi_scale}"),
+        format!("XDG_SESSION_TYPE: {xdg_session_type}"),
+        format!("WAYLAND_DISPLAY: {wayland_display}"),
+        format!("DISPLAY: {display_env}"),
+        format!("LUMEN_NODE_APP_ID: {app_id}"),
+        format!("LUMEN_NODE_NON_UNIQUE: {non_unique}"),
+        format!("LUMEN_NODE_PIN_THEME: {pin_theme}"),
+        format!("LUMEN_NODE_PIN_SCALE: {pin_scale}"),
         String::new(),
         format!("Resolved config path: {}", config_path.display()),
         format!("Resolved thumbnail cache: {}", thumb_hash_cache.display()),
     ]
     .join("\n")
+}
+
+fn runtime_toolkit_report(app: &adw::Application) -> String {
+    let display_type = gtk4::gdk::Display::default()
+        .map(|d| d.type_().name().to_string())
+        .unwrap_or_else(|| "<unavailable>".to_string());
+    let gtk_theme_name = gtk4::Settings::default()
+        .and_then(|s| s.property::<Option<String>>("gtk-theme-name"))
+        .unwrap_or_else(|| "<unavailable>".to_string());
+    let gtk_icon_theme_name = gtk4::Settings::default()
+        .and_then(|s| s.property::<Option<String>>("gtk-icon-theme-name"))
+        .unwrap_or_else(|| "<unavailable>".to_string());
+    let gtk_application_prefer_dark = gtk4::Settings::default()
+        .map(|s| s.property::<bool>("gtk-application-prefer-dark-theme"))
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "<unavailable>".to_string());
+    let style_manager = adw::StyleManager::default();
+    let adw_dark = style_manager.is_dark().to_string();
+    let adw_high_contrast = style_manager.is_high_contrast().to_string();
+    let adw_system_color_schemes = style_manager.system_supports_color_schemes().to_string();
+    let adw_color_scheme = format!("{:?}", style_manager.color_scheme());
+    let app_id_runtime = app
+        .application_id()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "<unset>".to_string());
+    [
+        String::new(),
+        "Toolkit Runtime".to_string(),
+        format!("Application ID (runtime): {app_id_runtime}"),
+        format!("Display type: {display_type}"),
+        format!("GTK theme name: {gtk_theme_name}"),
+        format!("GTK icon theme name: {gtk_icon_theme_name}"),
+        format!("GTK prefer dark theme: {gtk_application_prefer_dark}"),
+        format!("Adw is dark: {adw_dark}"),
+        format!("Adw high contrast: {adw_high_contrast}"),
+        format!("Adw system supports color schemes: {adw_system_color_schemes}"),
+        format!("Adw color scheme: {adw_color_scheme}"),
+    ]
+    .join("\n")
+}
+
+fn apply_consistent_theme_defaults() {
+    let should_pin_theme = std::env::var("LUMEN_NODE_PIN_THEME")
+        .map(|v| v != "0")
+        .unwrap_or(false);
+    if !should_pin_theme {
+        return;
+    }
+    if let Some(settings) = gtk4::Settings::default() {
+        // Keep geometry/padding stable across packaging targets.
+        settings.set_gtk_theme_name(Some("Adwaita"));
+    }
+}
+
+fn apply_consistent_scale_defaults() {
+    let should_pin_scale = std::env::var("LUMEN_NODE_PIN_SCALE")
+        .map(|v| v != "0")
+        .unwrap_or(false);
+    if !should_pin_scale {
+        return;
+    }
+    // Set before GTK initialization for deterministic widget geometry across
+    // AppImage and direct binary launches.
+    std::env::set_var("GDK_SCALE", "1");
+    std::env::set_var("GDK_DPI_SCALE", "1");
 }
 
 pub(crate) fn sync_progress_widgets(
@@ -225,6 +313,7 @@ pub(crate) fn sync_progress_widgets(
 // ---------------------------------------------------------------------------
 
 fn build_ui(app: &adw::Application) {
+    apply_consistent_theme_defaults();
     let app_config = config::load();
     let window = create_window_with_defaults(
         app,
@@ -251,7 +340,11 @@ fn build_ui(app: &adw::Application) {
         SORT_KEY_NAME_ASC,
         thumbnails::THUMB_NORMAL_SIZE,
     );
-    let runtime_report = runtime_environment_report();
+    let runtime_report = format!(
+        "{}\n{}",
+        runtime_environment_report(),
+        runtime_toolkit_report(app)
+    );
     let current_folder = app_state.current_folder.clone();
     let recent_folders = app_state.recent_folders.clone();
 
@@ -485,9 +578,17 @@ fn build_ui(app: &adw::Application) {
 // ---------------------------------------------------------------------------
 
 fn main() -> glib::ExitCode {
-    let app = adw::Application::builder()
-        .application_id("com.lumennode.app")
-        .build();
+    apply_consistent_scale_defaults();
+    let app_id =
+        std::env::var("LUMEN_NODE_APP_ID").unwrap_or_else(|_| "com.lumennode.app".to_string());
+    let non_unique = std::env::var("LUMEN_NODE_NON_UNIQUE")
+        .map(|v| v != "0")
+        .unwrap_or(false);
+    let mut builder = adw::Application::builder().application_id(&app_id);
+    if non_unique {
+        builder = builder.flags(gio::ApplicationFlags::NON_UNIQUE);
+    }
+    let app = builder.build();
     app.connect_activate(build_ui);
     app.run()
 }

@@ -4,13 +4,19 @@ export PKG_CONFIG_PATH
 INSTALL_PREFIX := $(HOME)/.local
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 
-.PHONY: build run check clean install uninstall appimage release release-preflight
+.PHONY: build run check clean install uninstall appimage appimage-audit run-release-isolated run-release-diagnose release release-preflight
 
 build:
 	cargo build
 
 run:
 	cargo run
+
+run-release-isolated: build
+	LUMEN_NODE_APP_ID=com.lumennode.app.dev LUMEN_NODE_NON_UNIQUE=1 target/release/lumen-node
+
+run-release-diagnose: build
+	LUMEN_NODE_PIN_THEME=0 LUMEN_NODE_PIN_SCALE=0 target/release/lumen-node
 
 check:
 	cargo check
@@ -35,10 +41,18 @@ uninstall:
 appimage:
 	bash packaging/build-appimage.sh
 
+appimage-audit: appimage
+	bash packaging/audit-appdir.sh
+
 release-preflight:
 	bash scripts/release-preflight.sh
 
 release: release-preflight appimage
+	@LATEST_APPIMAGE=$$(ls -1t packaging/LumenNode-x86_64-*.AppImage | sed -n '1p'); \
+	if [ -z "$$LATEST_APPIMAGE" ]; then \
+		echo "No timestamped AppImage found in packaging/"; \
+		exit 1; \
+	fi; \
 	@if git tag | grep -q "^v$(VERSION)$$"; then \
 		echo "Tag v$(VERSION) already exists. Skipping tag creation."; \
 	else \
@@ -49,7 +63,7 @@ release: release-preflight appimage
 		echo "GitHub release v$(VERSION) already exists. Skipping release creation."; \
 	else \
 		gh release create v$(VERSION) \
-			packaging/LumenNode-x86_64.AppImage \
+			$$LATEST_APPIMAGE \
 			--title "LumenNode v$(VERSION)" \
 			--generate-notes; \
 	fi
