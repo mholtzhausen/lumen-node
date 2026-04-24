@@ -33,8 +33,78 @@ pub(crate) struct HeaderControls {
 pub(crate) fn build_header_controls(
     app_config: &AppConfig,
     initial_thumbnail_size: i32,
+    window: &adw::ApplicationWindow,
+    runtime_report: String,
 ) -> HeaderControls {
     let header_bar = adw::HeaderBar::new();
+
+    let menu_model = gio::Menu::new();
+    let edit_menu = gio::Menu::new();
+    edit_menu.append(Some("Get Config"), Some("win.get-config"));
+    menu_model.append_submenu(Some("Edit"), &edit_menu);
+    let menubar = gtk4::PopoverMenuBar::from_model(Some(&menu_model));
+    menubar.set_halign(gtk4::Align::Start);
+    menubar.set_valign(gtk4::Align::Center);
+
+    let get_config_action = gio::SimpleAction::new("get-config", None);
+    let window_for_dialog = window.clone();
+    get_config_action.connect_activate(move |_, _| {
+        let dialog = gtk4::Window::builder()
+            .transient_for(&window_for_dialog)
+            .modal(true)
+            .title("Runtime Config")
+            .default_width(820)
+            .default_height(480)
+            .build();
+
+        let text_view = gtk4::TextView::new();
+        text_view.set_editable(false);
+        text_view.set_cursor_visible(true);
+        text_view.set_monospace(true);
+        text_view.set_wrap_mode(gtk4::WrapMode::WordChar);
+        text_view.buffer().set_text(&runtime_report);
+
+        let scroll = gtk4::ScrolledWindow::new();
+        scroll.set_hexpand(true);
+        scroll.set_vexpand(true);
+        scroll.set_margin_top(8);
+        scroll.set_margin_bottom(8);
+        scroll.set_margin_start(8);
+        scroll.set_margin_end(8);
+        scroll.set_child(Some(&text_view));
+
+        let close_btn = gtk4::Button::with_label("Close");
+        close_btn.set_halign(gtk4::Align::End);
+        close_btn.set_margin_start(8);
+        close_btn.set_margin_end(4);
+        close_btn.set_margin_bottom(8);
+        let dialog_for_close = dialog.clone();
+        close_btn.connect_clicked(move |_| dialog_for_close.close());
+
+        let copy_btn = gtk4::Button::with_label("Copy to Clipboard");
+        copy_btn.set_halign(gtk4::Align::End);
+        copy_btn.set_margin_start(4);
+        copy_btn.set_margin_end(8);
+        copy_btn.set_margin_bottom(8);
+        let report_for_copy = runtime_report.clone();
+        copy_btn.connect_clicked(move |_| {
+            if let Some(display) = gtk4::gdk::Display::default() {
+                display.clipboard().set_text(&report_for_copy);
+            }
+        });
+
+        let button_row = gtk4::Box::new(Orientation::Horizontal, 6);
+        button_row.set_halign(gtk4::Align::End);
+        button_row.append(&copy_btn);
+        button_row.append(&close_btn);
+
+        let content = gtk4::Box::new(Orientation::Vertical, 0);
+        content.append(&scroll);
+        content.append(&button_row);
+        dialog.set_child(Some(&content));
+        dialog.present();
+    });
+    window.add_action(&get_config_action);
 
     let sort_options =
         gtk4::StringList::new(&["Name ↑", "Name ↓", "Date ↑", "Date ↓", "Size ↑", "Size ↓"]);
@@ -67,6 +137,7 @@ pub(crate) fn build_header_controls(
     let toolbar_center = gtk4::Box::new(Orientation::Horizontal, 6);
     toolbar_center.set_valign(gtk4::Align::Center);
     toolbar_center.set_hexpand(true);
+    toolbar_center.append(&menubar);
     toolbar_center.append(&sort_dropdown);
     toolbar_center.append(&size_selector);
     toolbar_center.append(&search_entry);

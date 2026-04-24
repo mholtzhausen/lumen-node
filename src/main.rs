@@ -149,6 +149,52 @@ impl ScanProgressState {
     }
 }
 
+fn resolved_xdg_cache_home() -> std::path::PathBuf {
+    std::env::var("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/tmp"));
+            std::path::PathBuf::from(home).join(".cache")
+        })
+}
+
+fn runtime_environment_report() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/tmp"));
+    let xdg_cache_home = resolved_xdg_cache_home();
+    let xdg_config_home = std::env::var("XDG_CONFIG_HOME")
+        .unwrap_or_else(|_| std::path::PathBuf::from(&home).join(".config").display().to_string());
+    let xdg_data_home = std::env::var("XDG_DATA_HOME")
+        .unwrap_or_else(|_| std::path::PathBuf::from(&home).join(".local/share").display().to_string());
+    let appimage = std::env::var("APPIMAGE").unwrap_or_else(|_| "<unset>".to_string());
+    let appdir = std::env::var("APPDIR").unwrap_or_else(|_| "<unset>".to_string());
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "<unavailable>".to_string());
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "<unavailable>".to_string());
+    let arg0 = std::env::args().next().unwrap_or_else(|| "<unavailable>".to_string());
+    let config_path = std::path::PathBuf::from(&home).join(".lumen-node/config.yml");
+    let thumb_hash_cache = xdg_cache_home.join("thumbnails/lumen-node");
+    [
+        "LumenNode Runtime Environment".to_string(),
+        format!("Executable: {exe}"),
+        format!("Arg0: {arg0}"),
+        format!("Working directory: {cwd}"),
+        String::new(),
+        format!("HOME: {home}"),
+        format!("XDG_CACHE_HOME: {}", xdg_cache_home.display()),
+        format!("XDG_CONFIG_HOME: {xdg_config_home}"),
+        format!("XDG_DATA_HOME: {xdg_data_home}"),
+        format!("APPIMAGE: {appimage}"),
+        format!("APPDIR: {appdir}"),
+        String::new(),
+        format!("Resolved config path: {}", config_path.display()),
+        format!("Resolved thumbnail cache: {}", thumb_hash_cache.display()),
+    ]
+    .join("\n")
+}
+
 pub(crate) fn sync_progress_widgets(
     state: &ScanProgressState,
     progress_box: &gtk4::Box,
@@ -205,6 +251,7 @@ fn build_ui(app: &adw::Application) {
         SORT_KEY_NAME_ASC,
         thumbnails::THUMB_NORMAL_SIZE,
     );
+    let runtime_report = runtime_environment_report();
     let current_folder = app_state.current_folder.clone();
     let recent_folders = app_state.recent_folders.clone();
 
@@ -234,7 +281,8 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Header chrome + left file-system tree (tree visibility follows header toggle)
     // -----------------------------------------------------------------------
-    let left_chrome = build_left_chrome(&app_config, initial_thumbnail_size);
+    let left_chrome =
+        build_left_chrome(&app_config, initial_thumbnail_size, &window, runtime_report);
     let chrome = left_chrome.wiring_handles();
 
     let start_scan_for_folder = build_start_scan_for_folder(ScanCoordinatorDeps {
