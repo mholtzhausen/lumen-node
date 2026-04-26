@@ -13,14 +13,14 @@
 //! metadata, followed by [`ScanMessage::ScanComplete`].
 
 use crate::db;
-use crate::metadata::ScanMessage;
+use crate::image_types::is_supported_image_path;
+use crate::scan::ScanMessage;
+use crate::sort::{
+    normalize_sort_key, SORT_KEY_DATE_ASC, SORT_KEY_DATE_DESC, SORT_KEY_NAME_ASC,
+    SORT_KEY_NAME_DESC, SORT_KEY_SIZE_ASC, SORT_KEY_SIZE_DESC,
+};
 use async_channel::Sender;
 use std::path::PathBuf;
-
-/// Image file extensions recognised by LumenNode.
-const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "tiff", "tif", "bmp", "avif",
-];
 
 /// Spawns a background thread that scans `dir` for image files.
 ///
@@ -43,7 +43,7 @@ pub fn scan_directory(
         let mut paths: Vec<PathBuf> = Vec::new();
         for entry in read_dir.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if path.is_file() && is_image(&path) {
+            if path.is_file() && is_supported_image_path(&path) {
                 paths.push(path);
             }
         }
@@ -132,48 +132,49 @@ pub fn scan_directory(
 
 /// Sort paths to match the user-facing sort order.
 fn sort_paths(paths: &mut Vec<PathBuf>, sort_key: &str) {
-    match sort_key {
-        "name_asc" => paths.sort_by(|a, b| {
-            let na = a.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
-            let nb = b.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
+    match normalize_sort_key(sort_key) {
+        SORT_KEY_NAME_ASC => paths.sort_by(|a, b| {
+            let na = a
+                .file_name()
+                .map(|n| n.to_ascii_lowercase())
+                .unwrap_or_default();
+            let nb = b
+                .file_name()
+                .map(|n| n.to_ascii_lowercase())
+                .unwrap_or_default();
             na.cmp(&nb)
         }),
-        "name_desc" => paths.sort_by(|a, b| {
-            let na = a.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
-            let nb = b.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
+        SORT_KEY_NAME_DESC => paths.sort_by(|a, b| {
+            let na = a
+                .file_name()
+                .map(|n| n.to_ascii_lowercase())
+                .unwrap_or_default();
+            let nb = b
+                .file_name()
+                .map(|n| n.to_ascii_lowercase())
+                .unwrap_or_default();
             nb.cmp(&na)
         }),
-        "date_asc" => paths.sort_by(|a, b| {
+        SORT_KEY_DATE_ASC => paths.sort_by(|a, b| {
             let ta = std::fs::metadata(a).and_then(|m| m.modified()).ok();
             let tb = std::fs::metadata(b).and_then(|m| m.modified()).ok();
             ta.cmp(&tb)
         }),
-        "date_desc" => paths.sort_by(|a, b| {
+        SORT_KEY_DATE_DESC => paths.sort_by(|a, b| {
             let ta = std::fs::metadata(a).and_then(|m| m.modified()).ok();
             let tb = std::fs::metadata(b).and_then(|m| m.modified()).ok();
             tb.cmp(&ta)
         }),
-        "size_asc" => paths.sort_by(|a, b| {
+        SORT_KEY_SIZE_ASC => paths.sort_by(|a, b| {
             let sa = std::fs::metadata(a).map(|m| m.len()).unwrap_or(0);
             let sb = std::fs::metadata(b).map(|m| m.len()).unwrap_or(0);
             sa.cmp(&sb)
         }),
-        "size_desc" => paths.sort_by(|a, b| {
+        SORT_KEY_SIZE_DESC => paths.sort_by(|a, b| {
             let sa = std::fs::metadata(a).map(|m| m.len()).unwrap_or(0);
             let sb = std::fs::metadata(b).map(|m| m.len()).unwrap_or(0);
             sb.cmp(&sa)
         }),
-        _ => paths.sort_by(|a, b| {
-            let na = a.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
-            let nb = b.file_name().map(|n| n.to_ascii_lowercase()).unwrap_or_default();
-            na.cmp(&nb)
-        }),
+        _ => unreachable!("normalize_sort_key always returns a known key"),
     }
-}
-
-fn is_image(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
 }

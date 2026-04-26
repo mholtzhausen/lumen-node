@@ -54,33 +54,6 @@ pub trait MetadataDispatcher: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// Messages sent from background threads to the GTK main thread
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-pub enum ScanMessage {
-    /// Scan has started and the final candidate image count is known.
-    ScanStarted {
-        total_count: u32,
-        generation: u64,
-    },
-    /// A path was found during the fast enumeration phase (no metadata yet).
-    ImageEnumerated { path: String, generation: u64 },
-    /// Enumeration is done; enrichment phase is starting.
-    EnumerationComplete { generation: u64 },
-    /// An image has been fully indexed (hash, metadata, thumbnail).
-    ImageEnriched {
-        path: String,
-        hash: String,
-        meta: ImageMetadata,
-        indexed_from_cache: bool,
-        generation: u64,
-    },
-    /// The directory scan (enumerate + enrich) is finished.
-    ScanComplete { generation: u64 },
-}
-
-// ---------------------------------------------------------------------------
 // Default dispatcher
 // ---------------------------------------------------------------------------
 
@@ -261,11 +234,7 @@ fn extract_comfyui_prompts(prompt_str: &str) -> (Option<String>, Option<String>)
 
     let mut clips: Vec<String> = nodes
         .values()
-        .filter(|n| {
-            n.get("class_type")
-                .and_then(|v| v.as_str())
-                == Some("CLIPTextEncode")
-        })
+        .filter(|n| n.get("class_type").and_then(|v| v.as_str()) == Some("CLIPTextEncode"))
         .filter_map(|n| {
             n.get("inputs")
                 .and_then(|i| i.get("text"))
@@ -352,7 +321,9 @@ fn extract_primary_prompt_from_workflow(workflow_str: &str) -> Option<String> {
                     score -= 500;
                 }
 
-                let replace = best.as_ref().map_or(true, |(best_score, _)| score > *best_score);
+                let replace = best
+                    .as_ref()
+                    .map_or(true, |(best_score, _)| score > *best_score);
                 if replace {
                     *best = Some((score, text.to_owned()));
                 }

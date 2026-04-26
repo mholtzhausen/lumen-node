@@ -17,6 +17,9 @@ pub struct AppConfig {
     pub sort_key: Option<String>,
     pub search_text: Option<String>,
     pub thumbnail_size: Option<i32>,
+    /// Optional executable used by "Open in External Editor" in the context menu.
+    /// When unset, the default application for the image MIME type is used.
+    pub external_editor: Option<PathBuf>,
 }
 
 /// Loads `~/.lumen-node/config.yml`.  Missing file → empty config.
@@ -37,6 +40,7 @@ pub fn load() -> AppConfig {
     let mut sort_key = None;
     let mut search_text = None;
     let mut thumbnail_size = None;
+    let mut external_editor = None;
     if let Ok(content) = std::fs::read_to_string(config_path()) {
         for line in content.lines() {
             if let Some(val) = line.strip_prefix("last_folder: ") {
@@ -81,6 +85,11 @@ pub fn load() -> AppConfig {
                 search_text = Some(val.to_string());
             } else if let Some(val) = line.strip_prefix("thumbnail_size: ") {
                 thumbnail_size = val.trim().parse::<i32>().ok();
+            } else if let Some(val) = line.strip_prefix("external_editor: ") {
+                let val = val.trim();
+                if !val.is_empty() {
+                    external_editor = Some(PathBuf::from(val));
+                }
             }
         }
     }
@@ -101,6 +110,7 @@ pub fn load() -> AppConfig {
         sort_key,
         search_text,
         thumbnail_size,
+        external_editor,
     }
 }
 
@@ -178,7 +188,10 @@ pub fn save_recent_state(last_folder: Option<&Path>, recent_folders: &[PathBuf])
     let content = if suffix.is_empty() {
         format!("last_folder: {}\n{}\n", folder_str, recent_folder_lines)
     } else {
-        format!("last_folder: {}\n{}\n{}\n", folder_str, recent_folder_lines, suffix)
+        format!(
+            "last_folder: {}\n{}\n{}\n",
+            folder_str, recent_folder_lines, suffix
+        )
     };
     let _ = std::fs::write(&path, content);
 }
