@@ -15,7 +15,7 @@ use crate::{
     core::app_state::AppState,
     db,
     dialogs::{open_rename_dialog, open_trash_dialog},
-    sort_flags::{sort_flag_text_for_path, SortFields},
+    sort_flags::sort_flag_text_for_path,
     thumbnails,
 };
 

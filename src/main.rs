@@ -359,7 +359,6 @@ fn build_ui(app: &adw::Application) {
     let toast_overlay = adw::ToastOverlay::new();
 
     let hash_cache = app_state.hash_cache.clone();
-    let sort_fields_cache = app_state.sort_fields_cache.clone();
     let sort_key = app_state.sort_key.clone();
     let search_text = app_state.search_text.clone();
     let initial_thumbnail_size = app_state.initial_thumbnail_size;
@@ -367,11 +366,7 @@ fn build_ui(app: &adw::Application) {
     let realized_thumb_images = app_state.realized_thumb_images.clone();
     let realized_cell_boxes = app_state.realized_cell_boxes.clone();
     let fast_scroll_active = app_state.fast_scroll_active.clone();
-    let scroll_last_pos = app_state.scroll_last_pos.clone();
-    let scroll_last_time = app_state.scroll_last_time.clone();
-    let scroll_debounce_gen = app_state.scroll_debounce_gen.clone();
     let thumb_generations = app_state.thumb_generations.clone();
-    let bound_paths = app_state.bound_paths.clone();
 
     // -----------------------------------------------------------------------
     // Header chrome + left file-system tree (tree visibility follows header toggle)
@@ -411,18 +406,13 @@ fn build_ui(app: &adw::Application) {
         realized_cell_boxes: realized_cell_boxes.clone(),
         realized_thumb_images: realized_thumb_images.clone(),
         fast_scroll_active: fast_scroll_active.clone(),
-        scroll_last_pos: scroll_last_pos.clone(),
-        scroll_last_time: scroll_last_time.clone(),
-        scroll_debounce_gen: scroll_debounce_gen.clone(),
         hash_cache: hash_cache.clone(),
-        sort_key: sort_key.clone(),
-        sort_fields_cache: sort_fields_cache.clone(),
         window: window.clone(),
         toast_overlay: toast_overlay.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
         current_folder: current_folder.clone(),
         thumb_generations: thumb_generations.clone(),
-        bound_paths: bound_paths.clone(),
+        bound_paths: app_state.bound_paths.clone(),
     });
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---

@@ -10,7 +10,7 @@ use crate::{
     SCAN_DRAIN_BATCH_SIZE, SCAN_DRAIN_SCHEDULED, SUPPRESS_SIDEBAR_DURING_PREVIEW,
     THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW,
 };
-use gtk4::{glib, Image, StringObject};
+use gtk4::{glib, StringObject};
 use std::{
     cell::Cell,
     cell::RefCell,

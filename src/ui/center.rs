@@ -1,5 +1,4 @@
 use crate::core::app_state::AppState;
-use crate::sort_flags::SortFields;
 use crate::ui::grid::{
     add_scroll_flag_overlay, attach_grid_page, attach_single_page, build_scroll_flag_overlay,
     create_center_box, create_grid_overlay, create_grid_scroll, create_grid_view,
@@ -13,7 +12,6 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     rc::Rc,
-    time::Instant,
 };
 
 pub(crate) struct CenterContentDeps {
@@ -23,12 +21,7 @@ pub(crate) struct CenterContentDeps {
     pub(crate) realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
     pub(crate) realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<gtk4::Image>>>>,
     pub(crate) fast_scroll_active: Rc<Cell<bool>>,
-    pub(crate) scroll_last_pos: Rc<Cell<f64>>,
-    pub(crate) scroll_last_time: Rc<Cell<Option<Instant>>>,
-    pub(crate) scroll_debounce_gen: Rc<Cell<u64>>,
     pub(crate) hash_cache: Rc<RefCell<HashMap<String, String>>>,
-    pub(crate) sort_key: Rc<RefCell<String>>,
-    pub(crate) sort_fields_cache: Rc<RefCell<HashMap<String, SortFields>>>,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
