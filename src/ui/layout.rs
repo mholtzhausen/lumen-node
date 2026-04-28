@@ -67,6 +67,7 @@ pub(crate) struct LayoutMountDeps {
     pub(crate) inner_pane_start_px: i32,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) header_bar: adw::HeaderBar,
+    pub(crate) controls_row: gtk4::Box,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) progress_box: gtk4::Box,
 }
@@ -88,6 +89,7 @@ pub(crate) fn assemble_and_mount_layout(deps: LayoutMountDeps) -> LayoutMountBun
     let update_banner = mount_window_content(
         &deps.window,
         &deps.header_bar,
+        &deps.controls_row,
         &deps.toast_overlay,
         &paned_layout.outer_paned,
         &deps.progress_box,

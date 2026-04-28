@@ -17,6 +17,7 @@ pub(crate) struct PanedLayout {
 
 pub(crate) struct HeaderControls {
     pub(crate) header_bar: adw::HeaderBar,
+    pub(crate) controls_row: gtk4::Box,
     pub(crate) sort_dropdown: gtk4::DropDown,
     pub(crate) size_buttons: Rc<Vec<gtk4::ToggleButton>>,
     pub(crate) search_entry: gtk4::SearchEntry,
@@ -201,26 +202,21 @@ pub(crate) fn build_header_controls(
     let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
     clear_btn.set_tooltip_text(Some("Clear filters"));
 
-    let toolbar_center = gtk4::Box::new(Orientation::Horizontal, 6);
-    toolbar_center.set_valign(gtk4::Align::Center);
-    toolbar_center.set_hexpand(true);
-    toolbar_center.append(&menubar);
-    toolbar_center.append(&sort_dropdown);
-    toolbar_center.append(&size_selector);
-    toolbar_center.append(&search_entry);
-    toolbar_center.append(&clear_btn);
-    header_bar.set_title_widget(Some(&toolbar_center));
-
+    let controls_row = gtk4::Box::new(Orientation::Horizontal, 6);
+    controls_row.set_halign(gtk4::Align::Fill);
+    controls_row.set_hexpand(true);
+    controls_row.set_margin_start(8);
+    controls_row.set_margin_end(8);
+    controls_row.set_margin_top(4);
+    controls_row.set_margin_bottom(4);
     let left_toggle = gtk4::ToggleButton::new();
     left_toggle.set_icon_name("sidebar-show-symbolic");
     let initial_left_sidebar_visible = app_config.left_sidebar_visible.unwrap_or(false);
     left_toggle.set_active(initial_left_sidebar_visible);
     left_toggle.set_tooltip_text(Some("Toggle left panel"));
-    header_bar.pack_start(&left_toggle);
 
     let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
     open_btn.set_tooltip_text(Some("Open Folder..."));
-    header_bar.pack_start(&open_btn);
 
     let history_btn = gtk4::MenuButton::new();
     history_btn.set_icon_name("document-open-recent-symbolic");
@@ -233,7 +229,15 @@ pub(crate) fn build_header_controls(
     history_list.set_margin_end(6);
     history_popover.set_child(Some(&history_list));
     history_btn.set_popover(Some(&history_popover));
-    header_bar.pack_start(&history_btn);
+
+    controls_row.append(&left_toggle);
+    controls_row.append(&open_btn);
+    controls_row.append(&history_btn);
+    controls_row.append(&sort_dropdown);
+    controls_row.append(&size_selector);
+    controls_row.append(&search_entry);
+    controls_row.append(&clear_btn);
+    header_bar.pack_start(&menubar);
 
     let right_toggle = gtk4::ToggleButton::new();
     right_toggle.set_icon_name("sidebar-show-right-symbolic");
@@ -244,6 +248,7 @@ pub(crate) fn build_header_controls(
 
     HeaderControls {
         header_bar,
+        controls_row,
         sort_dropdown,
         size_buttons,
         search_entry,
@@ -404,6 +409,7 @@ pub(crate) fn assemble_paned_layout(
 pub(crate) fn mount_window_content(
     window: &adw::ApplicationWindow,
     header_bar: &adw::HeaderBar,
+    controls_row: &gtk4::Box,
     toast_overlay: &adw::ToastOverlay,
     outer_paned: &Paned,
     progress_box: &gtk4::Box,
@@ -428,6 +434,7 @@ pub(crate) fn mount_window_content(
     let content_with_status = gtk4::Box::new(Orientation::Vertical, 0);
     content_with_status.set_hexpand(true);
     content_with_status.set_vexpand(true);
+    content_with_status.append(controls_row);
     content_with_status.append(&update_banner);
     content_with_status.append(toast_overlay);
     content_with_status.append(&status_bar);

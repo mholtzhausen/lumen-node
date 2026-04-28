@@ -9,6 +9,7 @@ use std::rc::Rc;
 #[derive(Clone)]
 pub(crate) struct LeftChromeWiring {
     pub(crate) header_bar: adw::HeaderBar,
+    pub(crate) controls_row: gtk4::Box,
     pub(crate) sort_dropdown: gtk4::DropDown,
     pub(crate) size_buttons: Rc<Vec<gtk4::ToggleButton>>,
     pub(crate) search_entry: gtk4::SearchEntry,
@@ -30,6 +31,7 @@ impl LeftChromeWiring {
     pub(crate) fn new(header: &HeaderControls, tree: &TreeWidgets) -> Self {
         Self {
             header_bar: header.header_bar.clone(),
+            controls_row: header.controls_row.clone(),
             sort_dropdown: header.sort_dropdown.clone(),
             size_buttons: header.size_buttons.clone(),
             search_entry: header.search_entry.clone(),

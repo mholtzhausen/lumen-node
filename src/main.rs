@@ -540,6 +540,7 @@ fn build_ui(app: &adw::Application) {
         inner_pane_start_px: pane_metrics.inner_pane_start_px,
         window: window.clone(),
         header_bar: chrome.header_bar.clone(),
+        controls_row: chrome.controls_row.clone(),
         toast_overlay: toast_overlay.clone(),
         progress_box: progress_box.clone(),
     });
