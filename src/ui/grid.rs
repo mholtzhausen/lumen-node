@@ -108,6 +108,15 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
         unbind_grid_list_item(list_item, &thumb_generations_unbind, &bound_paths_unbind);
     });
 
+    let thumb_generations_teardown = deps.thumb_generations.clone();
+    let bound_paths_teardown = deps.bound_paths.clone();
+    factory.connect_teardown(move |_, obj| {
+        let Some(list_item) = obj.downcast_ref::<ListItem>() else {
+            return;
+        };
+        teardown_grid_list_item(list_item, &thumb_generations_teardown, &bound_paths_teardown);
+    });
+
     factory
 }
 
@@ -365,6 +374,7 @@ pub fn bind_grid_list_item(
         delete_btn.as_ptr() as usize,
         path_str.clone(),
     );
+    drop(bound_paths_map);
     let thumb_key = thumb_image.as_ptr() as usize;
     let generation_token = thumb_generations
         .borrow()
@@ -398,9 +408,11 @@ pub fn unbind_grid_list_item(
     if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
         if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
             let thumb_key = image.as_ptr() as usize;
+            // Cancel any in-flight thumbnail load for this item by bumping the
+            // generation token, but KEEP the entry in the map so the next
+            // bind() (on the same setup-created widgets) can still find it.
             if let Some(generation_token) = thumb_generations.borrow().get(&thumb_key).cloned() {
                 generation_token.set(generation_token.get().saturating_add(1));
-                thumb_generations.borrow_mut().remove(&thumb_key);
             }
             if let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() {
                 if let Some(action_box) = name_row.last_child().and_downcast::<GtkBox>() {
@@ -414,6 +426,33 @@ pub fn unbind_grid_list_item(
             }
             bound_paths.borrow_mut().remove(&thumb_key);
             image.set_icon_name(Some("image-x-generic-symbolic"));
+        }
+    }
+}
+
+/// Cleanup when a list item is destroyed (widgets about to be freed).
+/// This removes all pointer-keyed entries so that no stale addresses
+/// remain in the maps after GTK recycles the memory.
+pub fn teardown_grid_list_item(
+    list_item: &ListItem,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+) {
+    if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
+        if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
+            let thumb_key = image.as_ptr() as usize;
+            thumb_generations.borrow_mut().remove(&thumb_key);
+            bound_paths.borrow_mut().remove(&thumb_key);
+        }
+        if let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() {
+            if let Some(action_box) = name_row.last_child().and_downcast::<GtkBox>() {
+                if let Some(rename_btn) = action_box.first_child().and_downcast::<Button>() {
+                    bound_paths.borrow_mut().remove(&(rename_btn.as_ptr() as usize));
+                }
+                if let Some(delete_btn) = action_box.last_child().and_downcast::<Button>() {
+                    bound_paths.borrow_mut().remove(&(delete_btn.as_ptr() as usize));
+                }
+            }
         }
     }
 }

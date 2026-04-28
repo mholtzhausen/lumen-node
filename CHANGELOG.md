@@ -1,3 +1,13 @@
+## 1.2.1 (4fd15b6)
+### Bugfixes
+- Fixed missing drop of `bound_paths_map` in grid list item binding.
+
+### Features and Improvements
+- None in this release.
+
+### Deprecations
+- None in this release.
+
 ## 1.2.0 (e42d11d)
 ### Features and Improvements
 - Integrated AppState into UI components and added test target in Makefile.
