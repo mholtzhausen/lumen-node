@@ -413,7 +413,7 @@ pub(crate) fn mount_window_content(
     toast_overlay: &adw::ToastOverlay,
     outer_paned: &Paned,
     progress_box: &gtk4::Box,
-) -> adw::Banner {
+) -> (adw::Banner, gtk4::Box) {
     toast_overlay.set_child(Some(outer_paned));
     toast_overlay.set_hexpand(true);
     toast_overlay.set_vexpand(true);
@@ -444,7 +444,7 @@ pub(crate) fn mount_window_content(
     toolbar_view.set_content(Some(&content_with_status));
     window.set_content(Some(&toolbar_view));
 
-    update_banner
+    (update_banner, status_bar)
 }
 
 pub(crate) fn create_progress_widgets() -> (gtk4::Box, gtk4::Label, ProgressBar) {

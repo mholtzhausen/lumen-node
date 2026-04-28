@@ -467,6 +467,7 @@ fn build_ui(app: &adw::Application) {
     let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     install_navigation_handlers(NavigationDeps {
+        window: window.clone(),
         center: center.clone(),
         right: right.clone(),
         selection_model: selection_model.clone(),
@@ -552,6 +553,23 @@ fn build_ui(app: &adw::Application) {
     let outer_position_programmatic = paned_layout.outer_position_programmatic.clone();
     let outer_split_dirty = paned_layout.outer_split_dirty.clone();
     let update_banner = layout_bundle.update_banner;
+    let footer_bar = layout_bundle.footer_bar;
+
+    {
+        let view_stack = center.view_stack.clone();
+        let header_bar = chrome.header_bar.clone();
+        let controls_row = chrome.controls_row.clone();
+        let footer_bar = footer_bar.clone();
+        let update_banner = update_banner.clone();
+        view_stack.connect_visible_child_name_notify(move |stack| {
+            let in_single = stack.visible_child_name().as_deref() == Some("single");
+            let show_chrome = !in_single;
+            header_bar.set_visible(show_chrome);
+            controls_row.set_visible(show_chrome);
+            footer_bar.set_visible(show_chrome);
+            update_banner.set_visible(show_chrome);
+        });
+    }
 
     install_lifecycle(LifecycleDeps {
         update_banner,

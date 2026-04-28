@@ -155,6 +155,9 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                     });
                 }
             } else {
+                if window_for_keys.is_fullscreen() {
+                    window_for_keys.unfullscreen();
+                }
                 stack_for_keys.set_visible_child_name("grid");
                 left_toggle_for_keys.set_active(pre_fullview_left_keys.get());
                 right_toggle_for_keys.set_active(pre_fullview_right_keys.get());

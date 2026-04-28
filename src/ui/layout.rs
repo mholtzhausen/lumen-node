@@ -75,6 +75,7 @@ pub(crate) struct LayoutMountDeps {
 pub(crate) struct LayoutMountBundle {
     pub(crate) paned_layout: PanedLayout,
     pub(crate) update_banner: adw::Banner,
+    pub(crate) footer_bar: gtk4::Box,
 }
 
 pub(crate) fn assemble_and_mount_layout(deps: LayoutMountDeps) -> LayoutMountBundle {
@@ -86,7 +87,7 @@ pub(crate) fn assemble_and_mount_layout(deps: LayoutMountDeps) -> LayoutMountBun
         deps.left_pane_start_px,
         deps.inner_pane_start_px,
     );
-    let update_banner = mount_window_content(
+    let (update_banner, footer_bar) = mount_window_content(
         &deps.window,
         &deps.header_bar,
         &deps.controls_row,
@@ -97,5 +98,6 @@ pub(crate) fn assemble_and_mount_layout(deps: LayoutMountDeps) -> LayoutMountBun
     LayoutMountBundle {
         paned_layout,
         update_banner,
+        footer_bar,
     }
 }
