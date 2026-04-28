@@ -1,3 +1,10 @@
+## 1.3.0 (8950049)
+### Features and Improvements
+- Implemented deferred thumbnail refresh and optimized image loading in grid view.
+- Enhanced navigation and layout by adding footer bar and fullscreen toggle functionality.
+- Added controls row to header and updated layout assembly for improved UI structure.
+- Added version-bump skill for managing project versioning and changelog updates.
+
 ## 1.2.2 (f48e5b5)
 ### Features and Improvements
 - Added file open dialog and enhanced update banner functionality.
