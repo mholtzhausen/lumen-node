@@ -270,19 +270,6 @@ fn apply_consistent_theme_defaults() {
     }
 }
 
-fn apply_consistent_scale_defaults() {
-    let should_pin_scale = std::env::var("LUMEN_NODE_PIN_SCALE")
-        .map(|v| v != "0")
-        .unwrap_or(false);
-    if !should_pin_scale {
-        return;
-    }
-    // Set before GTK initialization for deterministic widget geometry across
-    // AppImage and direct binary launches.
-    std::env::set_var("GDK_SCALE", "1");
-    std::env::set_var("GDK_DPI_SCALE", "1");
-}
-
 pub(crate) fn sync_progress_widgets(
     state: &ScanProgressState,
     progress_box: &gtk4::Box,
@@ -614,7 +601,6 @@ fn build_ui(app: &adw::Application) {
 // ---------------------------------------------------------------------------
 
 fn main() -> glib::ExitCode {
-    apply_consistent_scale_defaults();
     let app_id =
         std::env::var("LUMEN_NODE_APP_ID").unwrap_or_else(|_| "com.lumennode.app".to_string());
     let non_unique = std::env::var("LUMEN_NODE_NON_UNIQUE")

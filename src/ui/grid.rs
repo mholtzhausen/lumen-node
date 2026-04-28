@@ -402,6 +402,7 @@ pub fn bind_grid_list_item(
     let size = *thumbnail_size.borrow();
     cell_box.set_size_request(size + 12, size + 28);
     thumb_image.set_pixel_size(size);
+    let thumbnail_decode_size = size.saturating_mul(thumb_image.scale_factor().max(1));
 
     let filename = Path::new(&path_str)
         .file_name()
@@ -433,7 +434,7 @@ pub fn bind_grid_list_item(
             load_grid_thumbnail(
                 &thumb_image,
                 path_str,
-                size,
+                thumbnail_decode_size,
                 hash_cache,
                 generation_token,
                 expected_generation,
@@ -813,6 +814,7 @@ pub fn refresh_realized_grid_thumbnails(
     for weak in images.iter() {
         if let Some(image) = weak.upgrade() {
             image.set_pixel_size(size);
+            let thumbnail_decode_size = size.saturating_mul(image.scale_factor().max(1));
             let thumb_key = image.as_ptr() as usize;
             let bound_path = app_state
                 .bound_paths
@@ -830,7 +832,7 @@ pub fn refresh_realized_grid_thumbnails(
                     load_grid_thumbnail(
                         &image,
                         path_str,
-                        size,
+                        thumbnail_decode_size,
                         app_state.hash_cache.clone(),
                         generation_token,
                         expected_generation,
