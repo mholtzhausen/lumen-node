@@ -405,6 +405,7 @@ fn build_ui(app: &adw::Application) {
     let selection_model = model_bundle.selection_model;
 
     let center = build_center_content(CenterContentDeps {
+        app_state: app_state.clone(),
         selection_model: selection_model.clone(),
         thumbnail_size: thumbnail_size.clone(),
         realized_cell_boxes: realized_cell_boxes.clone(),

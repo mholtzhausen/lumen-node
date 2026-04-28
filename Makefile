@@ -4,7 +4,7 @@ export PKG_CONFIG_PATH
 INSTALL_PREFIX := $(HOME)/.local
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 
-.PHONY: build run check clean install uninstall appimage appimage-audit run-release-isolated run-release-diagnose release release-preflight
+.PHONY: build run check test clean install uninstall appimage appimage-audit run-release-isolated run-release-diagnose release release-preflight
 
 build:
 	cargo build
@@ -20,6 +20,9 @@ run-release-diagnose: build
 
 check:
 	cargo check
+
+test:
+	cargo test
 
 clean:
 	cargo clean

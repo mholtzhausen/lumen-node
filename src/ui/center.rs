@@ -1,3 +1,4 @@
+use crate::core::app_state::AppState;
 use crate::sort_flags::SortFields;
 use crate::ui::grid::{
     add_scroll_flag_overlay, attach_grid_page, attach_single_page, build_scroll_flag_overlay,
@@ -16,6 +17,7 @@ use std::{
 };
 
 pub(crate) struct CenterContentDeps {
+    pub(crate) app_state: AppState,
     pub(crate) selection_model: SingleSelection,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
@@ -71,18 +73,8 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
     install_grid_scroll_speed_gate(
         &grid_scroll,
         &grid_view,
-        &deps.fast_scroll_active,
-        &deps.scroll_last_pos,
-        &deps.scroll_last_time,
-        &deps.scroll_debounce_gen,
-        &deps.thumbnail_size,
-        &deps.realized_thumb_images,
-        &deps.hash_cache,
-        &deps.thumb_generations,
-        &deps.bound_paths,
+        &deps.app_state,
         &deps.selection_model,
-        &deps.sort_key,
-        &deps.sort_fields_cache,
         &scroll_flag_box,
         &scroll_flag,
     );

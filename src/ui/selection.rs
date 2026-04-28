@@ -1,3 +1,4 @@
+use crate::core::app_state::AppState;
 use crate::metadata::ImageMetadata;
 use crate::metadata_section::apply_metadata_section_state;
 use crate::timing_report::write_timing_report;
@@ -280,21 +281,11 @@ fn handle_selection_preview_outcome(
     metrics: PreviewLoadMetrics,
     click_trace_state: &Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
-    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
-    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+    app_state: &AppState,
 ) {
     PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
     SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
-    refresh_realized_grid_thumbnails(
-        realized_thumb_images,
-        thumbnail_size,
-        hash_cache,
-        thumb_generations,
-        bound_paths,
-    );
+    refresh_realized_grid_thumbnails(&app_state);
 
     if let Some(trace) = click_trace_state.borrow_mut().as_mut() {
         if trace.id == click_id && !trace.finished {
@@ -352,11 +343,7 @@ fn dispatch_selection_preview_load(
     path_str: &str,
     click_trace_state: Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
-    realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: Rc<RefCell<i32>>,
-    hash_cache: Rc<RefCell<HashMap<String, String>>>,
-    thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
-    bound_paths: Rc<RefCell<HashMap<usize, String>>>,
+    app_state: AppState,
 ) {
     load_picture_async(
         meta_preview,
@@ -367,11 +354,7 @@ fn dispatch_selection_preview_load(
                 metrics,
                 &click_trace_state,
                 click_id,
-                &realized_thumb_images,
-                &thumbnail_size,
-                &hash_cache,
-                &thumb_generations,
-                &bound_paths,
+                &app_state,
             );
         })),
     );
@@ -409,11 +392,7 @@ pub(crate) fn handle_selection_change_event(
     meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
     meta_position_programmatic: &Rc<Cell<u32>>,
     meta_preview: &gtk4::Picture,
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
-    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
-    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+    app_state: &AppState,
 ) {
     let path_str = item.string().to_string();
     let click_snapshot = capture_click_runtime_snapshot();
@@ -448,11 +427,7 @@ pub(crate) fn handle_selection_change_event(
         &path_str,
         click_trace_state.clone(),
         click_id,
-        realized_thumb_images.clone(),
-        thumbnail_size.clone(),
-        hash_cache.clone(),
-        thumb_generations.clone(),
-        bound_paths.clone(),
+        app_state.clone(),
     );
 }
 

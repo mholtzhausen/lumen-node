@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
 
 use crate::{
+    core::app_state::AppState,
     db,
     dialogs::{open_rename_dialog, open_trash_dialog},
     sort_flags::{sort_flag_text_for_path, SortFields},
@@ -417,22 +418,11 @@ pub fn unbind_grid_list_item(
 
 pub fn apply_thumbnail_size_change(
     selected_size: i32,
-    realized_cell_boxes: &Rc<RefCell<Vec<glib::WeakRef<GtkBox>>>>,
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
-    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
-    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+    app_state: &AppState,
     grid_view: &gtk4::GridView,
 ) {
-    refresh_realized_grid_cell_sizes(realized_cell_boxes, selected_size);
-    refresh_realized_grid_thumbnails(
-        realized_thumb_images,
-        thumbnail_size,
-        hash_cache,
-        thumb_generations,
-        bound_paths,
-    );
+    refresh_realized_grid_cell_sizes(&app_state.realized_cell_boxes, selected_size);
+    refresh_realized_grid_thumbnails(app_state);
     grid_view.queue_resize();
     grid_view.queue_draw();
 }
@@ -507,38 +497,25 @@ pub fn build_scroll_flag_overlay() -> (GtkBox, Label) {
 pub fn install_grid_scroll_speed_gate(
     grid_scroll: &ScrolledWindow,
     grid_view: &GridView,
-    fast_scroll_active: &Rc<Cell<bool>>,
-    scroll_last_pos: &Rc<Cell<f64>>,
-    scroll_last_time: &Rc<Cell<Option<Instant>>>,
-    scroll_debounce_gen: &Rc<Cell<u64>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
-    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
-    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+    app_state: &AppState,
     selection_model: &SingleSelection,
-    sort_key: &Rc<RefCell<String>>,
-    sort_fields_cache: &Rc<RefCell<HashMap<String, SortFields>>>,
     scroll_flag_box: &GtkBox,
     scroll_flag: &Label,
 ) {
     let adj = grid_scroll.vadjustment();
-    let fast_scroll_active_adj = fast_scroll_active.clone();
-    let scroll_last_pos_adj = scroll_last_pos.clone();
-    let scroll_last_time_adj = scroll_last_time.clone();
-    let scroll_debounce_gen_adj = scroll_debounce_gen.clone();
-    let thumbnail_size_adj = thumbnail_size.clone();
-    let realized_adj = realized_thumb_images.clone();
-    let hash_cache_adj = hash_cache.clone();
-    let thumb_generations_adj = thumb_generations.clone();
-    let bound_paths_adj = bound_paths.clone();
+    let fast_scroll_active_adj = app_state.fast_scroll_active.clone();
+    let scroll_last_pos_adj = app_state.scroll_last_pos.clone();
+    let scroll_last_time_adj = app_state.scroll_last_time.clone();
+    let scroll_debounce_gen_adj = app_state.scroll_debounce_gen.clone();
+    let thumbnail_size_adj = app_state.thumbnail_size.clone();
     let selection_model_adj = selection_model.clone();
-    let sort_key_adj = sort_key.clone();
-    let sort_fields_cache_adj = sort_fields_cache.clone();
+    let sort_key_adj = app_state.sort_key.clone();
+    let sort_fields_cache_adj = app_state.sort_fields_cache.clone();
     let scroll_flag_adj = scroll_flag.clone();
     let scroll_flag_box_adj = scroll_flag_box.clone();
     let grid_scroll_adj = grid_scroll.clone();
     let _grid_view = grid_view;
+    let app_state_adj = app_state.clone();
 
     adj.connect_value_changed(move |adj| {
         let now = Instant::now();
@@ -562,11 +539,7 @@ pub fn install_grid_scroll_speed_gate(
         let gen = scroll_debounce_gen_adj.get().wrapping_add(1);
         scroll_debounce_gen_adj.set(gen);
         let fsa = fast_scroll_active_adj.clone();
-        let realized = realized_adj.clone();
-        let hash_cache = hash_cache_adj.clone();
-        let thumbnail_size = thumbnail_size_adj.clone();
-        let thumb_generations = thumb_generations_adj.clone();
-        let bound_paths = bound_paths_adj.clone();
+        let app_state = app_state_adj.clone();
         let debounce_gen = scroll_debounce_gen_adj.clone();
         let scroll_flag = scroll_flag_adj.clone();
         let scroll_flag_box = scroll_flag_box_adj.clone();
@@ -622,13 +595,7 @@ pub fn install_grid_scroll_speed_gate(
                 return;
             }
             fsa.set(false);
-            refresh_realized_grid_thumbnails(
-                &realized,
-                &thumbnail_size,
-                &hash_cache,
-                &thumb_generations,
-                &bound_paths,
-            );
+            refresh_realized_grid_thumbnails(&app_state);
         });
         let hide_gen = scroll_debounce_gen_adj.clone();
         glib::timeout_add_local_once(Duration::from_millis(450), move || {
@@ -742,25 +709,23 @@ pub fn load_grid_thumbnail(
 }
 
 pub fn refresh_realized_grid_thumbnails(
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
-    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
-    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+    app_state: &AppState,
 ) {
-    let size = *thumbnail_size.borrow();
-    let mut images = realized_thumb_images.borrow_mut();
+    let size = *app_state.thumbnail_size.borrow();
+    let mut images = app_state.realized_thumb_images.borrow_mut();
     images.retain(|weak| weak.upgrade().is_some());
     for weak in images.iter() {
         if let Some(image) = weak.upgrade() {
             image.set_pixel_size(size);
             let thumb_key = image.as_ptr() as usize;
-            let bound_path = bound_paths
+            let bound_path = app_state
+                .bound_paths
                 .borrow()
                 .get(&thumb_key)
                 .cloned();
             if let Some(path_str) = bound_path {
-                let generation_token = thumb_generations
+                let generation_token = app_state
+                    .thumb_generations
                     .borrow()
                     .get(&thumb_key)
                     .cloned();
@@ -770,10 +735,10 @@ pub fn refresh_realized_grid_thumbnails(
                         &image,
                         path_str,
                         size,
-                        hash_cache.clone(),
+                        app_state.hash_cache.clone(),
                         generation_token,
                         expected_generation,
-                        bound_paths.clone(),
+                        app_state.bound_paths.clone(),
                     );
                 }
             }

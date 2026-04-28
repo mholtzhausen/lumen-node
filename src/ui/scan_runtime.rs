@@ -51,10 +51,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
         let progress_box_recv = deps.progress_box.clone();
         let progress_label_recv = deps.progress_label.clone();
         let progress_bar_recv = deps.progress_bar.clone();
-        let thumbnail_size_recv = deps.app_state.thumbnail_size.clone();
-        let realized_thumb_images_recv = deps.app_state.realized_thumb_images.clone();
-        let thumb_generations_recv = deps.app_state.thumb_generations.clone();
-        let bound_paths_recv = deps.app_state.bound_paths.clone();
+        let app_state_recv = deps.app_state.clone();
         let sync_context_menu_sticky = sync_context_menu.clone();
         Rc::new(move || {
             if *drain_scheduled.borrow() {
@@ -72,10 +69,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
             let active_scan_generation_recv = active_scan_generation_recv.clone();
             let scan_in_progress_recv = scan_in_progress_recv.clone();
             let toast_recv = toast_recv.clone();
-            let thumbnail_size_recv = thumbnail_size_recv.clone();
-            let realized_thumb_images_recv = realized_thumb_images_recv.clone();
-            let thumb_generations_recv = thumb_generations_recv.clone();
-            let bound_paths_recv = bound_paths_recv.clone();
+            let app_state_recv = app_state_recv.clone();
             let progress_state_recv = progress_state_recv.clone();
             let progress_box_recv = progress_box_recv.clone();
             let progress_label_recv = progress_label_recv.clone();
@@ -209,13 +203,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
 
                 if unlock_thumbnail_dispatch {
                     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.store(0, AtomicOrdering::Relaxed);
-                    refresh_realized_grid_thumbnails(
-                        &realized_thumb_images_recv,
-                        &thumbnail_size_recv,
-                        &hash_cache_recv,
-                        &thumb_generations_recv,
-                        &bound_paths_recv,
-                    );
+                    refresh_realized_grid_thumbnails(&app_state_recv);
                 }
 
                 if scan_complete {

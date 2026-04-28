@@ -563,12 +563,11 @@ mod tests {
         };
         upsert(&conn, &row).unwrap();
 
-        // Modify the file (change content + mtime)
-        let mut f = std::fs::File::create(&path).unwrap();
-        f.write_all(b"modified content").unwrap();
-        std::fs::write(&path, b"modified content").unwrap();
+        // Modify file with different content + size so staleness is unambiguous
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, b"modified!").unwrap();
 
-        // get_cached should return None (stale)
+        // get_cached should return None (stale — mtime and size differ)
         let cached = get_cached(&conn, &path);
         assert!(cached.is_none());
     }
