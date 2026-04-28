@@ -1,3 +1,15 @@
+## 1.2.0 (e42d11d)
+### Features and Improvements
+- Integrated AppState into UI components and added test target in Makefile.
+- Added safe storage for thumbnail generations and bound paths in AppState.
+
+### Bugfixes
+- Updated GitHub API URL in check_for_update function.
+- Cleaned up unused variables and imports in UI modules.
+
+### Deprecations
+- None in this release.
+
 ## 1.1.0 (b293a81)
 ### Features and Improvements
 - Enhanced build and runtime diagnostics via Makefile and runtime reporting updates.
