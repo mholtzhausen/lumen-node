@@ -467,6 +467,7 @@ fn build_ui(app: &adw::Application) {
     install_selection_wiring(SelectionWiringDeps {
         app_state: app_state.clone(),
         selection_model: selection_model.clone(),
+        center: center.clone(),
         right: right.clone(),
     });
 
