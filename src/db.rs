@@ -440,16 +440,35 @@ pub fn set_favourite(conn: &Connection, path: &Path, favourite: bool) -> rusqlit
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::ops::Deref;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl Deref for TestDir {
+        type Target = Path;
+
+        fn deref(&self) -> &Self::Target {
+            self.path.as_path()
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
     /// Creates a unique temporary directory per test call.
-    fn temp_dir() -> PathBuf {
+    fn temp_dir() -> TestDir {
         let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("lumen-node-test-{}-{}", std::process::id(), id));
         let _ = std::fs::create_dir_all(&dir);
-        dir
+        TestDir { path: dir }
     }
 
     /// Writes known content to a file, returns the path.
@@ -472,7 +491,13 @@ mod tests {
         );
     }
 
-    #[test]
+        let mtime = mtime.unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert!(mtime > 0);
+        assert!(mtime <= now + 5);
     fn test_hash_file_empty() {
         let dir = temp_dir();
         let path = write_temp_file(&dir, "empty.bin", b"");

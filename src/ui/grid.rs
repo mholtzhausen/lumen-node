@@ -356,11 +356,12 @@ pub fn bind_grid_list_item(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     name_label.set_text(&filename);
-    bound_paths.borrow_mut().insert(
+    let mut bound_paths_map = bound_paths.borrow_mut();
+    bound_paths_map.insert(
         rename_btn.as_ptr() as usize,
         path_str.clone(),
     );
-    bound_paths.borrow_mut().insert(
+    bound_paths_map.insert(
         delete_btn.as_ptr() as usize,
         path_str.clone(),
     );
@@ -397,7 +398,8 @@ pub fn unbind_grid_list_item(
     if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
         if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
             let thumb_key = image.as_ptr() as usize;
-            if let Some(generation_token) = thumb_generations.borrow().get(&thumb_key) {
+                generation_token.set(generation_token.get().saturating_add(1));
+                thumb_generations.borrow_mut().remove(&thumb_key);
                 generation_token.set(generation_token.get().saturating_add(1));
             }
             if let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() {
