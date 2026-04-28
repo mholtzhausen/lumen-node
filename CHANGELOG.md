@@ -1,12 +1,11 @@
+## 1.2.2 (f48e5b5)
+### Features and Improvements
+- Added file open dialog and enhanced update banner functionality.
+- Added version-bump skill for managing project versioning and changelog updates.
+
 ## 1.2.1 (4fd15b6)
 ### Bugfixes
 - Fixed missing drop of `bound_paths_map` in grid list item binding.
-
-### Features and Improvements
-- None in this release.
-
-### Deprecations
-- None in this release.
 
 ## 1.2.0 (e42d11d)
 ### Features and Improvements
@@ -17,19 +16,10 @@
 - Updated GitHub API URL in check_for_update function.
 - Cleaned up unused variables and imports in UI modules.
 
-### Deprecations
-- None in this release.
-
 ## 1.1.0 (b293a81)
 ### Features and Improvements
 - Enhanced build and runtime diagnostics via Makefile and runtime reporting updates.
 - Added runtime environment reporting and a configuration dialog for improved visibility and control.
-
-### Bugfixes
-- None in this release.
-
-### Deprecations
-- None in this release.
 
 ## 1.0.0 (baf519d)
 ### Features and Improvements
