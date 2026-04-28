@@ -398,9 +398,9 @@ pub fn unbind_grid_list_item(
     if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
         if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
             let thumb_key = image.as_ptr() as usize;
+            if let Some(generation_token) = thumb_generations.borrow().get(&thumb_key).cloned() {
                 generation_token.set(generation_token.get().saturating_add(1));
                 thumb_generations.borrow_mut().remove(&thumb_key);
-                generation_token.set(generation_token.get().saturating_add(1));
             }
             if let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() {
                 if let Some(action_box) = name_row.last_child().and_downcast::<GtkBox>() {

@@ -491,13 +491,7 @@ mod tests {
         );
     }
 
-        let mtime = mtime.unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        assert!(mtime > 0);
-        assert!(mtime <= now + 5);
+    #[test]
     fn test_hash_file_empty() {
         let dir = temp_dir();
         let path = write_temp_file(&dir, "empty.bin", b"");

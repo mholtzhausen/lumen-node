@@ -358,7 +358,6 @@ fn build_ui(app: &adw::Application) {
     // Toast overlay wraps all main content for non-intrusive notifications.
     let toast_overlay = adw::ToastOverlay::new();
 
-    let hash_cache = app_state.hash_cache.clone();
     let sort_key = app_state.sort_key.clone();
     let search_text = app_state.search_text.clone();
     let initial_thumbnail_size = app_state.initial_thumbnail_size;
@@ -406,7 +405,6 @@ fn build_ui(app: &adw::Application) {
         realized_cell_boxes: realized_cell_boxes.clone(),
         realized_thumb_images: realized_thumb_images.clone(),
         fast_scroll_active: fast_scroll_active.clone(),
-        hash_cache: hash_cache.clone(),
         window: window.clone(),
         toast_overlay: toast_overlay.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
