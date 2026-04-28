@@ -16,7 +16,9 @@ use crate::{
     db,
     dialogs::{open_rename_dialog, open_trash_dialog},
     sort_flags::sort_flag_text_for_path,
+    ui::preview::ACTIVE_PREVIEW_TASKS,
     thumbnails,
+    PREVIEW_REQUEST_PENDING,
 };
 
 pub fn create_grid_view(
@@ -186,6 +188,7 @@ pub fn enter_single_view_mode(
 pub static ACTIVE_THUMBNAIL_TASKS: AtomicU64 = AtomicU64::new(0);
 pub static THUMB_UI_CALLBACKS_TOTAL: AtomicU64 = AtomicU64::new(0);
 pub static DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE: AtomicU64 = AtomicU64::new(0);
+static DEFERRED_REFRESH_GEN: AtomicU64 = AtomicU64::new(0);
 
 struct AtomicTaskGuard {
     counter: &'static AtomicU64,
@@ -202,6 +205,46 @@ impl Drop for AtomicTaskGuard {
     fn drop(&mut self) {
         self.counter.fetch_sub(1, AtomicOrdering::Relaxed);
     }
+}
+
+fn schedule_deferred_realized_thumbnail_refresh(app_state: &AppState) {
+    let gen = DEFERRED_REFRESH_GEN
+        .fetch_add(1, AtomicOrdering::Relaxed)
+        .saturating_add(1);
+    let app_state = app_state.clone();
+    glib::timeout_add_local_once(Duration::from_millis(90), move || {
+        if DEFERRED_REFRESH_GEN.load(AtomicOrdering::Relaxed) != gen {
+            return;
+        }
+        refresh_realized_grid_thumbnails(&app_state);
+    });
+}
+
+fn schedule_thumbnail_retry(
+    thumb_image: &Image,
+    path_str: &str,
+    size: i32,
+    hash_cache: Rc<RefCell<HashMap<String, String>>>,
+    generation_token: Rc<Cell<u64>>,
+    expected_generation: u64,
+    bound_paths: Rc<RefCell<HashMap<usize, String>>>,
+) {
+    let image = thumb_image.clone();
+    let path = path_str.to_string();
+    glib::timeout_add_local_once(Duration::from_millis(90), move || {
+        if generation_token.get() != expected_generation {
+            return;
+        }
+        load_grid_thumbnail(
+            &image,
+            path,
+            size,
+            hash_cache,
+            generation_token,
+            expected_generation,
+            bound_paths,
+        );
+    });
 }
 
 pub fn track_realized_grid_widgets(
@@ -657,39 +700,39 @@ pub fn load_grid_thumbnail(
     expected_generation: u64,
     bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 ) {
-    thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
+    if thumb_image.paintable().is_none() {
+        thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
+    }
     bound_paths.borrow_mut().insert(
         thumb_image.as_ptr() as usize,
         path_str.clone(),
     );
 
     if DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.load(AtomicOrdering::Relaxed) != 0 {
+        schedule_thumbnail_retry(
+            thumb_image,
+            &path_str,
+            size,
+            hash_cache.clone(),
+            generation_token.clone(),
+            expected_generation,
+            bound_paths.clone(),
+        );
         return;
     }
-
     let cached_hash = hash_cache.borrow().get(&path_str).cloned();
-    let already_loaded = if let Some(ref hash) = cached_hash {
-        if let Some(thumb) = thumbnails::hash_thumb_if_exists_for_size(hash, size) {
-            if let Ok(pb) = gdk_pixbuf::Pixbuf::from_file(&thumb) {
-                let tex = gdk::Texture::for_pixbuf(&pb);
-                thumb_image.set_paintable(Some(&tex));
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    if already_loaded {
-        return;
-    }
 
     const MAX_THUMBNAIL_TASKS: u64 = 64;
     if ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed) >= MAX_THUMBNAIL_TASKS {
+        schedule_thumbnail_retry(
+            thumb_image,
+            &path_str,
+            size,
+            hash_cache.clone(),
+            generation_token.clone(),
+            expected_generation,
+            bound_paths.clone(),
+        );
         return;
     }
     let task_guard = AtomicTaskGuard::new(&ACTIVE_THUMBNAIL_TASKS);
@@ -700,26 +743,35 @@ pub fn load_grid_thumbnail(
         let _guard = task_guard;
 
         if let Some(hash) = cached_hash_for_task {
-            let thumb = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size);
-            return (thumb, Some(hash));
+            let thumb = thumbnails::hash_thumb_if_exists_for_size(&hash, size)
+                .or_else(|| thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size));
+            let tex = thumb
+                .and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok())
+                .map(|pb| gdk::Texture::for_pixbuf(&pb));
+            return (tex, Some(hash));
         }
 
         if size == thumbnails::THUMB_NORMAL_SIZE {
-            return (thumbnails::ensure_thumbnail(&path_for_thread), None);
+            let tex = thumbnails::ensure_thumbnail(&path_for_thread)
+                .and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok())
+                .map(|pb| gdk::Texture::for_pixbuf(&pb));
+            return (tex, None);
         }
 
         let Ok(hash) = db::hash_file(&path_for_thread) else {
             return (None, None);
         };
-        let thumb = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size);
-        (thumb, Some(hash))
+        let tex = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size)
+            .and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok())
+            .map(|pb| gdk::Texture::for_pixbuf(&pb));
+        (tex, Some(hash))
     });
 
     let image_weak = thumb_image.downgrade();
     let bound_paths_cb = bound_paths.clone();
     glib::MainContext::default().spawn_local(async move {
         THUMB_UI_CALLBACKS_TOTAL.fetch_add(1, AtomicOrdering::Relaxed);
-        let Ok((maybe_cache, resolved_hash)) = task.await else {
+        let Ok((maybe_texture, resolved_hash)) = task.await else {
             return;
         };
         if generation_token.get() != expected_generation {
@@ -739,11 +791,8 @@ pub fn load_grid_thumbnail(
         if let Some(hash) = resolved_hash {
             hash_cache.borrow_mut().insert(path_str.clone(), hash);
         }
-        match maybe_cache.and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok()) {
-            Some(pb) => {
-                let tex = gdk::Texture::for_pixbuf(&pb);
-                image.set_paintable(Some(&tex));
-            }
+        match maybe_texture {
+            Some(tex) => image.set_paintable(Some(&tex)),
             None => image.set_icon_name(Some("image-missing-symbolic")),
         }
     });
@@ -752,6 +801,12 @@ pub fn load_grid_thumbnail(
 pub fn refresh_realized_grid_thumbnails(
     app_state: &AppState,
 ) {
+    if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0
+        || ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed) != 0
+    {
+        schedule_deferred_realized_thumbnail_refresh(app_state);
+        return;
+    }
     let size = *app_state.thumbnail_size.borrow();
     let mut images = app_state.realized_thumb_images.borrow_mut();
     images.retain(|weak| weak.upgrade().is_some());

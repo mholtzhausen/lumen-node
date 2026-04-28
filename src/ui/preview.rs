@@ -46,6 +46,26 @@ pub fn load_picture_async(
     max_dimension: Option<i32>,
     on_complete: Option<Box<dyn Fn(PreviewLoadMetrics) + 'static>>,
 ) {
+    let requested_dim = max_dimension.unwrap_or(-1);
+    let is_duplicate_request = unsafe {
+        let same_path = picture
+            .data::<String>("loading-path")
+            .map(|p| p.as_ref() == path)
+            .unwrap_or(false);
+        let same_dim = picture
+            .data::<i32>("loading-max-dim")
+            .map(|v| *v.as_ref() == requested_dim)
+            .unwrap_or(false);
+        let has_active_cancel = picture
+            .data::<gio::Cancellable>("loading-cancel")
+            .map(|c| !c.as_ref().is_cancelled())
+            .unwrap_or(false);
+        same_path && same_dim && has_active_cancel
+    };
+    if is_duplicate_request {
+        return;
+    }
+
     picture.set_paintable(gdk::Paintable::NONE);
 
     let prev_cancel: Option<gio::Cancellable> = unsafe { picture.steal_data("loading-cancel") };
@@ -56,6 +76,7 @@ pub fn load_picture_async(
     let cancel = gio::Cancellable::new();
     unsafe { picture.set_data("loading-cancel", cancel.clone()) };
     unsafe { picture.set_data("loading-path", path.to_owned()) };
+    unsafe { picture.set_data("loading-max-dim", requested_dim) };
 
     let path_owned = path.to_owned();
     let path_check = path_owned.clone();
