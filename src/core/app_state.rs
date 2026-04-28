@@ -33,6 +33,10 @@ pub(crate) struct AppState {
     pub(crate) scroll_last_time: Rc<Cell<Option<Instant>>>,
     pub(crate) scroll_debounce_gen: Rc<Cell<u64>>,
     pub(crate) initial_thumbnail_size: i32,
+    /// Safe storage for generation tokens per Image widget (replaces unsafe set_data).
+    pub(crate) thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    /// Safe storage for bound paths per Widget (replaces unsafe set_data).
+    pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 }
 
 pub(crate) fn build_app_state(
@@ -91,5 +95,7 @@ pub(crate) fn build_app_state(
         scroll_last_time: Rc::new(Cell::new(None)),
         scroll_debounce_gen: Rc::new(Cell::new(0)),
         initial_thumbnail_size,
+        thumb_generations: Rc::new(RefCell::new(HashMap::new())),
+        bound_paths: Rc::new(RefCell::new(HashMap::new())),
     }
 }

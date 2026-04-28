@@ -283,10 +283,18 @@ fn handle_selection_preview_outcome(
     realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     thumbnail_size: &Rc<RefCell<i32>>,
     hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
     PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
     SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
-    refresh_realized_grid_thumbnails(realized_thumb_images, thumbnail_size, hash_cache);
+    refresh_realized_grid_thumbnails(
+        realized_thumb_images,
+        thumbnail_size,
+        hash_cache,
+        thumb_generations,
+        bound_paths,
+    );
 
     if let Some(trace) = click_trace_state.borrow_mut().as_mut() {
         if trace.id == click_id && !trace.finished {
@@ -347,6 +355,8 @@ fn dispatch_selection_preview_load(
     realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     thumbnail_size: Rc<RefCell<i32>>,
     hash_cache: Rc<RefCell<HashMap<String, String>>>,
+    thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 ) {
     load_picture_async(
         meta_preview,
@@ -360,6 +370,8 @@ fn dispatch_selection_preview_load(
                 &realized_thumb_images,
                 &thumbnail_size,
                 &hash_cache,
+                &thumb_generations,
+                &bound_paths,
             );
         })),
     );
@@ -400,6 +412,8 @@ pub(crate) fn handle_selection_change_event(
     realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     thumbnail_size: &Rc<RefCell<i32>>,
     hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
     let path_str = item.string().to_string();
     let click_snapshot = capture_click_runtime_snapshot();
@@ -437,6 +451,8 @@ pub(crate) fn handle_selection_change_event(
         realized_thumb_images.clone(),
         thumbnail_size.clone(),
         hash_cache.clone(),
+        thumb_generations.clone(),
+        bound_paths.clone(),
     );
 }
 

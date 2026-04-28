@@ -31,6 +31,8 @@ pub(crate) struct CenterContentDeps {
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
+    pub(crate) thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 }
 
 #[derive(Clone)]
@@ -55,6 +57,8 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
         toast_overlay: deps.toast_overlay.clone(),
         start_scan_for_folder: deps.start_scan_for_folder.clone(),
         current_folder: deps.current_folder.clone(),
+        thumb_generations: deps.thumb_generations.clone(),
+        bound_paths: deps.bound_paths.clone(),
     });
 
     let grid_view = create_grid_view(&deps.selection_model, &factory);
@@ -74,6 +78,8 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
         &deps.thumbnail_size,
         &deps.realized_thumb_images,
         &deps.hash_cache,
+        &deps.thumb_generations,
+        &deps.bound_paths,
         &deps.selection_model,
         &deps.sort_key,
         &deps.sort_fields_cache,

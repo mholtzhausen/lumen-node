@@ -109,12 +109,16 @@ pub(crate) fn install_thumbnail_size_handlers(
     realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     realized_cell_boxes: &Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
     hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
 ) {
     let grid_view_toggle = grid_view.clone();
     let realized_thumb_images_toggle = realized_thumb_images.clone();
     let realized_cell_boxes_toggle = realized_cell_boxes.clone();
     let hash_cache_toggle = hash_cache.clone();
+    let thumb_generations_toggle = thumb_generations.clone();
+    let bound_paths_toggle = bound_paths.clone();
     for (idx, button) in size_buttons.iter().enumerate() {
         let options = size_options;
         let buttons = size_buttons.clone();
@@ -123,6 +127,8 @@ pub(crate) fn install_thumbnail_size_handlers(
         let realized_thumb_images_toggle = realized_thumb_images_toggle.clone();
         let realized_cell_boxes_toggle = realized_cell_boxes_toggle.clone();
         let hash_cache_toggle = hash_cache_toggle.clone();
+        let thumb_generations_toggle = thumb_generations_toggle.clone();
+        let bound_paths_toggle = bound_paths_toggle.clone();
         let current_folder_toggle = current_folder.clone();
         button.connect_clicked(move |_| {
             let selected_size = options[idx];
@@ -150,6 +156,8 @@ pub(crate) fn install_thumbnail_size_handlers(
                 &realized_thumb_images_toggle,
                 &thumbnail_size_toggle,
                 &hash_cache_toggle,
+                &thumb_generations_toggle,
+                &bound_paths_toggle,
                 &grid_view_toggle,
             );
         });

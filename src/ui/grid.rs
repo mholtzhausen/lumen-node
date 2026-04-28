@@ -38,6 +38,8 @@ pub struct GridFactoryDeps {
     pub toast_overlay: adw::ToastOverlay,
     pub start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub current_folder: Rc<RefCell<Option<PathBuf>>>,
+    pub thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    pub bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 }
 
 pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
@@ -59,6 +61,8 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let thumbnail_size_setup = deps.thumbnail_size.clone();
     let realized_thumb_images_setup = deps.realized_thumb_images.clone();
     let realized_cell_boxes_setup = deps.realized_cell_boxes.clone();
+    let thumb_generations_setup = deps.thumb_generations.clone();
+    let bound_paths_setup = deps.bound_paths.clone();
     factory.connect_setup(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
@@ -70,12 +74,16 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             &realized_thumb_images_setup,
             on_rename.clone(),
             on_delete.clone(),
+            &thumb_generations_setup,
+            &bound_paths_setup,
         );
     });
 
     let hash_cache_bind = deps.hash_cache.clone();
     let thumbnail_size_bind = deps.thumbnail_size.clone();
     let fast_scroll_active_bind = deps.fast_scroll_active.clone();
+    let thumb_generations_bind = deps.thumb_generations.clone();
+    let bound_paths_bind = deps.bound_paths.clone();
     factory.connect_bind(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
@@ -85,14 +93,18 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             &thumbnail_size_bind,
             &fast_scroll_active_bind,
             hash_cache_bind.clone(),
+            &thumb_generations_bind,
+            &bound_paths_bind,
         );
     });
 
-    factory.connect_unbind(|_, obj| {
+    let thumb_generations_unbind = deps.thumb_generations.clone();
+    let bound_paths_unbind = deps.bound_paths.clone();
+    factory.connect_unbind(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
         };
-        unbind_grid_list_item(list_item);
+        unbind_grid_list_item(list_item, &thumb_generations_unbind, &bound_paths_unbind);
     });
 
     factory
@@ -214,6 +226,8 @@ pub fn setup_grid_list_item(
     realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     on_rename: Rc<dyn Fn(std::path::PathBuf)>,
     on_delete: Rc<dyn Fn(std::path::PathBuf)>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
     let cell_box = GtkBox::new(Orientation::Vertical, 4);
     cell_box.add_css_class("thumbnail-card");
@@ -227,9 +241,10 @@ pub fn setup_grid_list_item(
     let thumb_image = Image::new();
     thumb_image.set_pixel_size(size);
     let generation_token = Rc::new(Cell::new(0_u64));
-    unsafe {
-        thumb_image.set_data("thumb-generation", generation_token);
-    }
+    thumb_generations.borrow_mut().insert(
+        thumb_image.as_ptr() as usize,
+        generation_token,
+    );
     track_realized_grid_widgets(
         realized_cell_boxes,
         realized_thumb_images,
@@ -254,14 +269,18 @@ pub fn setup_grid_list_item(
     delete_btn.set_opacity(0.0);
     delete_btn.set_focus_on_click(false);
     let on_rename_btn = on_rename.clone();
+    let bound_paths_rename = bound_paths.clone();
     rename_btn.connect_clicked(move |btn| {
-        let path = unsafe { btn.data::<String>("bound-path").map(|s| s.as_ref().clone()) };
+        let key = btn.as_ptr() as usize;
+        let path = bound_paths_rename.borrow().get(&key).cloned();
         let Some(path) = path else { return };
         on_rename_btn(std::path::PathBuf::from(path));
     });
     let on_delete_btn = on_delete.clone();
+    let bound_paths_delete = bound_paths.clone();
     delete_btn.connect_clicked(move |btn| {
-        let path = unsafe { btn.data::<String>("bound-path").map(|s| s.as_ref().clone()) };
+        let key = btn.as_ptr() as usize;
+        let path = bound_paths_delete.borrow().get(&key).cloned();
         let Some(path) = path else { return };
         on_delete_btn(std::path::PathBuf::from(path));
     });
@@ -297,6 +316,8 @@ pub fn bind_grid_list_item(
     thumbnail_size: &Rc<RefCell<i32>>,
     fast_scroll_active: &Rc<Cell<bool>>,
     hash_cache: Rc<RefCell<HashMap<String, String>>>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
     let path_str = list_item
         .item()
@@ -334,25 +355,25 @@ pub fn bind_grid_list_item(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     name_label.set_text(&filename);
-    unsafe {
-        rename_btn.set_data("bound-path", path_str.clone());
-    }
-    unsafe {
-        delete_btn.set_data("bound-path", path_str.clone());
-    }
-    let generation_token = unsafe {
-        thumb_image
-            .data::<Rc<Cell<u64>>>("thumb-generation")
-            .map(|token| token.as_ref().clone())
-    };
+    bound_paths.borrow_mut().insert(
+        rename_btn.as_ptr() as usize,
+        path_str.clone(),
+    );
+    bound_paths.borrow_mut().insert(
+        delete_btn.as_ptr() as usize,
+        path_str.clone(),
+    );
+    let thumb_key = thumb_image.as_ptr() as usize;
+    let generation_token = thumb_generations
+        .borrow()
+        .get(&thumb_key)
+        .cloned();
     if let Some(generation_token) = generation_token {
         let expected_generation = generation_token.get().saturating_add(1);
         generation_token.set(expected_generation);
         if fast_scroll_active.get() {
             thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
-            unsafe {
-                thumb_image.set_data("bound-path", path_str);
-            }
+            bound_paths.borrow_mut().insert(thumb_key, path_str);
         } else {
             load_grid_thumbnail(
                 &thumb_image,
@@ -361,39 +382,34 @@ pub fn bind_grid_list_item(
                 hash_cache,
                 generation_token,
                 expected_generation,
+                bound_paths.clone(),
             );
         }
     }
 }
 
-pub fn unbind_grid_list_item(list_item: &ListItem) {
+pub fn unbind_grid_list_item(
+    list_item: &ListItem,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+) {
     if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
         if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
-            let generation_token = unsafe {
-                image
-                    .data::<Rc<Cell<u64>>>("thumb-generation")
-                    .map(|token| token.as_ref().clone())
-            };
-            if let Some(generation_token) = generation_token {
+            let thumb_key = image.as_ptr() as usize;
+            if let Some(generation_token) = thumb_generations.borrow().get(&thumb_key) {
                 generation_token.set(generation_token.get().saturating_add(1));
-            }
-            unsafe {
-                image.steal_data::<String>("bound-path");
             }
             if let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() {
                 if let Some(action_box) = name_row.last_child().and_downcast::<GtkBox>() {
                     if let Some(rename_btn) = action_box.first_child().and_downcast::<Button>() {
-                        unsafe {
-                            rename_btn.steal_data::<String>("bound-path");
-                        }
+                        bound_paths.borrow_mut().remove(&(rename_btn.as_ptr() as usize));
                     }
                     if let Some(delete_btn) = action_box.last_child().and_downcast::<Button>() {
-                        unsafe {
-                            delete_btn.steal_data::<String>("bound-path");
-                        }
+                        bound_paths.borrow_mut().remove(&(delete_btn.as_ptr() as usize));
                     }
                 }
             }
+            bound_paths.borrow_mut().remove(&thumb_key);
             image.set_icon_name(Some("image-x-generic-symbolic"));
         }
     }
@@ -405,10 +421,18 @@ pub fn apply_thumbnail_size_change(
     realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     thumbnail_size: &Rc<RefCell<i32>>,
     hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
     grid_view: &gtk4::GridView,
 ) {
     refresh_realized_grid_cell_sizes(realized_cell_boxes, selected_size);
-    refresh_realized_grid_thumbnails(realized_thumb_images, thumbnail_size, hash_cache);
+    refresh_realized_grid_thumbnails(
+        realized_thumb_images,
+        thumbnail_size,
+        hash_cache,
+        thumb_generations,
+        bound_paths,
+    );
     grid_view.queue_resize();
     grid_view.queue_draw();
 }
@@ -490,6 +514,8 @@ pub fn install_grid_scroll_speed_gate(
     thumbnail_size: &Rc<RefCell<i32>>,
     realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
     selection_model: &SingleSelection,
     sort_key: &Rc<RefCell<String>>,
     sort_fields_cache: &Rc<RefCell<HashMap<String, SortFields>>>,
@@ -504,6 +530,8 @@ pub fn install_grid_scroll_speed_gate(
     let thumbnail_size_adj = thumbnail_size.clone();
     let realized_adj = realized_thumb_images.clone();
     let hash_cache_adj = hash_cache.clone();
+    let thumb_generations_adj = thumb_generations.clone();
+    let bound_paths_adj = bound_paths.clone();
     let selection_model_adj = selection_model.clone();
     let sort_key_adj = sort_key.clone();
     let sort_fields_cache_adj = sort_fields_cache.clone();
@@ -537,6 +565,8 @@ pub fn install_grid_scroll_speed_gate(
         let realized = realized_adj.clone();
         let hash_cache = hash_cache_adj.clone();
         let thumbnail_size = thumbnail_size_adj.clone();
+        let thumb_generations = thumb_generations_adj.clone();
+        let bound_paths = bound_paths_adj.clone();
         let debounce_gen = scroll_debounce_gen_adj.clone();
         let scroll_flag = scroll_flag_adj.clone();
         let scroll_flag_box = scroll_flag_box_adj.clone();
@@ -592,7 +622,13 @@ pub fn install_grid_scroll_speed_gate(
                 return;
             }
             fsa.set(false);
-            refresh_realized_grid_thumbnails(&realized, &thumbnail_size, &hash_cache);
+            refresh_realized_grid_thumbnails(
+                &realized,
+                &thumbnail_size,
+                &hash_cache,
+                &thumb_generations,
+                &bound_paths,
+            );
         });
         let hide_gen = scroll_debounce_gen_adj.clone();
         glib::timeout_add_local_once(Duration::from_millis(450), move || {
@@ -611,11 +647,13 @@ pub fn load_grid_thumbnail(
     hash_cache: Rc<RefCell<HashMap<String, String>>>,
     generation_token: Rc<Cell<u64>>,
     expected_generation: u64,
+    bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 ) {
     thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
-    unsafe {
-        thumb_image.set_data("bound-path", path_str.clone());
-    }
+    bound_paths.borrow_mut().insert(
+        thumb_image.as_ptr() as usize,
+        path_str.clone(),
+    );
 
     if DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.load(AtomicOrdering::Relaxed) != 0 {
         return;
@@ -670,6 +708,7 @@ pub fn load_grid_thumbnail(
     });
 
     let image_weak = thumb_image.downgrade();
+    let bound_paths_cb = bound_paths.clone();
     glib::MainContext::default().spawn_local(async move {
         THUMB_UI_CALLBACKS_TOTAL.fetch_add(1, AtomicOrdering::Relaxed);
         let Ok((maybe_cache, resolved_hash)) = task.await else {
@@ -681,12 +720,11 @@ pub fn load_grid_thumbnail(
         let Some(image) = image_weak.upgrade() else {
             return;
         };
-        let is_current = unsafe {
-            image
-                .data::<String>("bound-path")
-                .map(|p| p.as_ref().as_str() == path_str.as_str())
-                .unwrap_or(false)
-        };
+        let is_current = bound_paths_cb
+            .borrow()
+            .get(&(image.as_ptr() as usize))
+            .map(|p| p.as_str() == path_str.as_str())
+            .unwrap_or(false);
         if !is_current {
             return;
         }
@@ -707,6 +745,8 @@ pub fn refresh_realized_grid_thumbnails(
     realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     thumbnail_size: &Rc<RefCell<i32>>,
     hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
     let size = *thumbnail_size.borrow();
     let mut images = realized_thumb_images.borrow_mut();
@@ -714,17 +754,16 @@ pub fn refresh_realized_grid_thumbnails(
     for weak in images.iter() {
         if let Some(image) = weak.upgrade() {
             image.set_pixel_size(size);
-            let bound_path = unsafe {
-                image
-                    .data::<String>("bound-path")
-                    .map(|path| path.as_ref().clone())
-            };
+            let thumb_key = image.as_ptr() as usize;
+            let bound_path = bound_paths
+                .borrow()
+                .get(&thumb_key)
+                .cloned();
             if let Some(path_str) = bound_path {
-                let generation_token = unsafe {
-                    image
-                        .data::<Rc<Cell<u64>>>("thumb-generation")
-                        .map(|token| token.as_ref().clone())
-                };
+                let generation_token = thumb_generations
+                    .borrow()
+                    .get(&thumb_key)
+                    .cloned();
                 if let Some(generation_token) = generation_token {
                     let expected_generation = generation_token.get();
                     load_grid_thumbnail(
@@ -734,6 +773,7 @@ pub fn refresh_realized_grid_thumbnails(
                         hash_cache.clone(),
                         generation_token,
                         expected_generation,
+                        bound_paths.clone(),
                     );
                 }
             }

@@ -431,3 +431,249 @@ pub fn set_favourite(conn: &Connection, path: &Path, favourite: bool) -> rusqlit
     )?;
     Ok(n > 0)
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Creates a unique temporary directory per test call.
+    fn temp_dir() -> PathBuf {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("lumen-node-test-{}-{}", std::process::id(), id));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// Writes known content to a file, returns the path.
+    fn write_temp_file(dir: &Path, name: &str, content: &[u8]) -> PathBuf {
+        let path = dir.join(name);
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(content).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_hash_file_known_content() {
+        let dir = temp_dir();
+        let path = write_temp_file(&dir, "test.bin", b"hello world");
+        let hash = hash_file(&path).unwrap();
+        // SHA-256 of "hello world"
+        assert_eq!(
+            hash,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+    }
+
+    #[test]
+    fn test_hash_file_empty() {
+        let dir = temp_dir();
+        let path = write_temp_file(&dir, "empty.bin", b"");
+        let hash = hash_file(&path).unwrap();
+        // SHA-256 of empty string
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_file_mtime_and_size() {
+        let dir = temp_dir();
+        let path = write_temp_file(&dir, "meta.txt", b"1234567890");
+        assert_eq!(file_size(&path), Some(10));
+        let mtime = file_mtime(&path);
+        assert!(mtime.is_some());
+        assert!(mtime.unwrap() > 1_700_000_000); // reasonable Unix timestamp for 2024+
+    }
+
+    #[test]
+    fn test_db_open_creates_schema() {
+        let dir = temp_dir();
+        let db_path = db_path(&dir);
+        assert!(!db_path.exists());
+        let conn = open(&dir).unwrap();
+        // DB file should exist now
+        assert!(db_path.exists());
+        // images table should be queryable
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM images", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        // ui_state table should exist
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ui_state", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_upsert_and_get_cached() {
+        let dir = temp_dir();
+        let conn = open(&dir).unwrap();
+        let path = write_temp_file(&dir, "photo.jpg", b"fake-jpeg-data");
+        let hash = hash_file(&path).unwrap();
+        let mtime = file_mtime(&path).unwrap();
+        let size = file_size(&path).unwrap();
+
+        let row = ImageRow {
+            path: path.to_string_lossy().into_owned(),
+            filename: "photo.jpg".to_string(),
+            hash: hash.clone(),
+            mtime,
+            size,
+            favourite: 0,
+            meta: ImageMetadata::default(),
+        };
+        upsert(&conn, &row).unwrap();
+
+        // get_cached should find it
+        let cached = get_cached(&conn, &path);
+        assert!(cached.is_some());
+        let cached = cached.unwrap();
+        assert_eq!(cached.hash, hash);
+        assert_eq!(cached.filename, "photo.jpg");
+        assert_eq!(cached.favourite, 0);
+    }
+
+    #[test]
+    fn test_get_cached_stale_on_mtime_change() {
+        let dir = temp_dir();
+        let conn = open(&dir).unwrap();
+        let path = write_temp_file(&dir, "stale.jpg", b"original content");
+        let hash = hash_file(&path).unwrap();
+        let mtime = file_mtime(&path).unwrap();
+        let size = file_size(&path).unwrap();
+
+        let row = ImageRow {
+            path: path.to_string_lossy().into_owned(),
+            filename: "stale.jpg".to_string(),
+            hash,
+            mtime,
+            size,
+            favourite: 0,
+            meta: ImageMetadata::default(),
+        };
+        upsert(&conn, &row).unwrap();
+
+        // Modify the file (change content + mtime)
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"modified content").unwrap();
+        std::fs::write(&path, b"modified content").unwrap();
+
+        // get_cached should return None (stale)
+        let cached = get_cached(&conn, &path);
+        assert!(cached.is_none());
+    }
+
+    #[test]
+    fn test_prune_missing() {
+        let dir = temp_dir();
+        let conn = open(&dir).unwrap();
+
+        // Insert a row for a file that exists
+        let existing = write_temp_file(&dir, "exists.jpg", b"data");
+        let hash = hash_file(&existing).unwrap();
+        let mtime = file_mtime(&existing).unwrap();
+        let size = file_size(&existing).unwrap();
+        upsert(
+            &conn,
+            &ImageRow {
+                path: existing.to_string_lossy().into_owned(),
+                filename: "exists.jpg".to_string(),
+                hash,
+                mtime,
+                size,
+                favourite: 0,
+                meta: ImageMetadata::default(),
+            },
+        )
+        .unwrap();
+
+        // Insert a row for a file that does not exist
+        let missing = dir.join("missing.jpg");
+        upsert(
+            &conn,
+            &ImageRow {
+                path: missing.to_string_lossy().into_owned(),
+                filename: "missing.jpg".to_string(),
+                hash: "fakehash".to_string(),
+                mtime: 1_000_000,
+                size: 100,
+                favourite: 0,
+                meta: ImageMetadata::default(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM images", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+
+        prune_missing(&conn).unwrap();
+
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM images", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_favourite_roundtrip() {
+        let dir = temp_dir();
+        let conn = open(&dir).unwrap();
+        let path = write_temp_file(&dir, "fav.jpg", b"data");
+        let hash = hash_file(&path).unwrap();
+        let mtime = file_mtime(&path).unwrap();
+        let size = file_size(&path).unwrap();
+
+        // Not indexed yet — get_favourite returns None
+        assert!(get_favourite(&conn, &path).unwrap().is_none());
+
+        // Index the image
+        let row = ImageRow {
+            path: path.to_string_lossy().into_owned(),
+            filename: "fav.jpg".to_string(),
+            hash,
+            mtime,
+            size,
+            favourite: 0,
+            meta: ImageMetadata::default(),
+        };
+        upsert(&conn, &row).unwrap();
+
+        assert_eq!(get_favourite(&conn, &path).unwrap(), Some(false));
+
+        set_favourite(&conn, &path, true).unwrap();
+        assert_eq!(get_favourite(&conn, &path).unwrap(), Some(true));
+
+        set_favourite(&conn, &path, false).unwrap();
+        assert_eq!(get_favourite(&conn, &path).unwrap(), Some(false));
+    }
+
+    #[test]
+    fn test_ui_state_roundtrip() {
+        let dir = temp_dir();
+        let state = UiState {
+            sort_key: "date_desc".to_string(),
+            search_text: "sunset".to_string(),
+            thumbnail_size: 256,
+        };
+        save_ui_state(&dir, &state).unwrap();
+
+        let loaded = load_ui_state(&dir).unwrap();
+        assert_eq!(loaded.sort_key, "date_desc");
+        assert_eq!(loaded.search_text, "sunset");
+        assert_eq!(loaded.thumbnail_size, 256);
+    }
+}

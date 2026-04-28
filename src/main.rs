@@ -370,6 +370,8 @@ fn build_ui(app: &adw::Application) {
     let scroll_last_pos = app_state.scroll_last_pos.clone();
     let scroll_last_time = app_state.scroll_last_time.clone();
     let scroll_debounce_gen = app_state.scroll_debounce_gen.clone();
+    let thumb_generations = app_state.thumb_generations.clone();
+    let bound_paths = app_state.bound_paths.clone();
 
     // -----------------------------------------------------------------------
     // Header chrome + left file-system tree (tree visibility follows header toggle)
@@ -418,6 +420,8 @@ fn build_ui(app: &adw::Application) {
         toast_overlay: toast_overlay.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
         current_folder: current_folder.clone(),
+        thumb_generations: thumb_generations.clone(),
+        bound_paths: bound_paths.clone(),
     });
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---

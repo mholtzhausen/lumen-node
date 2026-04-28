@@ -78,6 +78,8 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
     let realized_thumb_images_sel = deps.app_state.realized_thumb_images.clone();
     let thumbnail_size_sel = deps.app_state.thumbnail_size.clone();
     let hash_cache_sel = deps.app_state.hash_cache.clone();
+    let thumb_generations_sel = deps.app_state.thumb_generations.clone();
+    let bound_paths_sel = deps.app_state.bound_paths.clone();
     deps.selection_model
         .connect_selection_changed(move |model, _, _| {
             let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
@@ -96,6 +98,8 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                 &realized_thumb_images_sel,
                 &thumbnail_size_sel,
                 &hash_cache_sel,
+                &thumb_generations_sel,
+                &bound_paths_sel,
             );
         });
 }
@@ -192,6 +196,8 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.realized_thumb_images,
         &deps.app_state.realized_cell_boxes,
         &deps.app_state.hash_cache,
+        &deps.app_state.thumb_generations,
+        &deps.app_state.bound_paths,
         &deps.app_state.current_folder,
     );
 }
