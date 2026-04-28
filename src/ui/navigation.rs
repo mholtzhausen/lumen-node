@@ -7,6 +7,7 @@ use crate::ui::preview::{
 use crate::ui::right_sidebar::RightSidebarBundle;
 use gtk4::prelude::*;
 use gtk4::{GestureClick, StringObject};
+use libadwaita as adw;
 use std::{
     cell::Cell,
     cell::RefCell,
@@ -155,6 +156,7 @@ fn dispatch_full_view_load(
 }
 
 pub(crate) struct NavigationDeps {
+    pub(crate) window: adw::ApplicationWindow,
     pub(crate) center: CenterContentBundle,
     pub(crate) right: RightSidebarBundle,
     pub(crate) selection_model: gtk4::SingleSelection,
@@ -217,4 +219,18 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
         );
     });
     deps.right.meta_preview.add_controller(dbl_click);
+
+    let window_for_single = deps.window.clone();
+    let dbl_click_single = GestureClick::new();
+    dbl_click_single.connect_pressed(move |_, n_press, _, _| {
+        if n_press < 2 {
+            return;
+        }
+        if window_for_single.is_fullscreen() {
+            window_for_single.unfullscreen();
+        } else {
+            window_for_single.fullscreen();
+        }
+    });
+    deps.center.single_picture.add_controller(dbl_click_single);
 }

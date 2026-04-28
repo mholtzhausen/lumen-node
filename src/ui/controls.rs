@@ -1,9 +1,10 @@
+use crate::core::app_state::AppState;
 use crate::db;
 use crate::sort::{sort_key_for_index, SORT_KEY_NAME_ASC};
 use crate::ui::grid::apply_thumbnail_size_change;
 use gtk4::prelude::*;
-use gtk4::{glib, CustomFilter, CustomSorter, Image};
-use std::{cell::Cell, cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
+use gtk4::{CustomFilter, CustomSorter};
+use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc};
 
 pub(crate) fn install_sort_dropdown_handler(
     sort_dropdown: &gtk4::DropDown,
@@ -104,30 +105,22 @@ pub(crate) fn install_clear_button_handler(
 pub(crate) fn install_thumbnail_size_handlers(
     size_buttons: &Rc<Vec<gtk4::ToggleButton>>,
     size_options: [i32; 4],
-    thumbnail_size: &Rc<RefCell<i32>>,
+    app_state: &AppState,
     grid_view: &gtk4::GridView,
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    realized_cell_boxes: &Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
 ) {
+    let app_state_toggle = app_state.clone();
     let grid_view_toggle = grid_view.clone();
-    let realized_thumb_images_toggle = realized_thumb_images.clone();
-    let realized_cell_boxes_toggle = realized_cell_boxes.clone();
-    let hash_cache_toggle = hash_cache.clone();
     for (idx, button) in size_buttons.iter().enumerate() {
         let options = size_options;
         let buttons = size_buttons.clone();
-        let thumbnail_size_toggle = thumbnail_size.clone();
+        let app_state_toggle = app_state_toggle.clone();
         let grid_view_toggle = grid_view_toggle.clone();
-        let realized_thumb_images_toggle = realized_thumb_images_toggle.clone();
-        let realized_cell_boxes_toggle = realized_cell_boxes_toggle.clone();
-        let hash_cache_toggle = hash_cache_toggle.clone();
         let current_folder_toggle = current_folder.clone();
         button.connect_clicked(move |_| {
             let selected_size = options[idx];
-            let was_selected = *thumbnail_size_toggle.borrow() == selected_size;
-            *thumbnail_size_toggle.borrow_mut() = selected_size;
+            let was_selected = *app_state_toggle.thumbnail_size.borrow() == selected_size;
+            *app_state_toggle.thumbnail_size.borrow_mut() = selected_size;
 
             for (i, btn) in buttons.iter().enumerate() {
                 btn.set_active(i == idx);
@@ -146,10 +139,7 @@ pub(crate) fn install_thumbnail_size_handlers(
 
             apply_thumbnail_size_change(
                 selected_size,
-                &realized_cell_boxes_toggle,
-                &realized_thumb_images_toggle,
-                &thumbnail_size_toggle,
-                &hash_cache_toggle,
+                &app_state_toggle,
                 &grid_view_toggle,
             );
         });

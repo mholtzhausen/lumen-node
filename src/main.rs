@@ -358,8 +358,6 @@ fn build_ui(app: &adw::Application) {
     // Toast overlay wraps all main content for non-intrusive notifications.
     let toast_overlay = adw::ToastOverlay::new();
 
-    let hash_cache = app_state.hash_cache.clone();
-    let sort_fields_cache = app_state.sort_fields_cache.clone();
     let sort_key = app_state.sort_key.clone();
     let search_text = app_state.search_text.clone();
     let initial_thumbnail_size = app_state.initial_thumbnail_size;
@@ -367,9 +365,7 @@ fn build_ui(app: &adw::Application) {
     let realized_thumb_images = app_state.realized_thumb_images.clone();
     let realized_cell_boxes = app_state.realized_cell_boxes.clone();
     let fast_scroll_active = app_state.fast_scroll_active.clone();
-    let scroll_last_pos = app_state.scroll_last_pos.clone();
-    let scroll_last_time = app_state.scroll_last_time.clone();
-    let scroll_debounce_gen = app_state.scroll_debounce_gen.clone();
+    let thumb_generations = app_state.thumb_generations.clone();
 
     // -----------------------------------------------------------------------
     // Header chrome + left file-system tree (tree visibility follows header toggle)
@@ -403,21 +399,18 @@ fn build_ui(app: &adw::Application) {
     let selection_model = model_bundle.selection_model;
 
     let center = build_center_content(CenterContentDeps {
+        app_state: app_state.clone(),
         selection_model: selection_model.clone(),
         thumbnail_size: thumbnail_size.clone(),
         realized_cell_boxes: realized_cell_boxes.clone(),
         realized_thumb_images: realized_thumb_images.clone(),
         fast_scroll_active: fast_scroll_active.clone(),
-        scroll_last_pos: scroll_last_pos.clone(),
-        scroll_last_time: scroll_last_time.clone(),
-        scroll_debounce_gen: scroll_debounce_gen.clone(),
-        hash_cache: hash_cache.clone(),
-        sort_key: sort_key.clone(),
-        sort_fields_cache: sort_fields_cache.clone(),
         window: window.clone(),
         toast_overlay: toast_overlay.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
         current_folder: current_folder.clone(),
+        thumb_generations: thumb_generations.clone(),
+        bound_paths: app_state.bound_paths.clone(),
     });
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---
@@ -474,6 +467,7 @@ fn build_ui(app: &adw::Application) {
     let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     install_navigation_handlers(NavigationDeps {
+        window: window.clone(),
         center: center.clone(),
         right: right.clone(),
         selection_model: selection_model.clone(),
@@ -502,6 +496,30 @@ fn build_ui(app: &adw::Application) {
         window: window.clone(),
     });
 
+    // Wire: File > Open Folder... menubar item
+    let open_folder_menubar = open_folder_action.clone();
+    let window_for_open = window.clone();
+    let current_folder_open = current_folder.clone();
+    let open_folder_action_win = gio::SimpleAction::new("open-folder", None);
+    open_folder_action_win.connect_activate(move |_, _| {
+        let dialog = gtk4::FileDialog::builder().title("Choose a Folder").build();
+        if let Some(folder) = current_folder_open.borrow().as_ref() {
+            let file = gio::File::for_path(folder);
+            dialog.set_initial_folder(Some(&file));
+        }
+        let open_folder = open_folder_menubar.clone();
+        dialog.select_folder(
+            Some(&window_for_open),
+            None::<&gio::Cancellable>,
+            move |result| {
+                let Ok(file) = result else { return };
+                let Some(path) = file.path() else { return };
+                open_folder(path, true);
+            },
+        );
+    });
+    window.add_action(&open_folder_action_win);
+
     // -----------------------------------------------------------------------
     // Wire: sort/search/clear/thumbnail-size controls
     // -----------------------------------------------------------------------
@@ -523,6 +541,7 @@ fn build_ui(app: &adw::Application) {
         inner_pane_start_px: pane_metrics.inner_pane_start_px,
         window: window.clone(),
         header_bar: chrome.header_bar.clone(),
+        controls_row: chrome.controls_row.clone(),
         toast_overlay: toast_overlay.clone(),
         progress_box: progress_box.clone(),
     });
@@ -534,6 +553,23 @@ fn build_ui(app: &adw::Application) {
     let outer_position_programmatic = paned_layout.outer_position_programmatic.clone();
     let outer_split_dirty = paned_layout.outer_split_dirty.clone();
     let update_banner = layout_bundle.update_banner;
+    let footer_bar = layout_bundle.footer_bar;
+
+    {
+        let view_stack = center.view_stack.clone();
+        let header_bar = chrome.header_bar.clone();
+        let controls_row = chrome.controls_row.clone();
+        let footer_bar = footer_bar.clone();
+        let update_banner = update_banner.clone();
+        view_stack.connect_visible_child_name_notify(move |stack| {
+            let in_single = stack.visible_child_name().as_deref() == Some("single");
+            let show_chrome = !in_single;
+            header_bar.set_visible(show_chrome);
+            controls_row.set_visible(show_chrome);
+            footer_bar.set_visible(show_chrome);
+            update_banner.set_visible(show_chrome);
+        });
+    }
 
     install_lifecycle(LifecycleDeps {
         update_banner,

@@ -75,9 +75,7 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
     let meta_position_programmatic_sel = deps.right.meta_position_programmatic.clone();
     let meta_preview_sel = deps.right.meta_preview.clone();
     let meta_cache_sel = deps.app_state.meta_cache.clone();
-    let realized_thumb_images_sel = deps.app_state.realized_thumb_images.clone();
-    let thumbnail_size_sel = deps.app_state.thumbnail_size.clone();
-    let hash_cache_sel = deps.app_state.hash_cache.clone();
+    let app_state_sel = deps.app_state.clone();
     deps.selection_model
         .connect_selection_changed(move |model, _, _| {
             let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
@@ -93,9 +91,7 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                 &meta_split_before_auto_collapse_sel,
                 &meta_position_programmatic_sel,
                 &meta_preview_sel,
-                &realized_thumb_images_sel,
-                &thumbnail_size_sel,
-                &hash_cache_sel,
+                &app_state_sel,
             );
         });
 }
@@ -187,11 +183,8 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
     install_thumbnail_size_handlers(
         &deps.chrome.size_buttons,
         thumbnail_size_options(),
-        &deps.app_state.thumbnail_size,
+        &deps.app_state,
         &deps.center.grid_view,
-        &deps.app_state.realized_thumb_images,
-        &deps.app_state.realized_cell_boxes,
-        &deps.app_state.hash_cache,
         &deps.app_state.current_folder,
     );
 }

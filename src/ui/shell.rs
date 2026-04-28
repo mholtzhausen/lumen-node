@@ -17,6 +17,7 @@ pub(crate) struct PanedLayout {
 
 pub(crate) struct HeaderControls {
     pub(crate) header_bar: adw::HeaderBar,
+    pub(crate) controls_row: gtk4::Box,
     pub(crate) sort_dropdown: gtk4::DropDown,
     pub(crate) size_buttons: Rc<Vec<gtk4::ToggleButton>>,
     pub(crate) search_entry: gtk4::SearchEntry,
@@ -39,9 +40,57 @@ pub(crate) fn build_header_controls(
     let header_bar = adw::HeaderBar::new();
 
     let menu_model = gio::Menu::new();
+
+    // ── File menu ──────────────────────────────────────────────────────────
+    let file_menu = gio::Menu::new();
+    file_menu.append(Some("Open Folder..."), Some("win.open-folder"));
+    let about_section = gio::Menu::new();
+    about_section.append(Some("About LumenNode"), Some("win.about"));
+    file_menu.append_section(None, &about_section);
+    menu_model.append_submenu(Some("File"), &file_menu);
+
+    // ── Edit menu ──────────────────────────────────────────────────────────
     let edit_menu = gio::Menu::new();
-    edit_menu.append(Some("Get Config"), Some("win.get-config"));
+    let copy_section = gio::Menu::new();
+    copy_section.append(Some("Copy Prompt"), Some("ctx.copy-prompt"));
+    copy_section.append(Some("Copy Negative Prompt"), Some("ctx.copy-negative-prompt"));
+    copy_section.append(Some("Copy Seed"), Some("ctx.copy-seed"));
+    copy_section.append(Some("Copy Generation Command"), Some("ctx.copy-generation-command"));
+    edit_menu.append_section(None, &copy_section);
+
+    let clipboard_section = gio::Menu::new();
+    clipboard_section.append(Some("Copy Image"), Some("ctx.copy-image"));
+    clipboard_section.append(Some("Copy Path"), Some("ctx.copy-path"));
+    clipboard_section.append(Some("Copy Metadata"), Some("ctx.copy-metadata"));
+    edit_menu.append_section(None, &clipboard_section);
+
+    let organise_section = gio::Menu::new();
+    organise_section.append(Some("Favourite"), Some("ctx.toggle-favourite"));
+    organise_section.append(Some("Move to Trash"), Some("ctx.move-to-trash"));
+    edit_menu.append_section(None, &organise_section);
+
+    let config_section = gio::Menu::new();
+    config_section.append(Some("Get Config"), Some("win.get-config"));
+    edit_menu.append_section(None, &config_section);
+
     menu_model.append_submenu(Some("Edit"), &edit_menu);
+
+    // ── View menu ──────────────────────────────────────────────────────────
+    let view_menu = gio::Menu::new();
+    let refresh_submenu = gio::Menu::new();
+    refresh_submenu.append(Some("Refresh Thumbnail"), Some("ctx.refresh-thumbnail"));
+    refresh_submenu.append(Some("Refresh Metadata"), Some("ctx.refresh-metadata"));
+    refresh_submenu.append(Some("Refresh Folder Thumbnails"), Some("ctx.refresh-folder-thumbnails"));
+    refresh_submenu.append(Some("Refresh Folder Metadata"), Some("ctx.refresh-folder-metadata"));
+    view_menu.append_submenu(Some("Refresh"), &refresh_submenu);
+
+    let open_section = gio::Menu::new();
+    open_section.append(Some("Open in File Manager"), Some("ctx.open-in-file-manager"));
+    open_section.append(Some("Open in External Editor"), Some("ctx.open-in-external-editor"));
+    view_menu.append_section(None, &open_section);
+
+    menu_model.append_submenu(Some("View"), &view_menu);
+
     let menubar = gtk4::PopoverMenuBar::from_model(Some(&menu_model));
     menubar.set_halign(gtk4::Align::Start);
     menubar.set_valign(gtk4::Align::Center);
@@ -106,6 +155,25 @@ pub(crate) fn build_header_controls(
     });
     window.add_action(&get_config_action);
 
+    // ── About dialog action ──────────────────────────────────────────────────
+    let about_action = gio::SimpleAction::new("about", None);
+    let window_for_about = window.clone();
+    about_action.connect_activate(move |_, _| {
+        let dialog = gtk4::AboutDialog::new();
+        dialog.set_transient_for(Some(&window_for_about));
+        dialog.set_modal(true);
+        dialog.set_program_name(Some("LumenNode"));
+        dialog.set_version(Some(env!("CARGO_PKG_VERSION")));
+        dialog.set_comments(Some("A desktop image gallery for AI-generated art, featuring per-folder indexing, metadata extraction, and thumbnail caching."));
+        dialog.set_website(Some("https://github.com/nemesarial/lumen-node"));
+        dialog.set_website_label("GitHub Project");
+        dialog.set_license_type(gtk4::License::MitX11);
+        dialog.set_authors(&["nemesarial"]);
+        dialog.set_logo_icon_name(Some("com.lumennode.app"));
+        dialog.present();
+    });
+    window.add_action(&about_action);
+
     let sort_options =
         gtk4::StringList::new(&["Name ↑", "Name ↓", "Date ↑", "Date ↓", "Size ↑", "Size ↓"]);
     let sort_dropdown = gtk4::DropDown::new(Some(sort_options), gtk4::Expression::NONE);
@@ -134,26 +202,21 @@ pub(crate) fn build_header_controls(
     let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
     clear_btn.set_tooltip_text(Some("Clear filters"));
 
-    let toolbar_center = gtk4::Box::new(Orientation::Horizontal, 6);
-    toolbar_center.set_valign(gtk4::Align::Center);
-    toolbar_center.set_hexpand(true);
-    toolbar_center.append(&menubar);
-    toolbar_center.append(&sort_dropdown);
-    toolbar_center.append(&size_selector);
-    toolbar_center.append(&search_entry);
-    toolbar_center.append(&clear_btn);
-    header_bar.set_title_widget(Some(&toolbar_center));
-
+    let controls_row = gtk4::Box::new(Orientation::Horizontal, 6);
+    controls_row.set_halign(gtk4::Align::Fill);
+    controls_row.set_hexpand(true);
+    controls_row.set_margin_start(8);
+    controls_row.set_margin_end(8);
+    controls_row.set_margin_top(4);
+    controls_row.set_margin_bottom(4);
     let left_toggle = gtk4::ToggleButton::new();
     left_toggle.set_icon_name("sidebar-show-symbolic");
     let initial_left_sidebar_visible = app_config.left_sidebar_visible.unwrap_or(false);
     left_toggle.set_active(initial_left_sidebar_visible);
     left_toggle.set_tooltip_text(Some("Toggle left panel"));
-    header_bar.pack_start(&left_toggle);
 
     let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
     open_btn.set_tooltip_text(Some("Open Folder..."));
-    header_bar.pack_start(&open_btn);
 
     let history_btn = gtk4::MenuButton::new();
     history_btn.set_icon_name("document-open-recent-symbolic");
@@ -166,7 +229,15 @@ pub(crate) fn build_header_controls(
     history_list.set_margin_end(6);
     history_popover.set_child(Some(&history_list));
     history_btn.set_popover(Some(&history_popover));
-    header_bar.pack_start(&history_btn);
+
+    controls_row.append(&left_toggle);
+    controls_row.append(&open_btn);
+    controls_row.append(&history_btn);
+    controls_row.append(&sort_dropdown);
+    controls_row.append(&size_selector);
+    controls_row.append(&search_entry);
+    controls_row.append(&clear_btn);
+    header_bar.pack_start(&menubar);
 
     let right_toggle = gtk4::ToggleButton::new();
     right_toggle.set_icon_name("sidebar-show-right-symbolic");
@@ -177,6 +248,7 @@ pub(crate) fn build_header_controls(
 
     HeaderControls {
         header_bar,
+        controls_row,
         sort_dropdown,
         size_buttons,
         search_entry,
@@ -337,10 +409,11 @@ pub(crate) fn assemble_paned_layout(
 pub(crate) fn mount_window_content(
     window: &adw::ApplicationWindow,
     header_bar: &adw::HeaderBar,
+    controls_row: &gtk4::Box,
     toast_overlay: &adw::ToastOverlay,
     outer_paned: &Paned,
     progress_box: &gtk4::Box,
-) -> adw::Banner {
+) -> (adw::Banner, gtk4::Box) {
     toast_overlay.set_child(Some(outer_paned));
     toast_overlay.set_hexpand(true);
     toast_overlay.set_vexpand(true);
@@ -355,12 +428,13 @@ pub(crate) fn mount_window_content(
     status_bar.append(progress_box);
 
     let update_banner = adw::Banner::new("");
-    update_banner.set_button_label(Some("View release"));
+    update_banner.set_button_label(Some("Dismiss"));
     update_banner.set_revealed(false);
 
     let content_with_status = gtk4::Box::new(Orientation::Vertical, 0);
     content_with_status.set_hexpand(true);
     content_with_status.set_vexpand(true);
+    content_with_status.append(controls_row);
     content_with_status.append(&update_banner);
     content_with_status.append(toast_overlay);
     content_with_status.append(&status_bar);
@@ -370,7 +444,7 @@ pub(crate) fn mount_window_content(
     toolbar_view.set_content(Some(&content_with_status));
     window.set_content(Some(&toolbar_view));
 
-    update_banner
+    (update_banner, status_bar)
 }
 
 pub(crate) fn create_progress_widgets() -> (gtk4::Box, gtk4::Label, ProgressBar) {

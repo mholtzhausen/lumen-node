@@ -1,3 +1,4 @@
+use crate::core::app_state::AppState;
 use crate::metadata::ImageMetadata;
 use crate::metadata_section::apply_metadata_section_state;
 use crate::timing_report::write_timing_report;
@@ -9,7 +10,8 @@ use crate::{
     SCAN_DRAIN_BATCH_SIZE, SCAN_DRAIN_SCHEDULED, SUPPRESS_SIDEBAR_DURING_PREVIEW,
     THUMB_UI_CALLBACKS_SKIPPED_WHILE_PREVIEW,
 };
-use gtk4::{glib, Image, StringObject};
+use gtk4::prelude::*;
+use gtk4::{glib, StringObject};
 use std::{
     cell::Cell,
     cell::RefCell,
@@ -280,13 +282,11 @@ fn handle_selection_preview_outcome(
     metrics: PreviewLoadMetrics,
     click_trace_state: &Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    app_state: &AppState,
 ) {
     PREVIEW_REQUEST_PENDING.store(0, AtomicOrdering::Relaxed);
     SUPPRESS_SIDEBAR_DURING_PREVIEW.store(0, AtomicOrdering::Relaxed);
-    refresh_realized_grid_thumbnails(realized_thumb_images, thumbnail_size, hash_cache);
+    refresh_realized_grid_thumbnails(&app_state);
 
     if let Some(trace) = click_trace_state.borrow_mut().as_mut() {
         if trace.id == click_id && !trace.finished {
@@ -344,25 +344,33 @@ fn dispatch_selection_preview_load(
     path_str: &str,
     click_trace_state: Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
-    realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: Rc<RefCell<i32>>,
-    hash_cache: Rc<RefCell<HashMap<String, String>>>,
+    app_state: AppState,
 ) {
+    let max_dimension = compute_sidebar_preview_decode_dimension(meta_preview);
     load_picture_async(
         meta_preview,
         path_str,
-        Some(520),
+        max_dimension,
         Some(Box::new(move |metrics| {
             handle_selection_preview_outcome(
                 metrics,
                 &click_trace_state,
                 click_id,
-                &realized_thumb_images,
-                &thumbnail_size,
-                &hash_cache,
+                &app_state,
             );
         })),
     );
+}
+
+fn compute_sidebar_preview_decode_dimension(meta_preview: &gtk4::Picture) -> Option<i32> {
+    let width = meta_preview.width().max(0);
+    let height = meta_preview.height().max(0);
+    if width == 0 || height == 0 {
+        // Fallback to full-resolution decode until we know widget allocation.
+        return None;
+    }
+    let scale = meta_preview.scale_factor().max(1);
+    Some(width.max(height).saturating_mul(scale).saturating_mul(2))
 }
 
 fn dispatch_selection_metadata_load(
@@ -397,9 +405,7 @@ pub(crate) fn handle_selection_change_event(
     meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
     meta_position_programmatic: &Rc<Cell<u32>>,
     meta_preview: &gtk4::Picture,
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    app_state: &AppState,
 ) {
     let path_str = item.string().to_string();
     let click_snapshot = capture_click_runtime_snapshot();
@@ -409,7 +415,7 @@ pub(crate) fn handle_selection_change_event(
     mark_click_step(click_trace_state, click_id, "selected_item_resolved");
 
     // Load the preview image off-thread so the UI stays responsive.
-    // Decode at 2x sidebar width (520px) for fast display on HiDPI.
+    // Decode for current widget size (with HiDPI headroom), or full-res fallback.
     begin_selection_preview_load(click_trace_state, click_id);
 
     // Load metadata asynchronously (cancellable if user navigates away).
@@ -434,9 +440,7 @@ pub(crate) fn handle_selection_change_event(
         &path_str,
         click_trace_state.clone(),
         click_id,
-        realized_thumb_images.clone(),
-        thumbnail_size.clone(),
-        hash_cache.clone(),
+        app_state.clone(),
     );
 }
 

@@ -1,4 +1,4 @@
-use crate::sort_flags::SortFields;
+use crate::core::app_state::AppState;
 use crate::ui::grid::{
     add_scroll_flag_overlay, attach_grid_page, attach_single_page, build_scroll_flag_overlay,
     create_center_box, create_grid_overlay, create_grid_scroll, create_grid_view,
@@ -12,25 +12,21 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     rc::Rc,
-    time::Instant,
 };
 
 pub(crate) struct CenterContentDeps {
+    pub(crate) app_state: AppState,
     pub(crate) selection_model: SingleSelection,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
     pub(crate) realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<gtk4::Image>>>>,
     pub(crate) fast_scroll_active: Rc<Cell<bool>>,
-    pub(crate) scroll_last_pos: Rc<Cell<f64>>,
-    pub(crate) scroll_last_time: Rc<Cell<Option<Instant>>>,
-    pub(crate) scroll_debounce_gen: Rc<Cell<u64>>,
-    pub(crate) hash_cache: Rc<RefCell<HashMap<String, String>>>,
-    pub(crate) sort_key: Rc<RefCell<String>>,
-    pub(crate) sort_fields_cache: Rc<RefCell<HashMap<String, SortFields>>>,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
+    pub(crate) thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 }
 
 #[derive(Clone)]
@@ -50,11 +46,13 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
         realized_cell_boxes: deps.realized_cell_boxes.clone(),
         realized_thumb_images: deps.realized_thumb_images.clone(),
         fast_scroll_active: deps.fast_scroll_active.clone(),
-        hash_cache: deps.hash_cache.clone(),
+        hash_cache: deps.app_state.hash_cache.clone(),
         window: deps.window.clone(),
         toast_overlay: deps.toast_overlay.clone(),
         start_scan_for_folder: deps.start_scan_for_folder.clone(),
         current_folder: deps.current_folder.clone(),
+        thumb_generations: deps.thumb_generations.clone(),
+        bound_paths: deps.bound_paths.clone(),
     });
 
     let grid_view = create_grid_view(&deps.selection_model, &factory);
@@ -67,16 +65,8 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
     install_grid_scroll_speed_gate(
         &grid_scroll,
         &grid_view,
-        &deps.fast_scroll_active,
-        &deps.scroll_last_pos,
-        &deps.scroll_last_time,
-        &deps.scroll_debounce_gen,
-        &deps.thumbnail_size,
-        &deps.realized_thumb_images,
-        &deps.hash_cache,
+        &deps.app_state,
         &deps.selection_model,
-        &deps.sort_key,
-        &deps.sort_fields_cache,
         &scroll_flag_box,
         &scroll_flag,
     );

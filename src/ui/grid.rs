@@ -12,10 +12,13 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
 
 use crate::{
+    core::app_state::AppState,
     db,
     dialogs::{open_rename_dialog, open_trash_dialog},
-    sort_flags::{sort_flag_text_for_path, SortFields},
+    sort_flags::sort_flag_text_for_path,
+    ui::preview::ACTIVE_PREVIEW_TASKS,
     thumbnails,
+    PREVIEW_REQUEST_PENDING,
 };
 
 pub fn create_grid_view(
@@ -38,6 +41,8 @@ pub struct GridFactoryDeps {
     pub toast_overlay: adw::ToastOverlay,
     pub start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub current_folder: Rc<RefCell<Option<PathBuf>>>,
+    pub thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    pub bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 }
 
 pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
@@ -59,6 +64,8 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let thumbnail_size_setup = deps.thumbnail_size.clone();
     let realized_thumb_images_setup = deps.realized_thumb_images.clone();
     let realized_cell_boxes_setup = deps.realized_cell_boxes.clone();
+    let thumb_generations_setup = deps.thumb_generations.clone();
+    let bound_paths_setup = deps.bound_paths.clone();
     factory.connect_setup(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
@@ -70,12 +77,16 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             &realized_thumb_images_setup,
             on_rename.clone(),
             on_delete.clone(),
+            &thumb_generations_setup,
+            &bound_paths_setup,
         );
     });
 
     let hash_cache_bind = deps.hash_cache.clone();
     let thumbnail_size_bind = deps.thumbnail_size.clone();
     let fast_scroll_active_bind = deps.fast_scroll_active.clone();
+    let thumb_generations_bind = deps.thumb_generations.clone();
+    let bound_paths_bind = deps.bound_paths.clone();
     factory.connect_bind(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
@@ -85,14 +96,27 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             &thumbnail_size_bind,
             &fast_scroll_active_bind,
             hash_cache_bind.clone(),
+            &thumb_generations_bind,
+            &bound_paths_bind,
         );
     });
 
-    factory.connect_unbind(|_, obj| {
+    let thumb_generations_unbind = deps.thumb_generations.clone();
+    let bound_paths_unbind = deps.bound_paths.clone();
+    factory.connect_unbind(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
         };
-        unbind_grid_list_item(list_item);
+        unbind_grid_list_item(list_item, &thumb_generations_unbind, &bound_paths_unbind);
+    });
+
+    let thumb_generations_teardown = deps.thumb_generations.clone();
+    let bound_paths_teardown = deps.bound_paths.clone();
+    factory.connect_teardown(move |_, obj| {
+        let Some(list_item) = obj.downcast_ref::<ListItem>() else {
+            return;
+        };
+        teardown_grid_list_item(list_item, &thumb_generations_teardown, &bound_paths_teardown);
     });
 
     factory
@@ -164,6 +188,7 @@ pub fn enter_single_view_mode(
 pub static ACTIVE_THUMBNAIL_TASKS: AtomicU64 = AtomicU64::new(0);
 pub static THUMB_UI_CALLBACKS_TOTAL: AtomicU64 = AtomicU64::new(0);
 pub static DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE: AtomicU64 = AtomicU64::new(0);
+static DEFERRED_REFRESH_GEN: AtomicU64 = AtomicU64::new(0);
 
 struct AtomicTaskGuard {
     counter: &'static AtomicU64,
@@ -180,6 +205,46 @@ impl Drop for AtomicTaskGuard {
     fn drop(&mut self) {
         self.counter.fetch_sub(1, AtomicOrdering::Relaxed);
     }
+}
+
+fn schedule_deferred_realized_thumbnail_refresh(app_state: &AppState) {
+    let gen = DEFERRED_REFRESH_GEN
+        .fetch_add(1, AtomicOrdering::Relaxed)
+        .saturating_add(1);
+    let app_state = app_state.clone();
+    glib::timeout_add_local_once(Duration::from_millis(90), move || {
+        if DEFERRED_REFRESH_GEN.load(AtomicOrdering::Relaxed) != gen {
+            return;
+        }
+        refresh_realized_grid_thumbnails(&app_state);
+    });
+}
+
+fn schedule_thumbnail_retry(
+    thumb_image: &Image,
+    path_str: &str,
+    size: i32,
+    hash_cache: Rc<RefCell<HashMap<String, String>>>,
+    generation_token: Rc<Cell<u64>>,
+    expected_generation: u64,
+    bound_paths: Rc<RefCell<HashMap<usize, String>>>,
+) {
+    let image = thumb_image.clone();
+    let path = path_str.to_string();
+    glib::timeout_add_local_once(Duration::from_millis(90), move || {
+        if generation_token.get() != expected_generation {
+            return;
+        }
+        load_grid_thumbnail(
+            &image,
+            path,
+            size,
+            hash_cache,
+            generation_token,
+            expected_generation,
+            bound_paths,
+        );
+    });
 }
 
 pub fn track_realized_grid_widgets(
@@ -214,6 +279,8 @@ pub fn setup_grid_list_item(
     realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     on_rename: Rc<dyn Fn(std::path::PathBuf)>,
     on_delete: Rc<dyn Fn(std::path::PathBuf)>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
     let cell_box = GtkBox::new(Orientation::Vertical, 4);
     cell_box.add_css_class("thumbnail-card");
@@ -227,9 +294,10 @@ pub fn setup_grid_list_item(
     let thumb_image = Image::new();
     thumb_image.set_pixel_size(size);
     let generation_token = Rc::new(Cell::new(0_u64));
-    unsafe {
-        thumb_image.set_data("thumb-generation", generation_token);
-    }
+    thumb_generations.borrow_mut().insert(
+        thumb_image.as_ptr() as usize,
+        generation_token,
+    );
     track_realized_grid_widgets(
         realized_cell_boxes,
         realized_thumb_images,
@@ -254,14 +322,18 @@ pub fn setup_grid_list_item(
     delete_btn.set_opacity(0.0);
     delete_btn.set_focus_on_click(false);
     let on_rename_btn = on_rename.clone();
+    let bound_paths_rename = bound_paths.clone();
     rename_btn.connect_clicked(move |btn| {
-        let path = unsafe { btn.data::<String>("bound-path").map(|s| s.as_ref().clone()) };
+        let key = btn.as_ptr() as usize;
+        let path = bound_paths_rename.borrow().get(&key).cloned();
         let Some(path) = path else { return };
         on_rename_btn(std::path::PathBuf::from(path));
     });
     let on_delete_btn = on_delete.clone();
+    let bound_paths_delete = bound_paths.clone();
     delete_btn.connect_clicked(move |btn| {
-        let path = unsafe { btn.data::<String>("bound-path").map(|s| s.as_ref().clone()) };
+        let key = btn.as_ptr() as usize;
+        let path = bound_paths_delete.borrow().get(&key).cloned();
         let Some(path) = path else { return };
         on_delete_btn(std::path::PathBuf::from(path));
     });
@@ -297,6 +369,8 @@ pub fn bind_grid_list_item(
     thumbnail_size: &Rc<RefCell<i32>>,
     fast_scroll_active: &Rc<Cell<bool>>,
     hash_cache: Rc<RefCell<HashMap<String, String>>>,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
     let path_str = list_item
         .item()
@@ -334,25 +408,27 @@ pub fn bind_grid_list_item(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     name_label.set_text(&filename);
-    unsafe {
-        rename_btn.set_data("bound-path", path_str.clone());
-    }
-    unsafe {
-        delete_btn.set_data("bound-path", path_str.clone());
-    }
-    let generation_token = unsafe {
-        thumb_image
-            .data::<Rc<Cell<u64>>>("thumb-generation")
-            .map(|token| token.as_ref().clone())
-    };
+    let mut bound_paths_map = bound_paths.borrow_mut();
+    bound_paths_map.insert(
+        rename_btn.as_ptr() as usize,
+        path_str.clone(),
+    );
+    bound_paths_map.insert(
+        delete_btn.as_ptr() as usize,
+        path_str.clone(),
+    );
+    drop(bound_paths_map);
+    let thumb_key = thumb_image.as_ptr() as usize;
+    let generation_token = thumb_generations
+        .borrow()
+        .get(&thumb_key)
+        .cloned();
     if let Some(generation_token) = generation_token {
         let expected_generation = generation_token.get().saturating_add(1);
         generation_token.set(expected_generation);
         if fast_scroll_active.get() {
             thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
-            unsafe {
-                thumb_image.set_data("bound-path", path_str);
-            }
+            bound_paths.borrow_mut().insert(thumb_key, path_str);
         } else {
             load_grid_thumbnail(
                 &thumb_image,
@@ -361,54 +437,76 @@ pub fn bind_grid_list_item(
                 hash_cache,
                 generation_token,
                 expected_generation,
+                bound_paths.clone(),
             );
         }
     }
 }
 
-pub fn unbind_grid_list_item(list_item: &ListItem) {
+pub fn unbind_grid_list_item(
+    list_item: &ListItem,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+) {
     if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
         if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
-            let generation_token = unsafe {
-                image
-                    .data::<Rc<Cell<u64>>>("thumb-generation")
-                    .map(|token| token.as_ref().clone())
-            };
-            if let Some(generation_token) = generation_token {
+            let thumb_key = image.as_ptr() as usize;
+            // Cancel any in-flight thumbnail load for this item by bumping the
+            // generation token, but KEEP the entry in the map so the next
+            // bind() (on the same setup-created widgets) can still find it.
+            if let Some(generation_token) = thumb_generations.borrow().get(&thumb_key).cloned() {
                 generation_token.set(generation_token.get().saturating_add(1));
-            }
-            unsafe {
-                image.steal_data::<String>("bound-path");
             }
             if let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() {
                 if let Some(action_box) = name_row.last_child().and_downcast::<GtkBox>() {
                     if let Some(rename_btn) = action_box.first_child().and_downcast::<Button>() {
-                        unsafe {
-                            rename_btn.steal_data::<String>("bound-path");
-                        }
+                        bound_paths.borrow_mut().remove(&(rename_btn.as_ptr() as usize));
                     }
                     if let Some(delete_btn) = action_box.last_child().and_downcast::<Button>() {
-                        unsafe {
-                            delete_btn.steal_data::<String>("bound-path");
-                        }
+                        bound_paths.borrow_mut().remove(&(delete_btn.as_ptr() as usize));
                     }
                 }
             }
+            bound_paths.borrow_mut().remove(&thumb_key);
             image.set_icon_name(Some("image-x-generic-symbolic"));
+        }
+    }
+}
+
+/// Cleanup when a list item is destroyed (widgets about to be freed).
+/// This removes all pointer-keyed entries so that no stale addresses
+/// remain in the maps after GTK recycles the memory.
+pub fn teardown_grid_list_item(
+    list_item: &ListItem,
+    thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+) {
+    if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
+        if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
+            let thumb_key = image.as_ptr() as usize;
+            thumb_generations.borrow_mut().remove(&thumb_key);
+            bound_paths.borrow_mut().remove(&thumb_key);
+        }
+        if let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() {
+            if let Some(action_box) = name_row.last_child().and_downcast::<GtkBox>() {
+                if let Some(rename_btn) = action_box.first_child().and_downcast::<Button>() {
+                    bound_paths.borrow_mut().remove(&(rename_btn.as_ptr() as usize));
+                }
+                if let Some(delete_btn) = action_box.last_child().and_downcast::<Button>() {
+                    bound_paths.borrow_mut().remove(&(delete_btn.as_ptr() as usize));
+                }
+            }
         }
     }
 }
 
 pub fn apply_thumbnail_size_change(
     selected_size: i32,
-    realized_cell_boxes: &Rc<RefCell<Vec<glib::WeakRef<GtkBox>>>>,
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    app_state: &AppState,
     grid_view: &gtk4::GridView,
 ) {
-    refresh_realized_grid_cell_sizes(realized_cell_boxes, selected_size);
-    refresh_realized_grid_thumbnails(realized_thumb_images, thumbnail_size, hash_cache);
+    refresh_realized_grid_cell_sizes(&app_state.realized_cell_boxes, selected_size);
+    refresh_realized_grid_thumbnails(app_state);
     grid_view.queue_resize();
     grid_view.queue_draw();
 }
@@ -483,34 +581,25 @@ pub fn build_scroll_flag_overlay() -> (GtkBox, Label) {
 pub fn install_grid_scroll_speed_gate(
     grid_scroll: &ScrolledWindow,
     grid_view: &GridView,
-    fast_scroll_active: &Rc<Cell<bool>>,
-    scroll_last_pos: &Rc<Cell<f64>>,
-    scroll_last_time: &Rc<Cell<Option<Instant>>>,
-    scroll_debounce_gen: &Rc<Cell<u64>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    app_state: &AppState,
     selection_model: &SingleSelection,
-    sort_key: &Rc<RefCell<String>>,
-    sort_fields_cache: &Rc<RefCell<HashMap<String, SortFields>>>,
     scroll_flag_box: &GtkBox,
     scroll_flag: &Label,
 ) {
     let adj = grid_scroll.vadjustment();
-    let fast_scroll_active_adj = fast_scroll_active.clone();
-    let scroll_last_pos_adj = scroll_last_pos.clone();
-    let scroll_last_time_adj = scroll_last_time.clone();
-    let scroll_debounce_gen_adj = scroll_debounce_gen.clone();
-    let thumbnail_size_adj = thumbnail_size.clone();
-    let realized_adj = realized_thumb_images.clone();
-    let hash_cache_adj = hash_cache.clone();
+    let fast_scroll_active_adj = app_state.fast_scroll_active.clone();
+    let scroll_last_pos_adj = app_state.scroll_last_pos.clone();
+    let scroll_last_time_adj = app_state.scroll_last_time.clone();
+    let scroll_debounce_gen_adj = app_state.scroll_debounce_gen.clone();
+    let thumbnail_size_adj = app_state.thumbnail_size.clone();
     let selection_model_adj = selection_model.clone();
-    let sort_key_adj = sort_key.clone();
-    let sort_fields_cache_adj = sort_fields_cache.clone();
+    let sort_key_adj = app_state.sort_key.clone();
+    let sort_fields_cache_adj = app_state.sort_fields_cache.clone();
     let scroll_flag_adj = scroll_flag.clone();
     let scroll_flag_box_adj = scroll_flag_box.clone();
     let grid_scroll_adj = grid_scroll.clone();
     let _grid_view = grid_view;
+    let app_state_adj = app_state.clone();
 
     adj.connect_value_changed(move |adj| {
         let now = Instant::now();
@@ -534,9 +623,7 @@ pub fn install_grid_scroll_speed_gate(
         let gen = scroll_debounce_gen_adj.get().wrapping_add(1);
         scroll_debounce_gen_adj.set(gen);
         let fsa = fast_scroll_active_adj.clone();
-        let realized = realized_adj.clone();
-        let hash_cache = hash_cache_adj.clone();
-        let thumbnail_size = thumbnail_size_adj.clone();
+        let app_state = app_state_adj.clone();
         let debounce_gen = scroll_debounce_gen_adj.clone();
         let scroll_flag = scroll_flag_adj.clone();
         let scroll_flag_box = scroll_flag_box_adj.clone();
@@ -592,7 +679,7 @@ pub fn install_grid_scroll_speed_gate(
                 return;
             }
             fsa.set(false);
-            refresh_realized_grid_thumbnails(&realized, &thumbnail_size, &hash_cache);
+            refresh_realized_grid_thumbnails(&app_state);
         });
         let hide_gen = scroll_debounce_gen_adj.clone();
         glib::timeout_add_local_once(Duration::from_millis(450), move || {
@@ -611,39 +698,41 @@ pub fn load_grid_thumbnail(
     hash_cache: Rc<RefCell<HashMap<String, String>>>,
     generation_token: Rc<Cell<u64>>,
     expected_generation: u64,
+    bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 ) {
-    thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
-    unsafe {
-        thumb_image.set_data("bound-path", path_str.clone());
+    if thumb_image.paintable().is_none() {
+        thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
     }
+    bound_paths.borrow_mut().insert(
+        thumb_image.as_ptr() as usize,
+        path_str.clone(),
+    );
 
     if DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.load(AtomicOrdering::Relaxed) != 0 {
+        schedule_thumbnail_retry(
+            thumb_image,
+            &path_str,
+            size,
+            hash_cache.clone(),
+            generation_token.clone(),
+            expected_generation,
+            bound_paths.clone(),
+        );
         return;
     }
-
     let cached_hash = hash_cache.borrow().get(&path_str).cloned();
-    let already_loaded = if let Some(ref hash) = cached_hash {
-        if let Some(thumb) = thumbnails::hash_thumb_if_exists_for_size(hash, size) {
-            if let Ok(pb) = gdk_pixbuf::Pixbuf::from_file(&thumb) {
-                let tex = gdk::Texture::for_pixbuf(&pb);
-                thumb_image.set_paintable(Some(&tex));
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    if already_loaded {
-        return;
-    }
 
     const MAX_THUMBNAIL_TASKS: u64 = 64;
     if ACTIVE_THUMBNAIL_TASKS.load(AtomicOrdering::Relaxed) >= MAX_THUMBNAIL_TASKS {
+        schedule_thumbnail_retry(
+            thumb_image,
+            &path_str,
+            size,
+            hash_cache.clone(),
+            generation_token.clone(),
+            expected_generation,
+            bound_paths.clone(),
+        );
         return;
     }
     let task_guard = AtomicTaskGuard::new(&ACTIVE_THUMBNAIL_TASKS);
@@ -654,25 +743,35 @@ pub fn load_grid_thumbnail(
         let _guard = task_guard;
 
         if let Some(hash) = cached_hash_for_task {
-            let thumb = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size);
-            return (thumb, Some(hash));
+            let thumb = thumbnails::hash_thumb_if_exists_for_size(&hash, size)
+                .or_else(|| thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size));
+            let tex = thumb
+                .and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok())
+                .map(|pb| gdk::Texture::for_pixbuf(&pb));
+            return (tex, Some(hash));
         }
 
         if size == thumbnails::THUMB_NORMAL_SIZE {
-            return (thumbnails::ensure_thumbnail(&path_for_thread), None);
+            let tex = thumbnails::ensure_thumbnail(&path_for_thread)
+                .and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok())
+                .map(|pb| gdk::Texture::for_pixbuf(&pb));
+            return (tex, None);
         }
 
         let Ok(hash) = db::hash_file(&path_for_thread) else {
             return (None, None);
         };
-        let thumb = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size);
-        (thumb, Some(hash))
+        let tex = thumbnails::generate_hash_thumbnail_for_size(&path_for_thread, &hash, size)
+            .and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok())
+            .map(|pb| gdk::Texture::for_pixbuf(&pb));
+        (tex, Some(hash))
     });
 
     let image_weak = thumb_image.downgrade();
+    let bound_paths_cb = bound_paths.clone();
     glib::MainContext::default().spawn_local(async move {
         THUMB_UI_CALLBACKS_TOTAL.fetch_add(1, AtomicOrdering::Relaxed);
-        let Ok((maybe_cache, resolved_hash)) = task.await else {
+        let Ok((maybe_texture, resolved_hash)) = task.await else {
             return;
         };
         if generation_token.get() != expected_generation {
@@ -681,59 +780,61 @@ pub fn load_grid_thumbnail(
         let Some(image) = image_weak.upgrade() else {
             return;
         };
-        let is_current = unsafe {
-            image
-                .data::<String>("bound-path")
-                .map(|p| p.as_ref().as_str() == path_str.as_str())
-                .unwrap_or(false)
-        };
+        let is_current = bound_paths_cb
+            .borrow()
+            .get(&(image.as_ptr() as usize))
+            .map(|p| p.as_str() == path_str.as_str())
+            .unwrap_or(false);
         if !is_current {
             return;
         }
         if let Some(hash) = resolved_hash {
             hash_cache.borrow_mut().insert(path_str.clone(), hash);
         }
-        match maybe_cache.and_then(|p| gdk_pixbuf::Pixbuf::from_file(&p).ok()) {
-            Some(pb) => {
-                let tex = gdk::Texture::for_pixbuf(&pb);
-                image.set_paintable(Some(&tex));
-            }
+        match maybe_texture {
+            Some(tex) => image.set_paintable(Some(&tex)),
             None => image.set_icon_name(Some("image-missing-symbolic")),
         }
     });
 }
 
 pub fn refresh_realized_grid_thumbnails(
-    realized_thumb_images: &Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
-    thumbnail_size: &Rc<RefCell<i32>>,
-    hash_cache: &Rc<RefCell<HashMap<String, String>>>,
+    app_state: &AppState,
 ) {
-    let size = *thumbnail_size.borrow();
-    let mut images = realized_thumb_images.borrow_mut();
+    if PREVIEW_REQUEST_PENDING.load(AtomicOrdering::Relaxed) != 0
+        || ACTIVE_PREVIEW_TASKS.load(AtomicOrdering::Relaxed) != 0
+    {
+        schedule_deferred_realized_thumbnail_refresh(app_state);
+        return;
+    }
+    let size = *app_state.thumbnail_size.borrow();
+    let mut images = app_state.realized_thumb_images.borrow_mut();
     images.retain(|weak| weak.upgrade().is_some());
     for weak in images.iter() {
         if let Some(image) = weak.upgrade() {
             image.set_pixel_size(size);
-            let bound_path = unsafe {
-                image
-                    .data::<String>("bound-path")
-                    .map(|path| path.as_ref().clone())
-            };
+            let thumb_key = image.as_ptr() as usize;
+            let bound_path = app_state
+                .bound_paths
+                .borrow()
+                .get(&thumb_key)
+                .cloned();
             if let Some(path_str) = bound_path {
-                let generation_token = unsafe {
-                    image
-                        .data::<Rc<Cell<u64>>>("thumb-generation")
-                        .map(|token| token.as_ref().clone())
-                };
+                let generation_token = app_state
+                    .thumb_generations
+                    .borrow()
+                    .get(&thumb_key)
+                    .cloned();
                 if let Some(generation_token) = generation_token {
                     let expected_generation = generation_token.get();
                     load_grid_thumbnail(
                         &image,
                         path_str,
                         size,
-                        hash_cache.clone(),
+                        app_state.hash_cache.clone(),
                         generation_token,
                         expected_generation,
+                        app_state.bound_paths.clone(),
                     );
                 }
             }
