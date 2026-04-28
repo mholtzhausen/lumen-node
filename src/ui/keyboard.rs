@@ -141,7 +141,9 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
             if in_grid {
                 if esc_pending.get() {
-                    window_for_keys.application().unwrap().quit();
+                    if let Some(app) = window_for_keys.application() {
+                        app.quit();
+                    }
                 } else {
                     esc_pending.set(true);
                     let toast = adw::Toast::new("Press Escape again to quit");

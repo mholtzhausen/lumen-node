@@ -5,7 +5,7 @@ pub struct UpdateInfo {
 
 pub fn check_for_update() -> Option<UpdateInfo> {
     let current = env!("CARGO_PKG_VERSION");
-    let response = ureq::get("https://api.github.com/repos/OWNER/REPO/releases/latest")
+    let response = ureq::get("https://api.github.com/repos/mholtzhausen/lumen-node/releases/latest")
         .set("User-Agent", "lumen-node")
         .call()
         .ok()?;

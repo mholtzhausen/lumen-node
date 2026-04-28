@@ -60,7 +60,9 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let realized_thumb_images_setup = deps.realized_thumb_images.clone();
     let realized_cell_boxes_setup = deps.realized_cell_boxes.clone();
     factory.connect_setup(move |_, obj| {
-        let list_item = obj.downcast_ref::<ListItem>().unwrap();
+        let Some(list_item) = obj.downcast_ref::<ListItem>() else {
+            return;
+        };
         setup_grid_list_item(
             list_item,
             &thumbnail_size_setup,
@@ -75,7 +77,9 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let thumbnail_size_bind = deps.thumbnail_size.clone();
     let fast_scroll_active_bind = deps.fast_scroll_active.clone();
     factory.connect_bind(move |_, obj| {
-        let list_item = obj.downcast_ref::<ListItem>().unwrap();
+        let Some(list_item) = obj.downcast_ref::<ListItem>() else {
+            return;
+        };
         bind_grid_list_item(
             list_item,
             &thumbnail_size_bind,
@@ -85,7 +89,9 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     });
 
     factory.connect_unbind(|_, obj| {
-        let list_item = obj.downcast_ref::<ListItem>().unwrap();
+        let Some(list_item) = obj.downcast_ref::<ListItem>() else {
+            return;
+        };
         unbind_grid_list_item(list_item);
     });
 
@@ -298,13 +304,27 @@ pub fn bind_grid_list_item(
         .map(|s| s.string().to_string())
         .unwrap_or_default();
 
-    let cell_box = list_item.child().and_downcast::<GtkBox>().unwrap();
-    let thumb_image = cell_box.first_child().and_downcast::<Image>().unwrap();
-    let name_row = cell_box.last_child().and_downcast::<GtkBox>().unwrap();
-    let name_label = name_row.first_child().and_downcast::<Label>().unwrap();
-    let action_box = name_row.last_child().and_downcast::<GtkBox>().unwrap();
-    let rename_btn = action_box.first_child().and_downcast::<Button>().unwrap();
-    let delete_btn = action_box.last_child().and_downcast::<Button>().unwrap();
+    let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() else {
+        return;
+    };
+    let Some(thumb_image) = cell_box.first_child().and_downcast::<Image>() else {
+        return;
+    };
+    let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() else {
+        return;
+    };
+    let Some(name_label) = name_row.first_child().and_downcast::<Label>() else {
+        return;
+    };
+    let Some(action_box) = name_row.last_child().and_downcast::<GtkBox>() else {
+        return;
+    };
+    let Some(rename_btn) = action_box.first_child().and_downcast::<Button>() else {
+        return;
+    };
+    let Some(delete_btn) = action_box.last_child().and_downcast::<Button>() else {
+        return;
+    };
     let size = *thumbnail_size.borrow();
     cell_box.set_size_request(size + 12, size + 28);
     thumb_image.set_pixel_size(size);
