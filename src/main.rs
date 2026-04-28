@@ -495,6 +495,30 @@ fn build_ui(app: &adw::Application) {
         window: window.clone(),
     });
 
+    // Wire: File > Open Folder... menubar item
+    let open_folder_menubar = open_folder_action.clone();
+    let window_for_open = window.clone();
+    let current_folder_open = current_folder.clone();
+    let open_folder_action_win = gio::SimpleAction::new("open-folder", None);
+    open_folder_action_win.connect_activate(move |_, _| {
+        let dialog = gtk4::FileDialog::builder().title("Choose a Folder").build();
+        if let Some(folder) = current_folder_open.borrow().as_ref() {
+            let file = gio::File::for_path(folder);
+            dialog.set_initial_folder(Some(&file));
+        }
+        let open_folder = open_folder_menubar.clone();
+        dialog.select_folder(
+            Some(&window_for_open),
+            None::<&gio::Cancellable>,
+            move |result| {
+                let Ok(file) = result else { return };
+                let Some(path) = file.path() else { return };
+                open_folder(path, true);
+            },
+        );
+    });
+    window.add_action(&open_folder_action_win);
+
     // -----------------------------------------------------------------------
     // Wire: sort/search/clear/thumbnail-size controls
     // -----------------------------------------------------------------------

@@ -39,9 +39,57 @@ pub(crate) fn build_header_controls(
     let header_bar = adw::HeaderBar::new();
 
     let menu_model = gio::Menu::new();
+
+    // ── File menu ──────────────────────────────────────────────────────────
+    let file_menu = gio::Menu::new();
+    file_menu.append(Some("Open Folder..."), Some("win.open-folder"));
+    let about_section = gio::Menu::new();
+    about_section.append(Some("About LumenNode"), Some("win.about"));
+    file_menu.append_section(None, &about_section);
+    menu_model.append_submenu(Some("File"), &file_menu);
+
+    // ── Edit menu ──────────────────────────────────────────────────────────
     let edit_menu = gio::Menu::new();
-    edit_menu.append(Some("Get Config"), Some("win.get-config"));
+    let copy_section = gio::Menu::new();
+    copy_section.append(Some("Copy Prompt"), Some("ctx.copy-prompt"));
+    copy_section.append(Some("Copy Negative Prompt"), Some("ctx.copy-negative-prompt"));
+    copy_section.append(Some("Copy Seed"), Some("ctx.copy-seed"));
+    copy_section.append(Some("Copy Generation Command"), Some("ctx.copy-generation-command"));
+    edit_menu.append_section(None, &copy_section);
+
+    let clipboard_section = gio::Menu::new();
+    clipboard_section.append(Some("Copy Image"), Some("ctx.copy-image"));
+    clipboard_section.append(Some("Copy Path"), Some("ctx.copy-path"));
+    clipboard_section.append(Some("Copy Metadata"), Some("ctx.copy-metadata"));
+    edit_menu.append_section(None, &clipboard_section);
+
+    let organise_section = gio::Menu::new();
+    organise_section.append(Some("Favourite"), Some("ctx.toggle-favourite"));
+    organise_section.append(Some("Move to Trash"), Some("ctx.move-to-trash"));
+    edit_menu.append_section(None, &organise_section);
+
+    let config_section = gio::Menu::new();
+    config_section.append(Some("Get Config"), Some("win.get-config"));
+    edit_menu.append_section(None, &config_section);
+
     menu_model.append_submenu(Some("Edit"), &edit_menu);
+
+    // ── View menu ──────────────────────────────────────────────────────────
+    let view_menu = gio::Menu::new();
+    let refresh_submenu = gio::Menu::new();
+    refresh_submenu.append(Some("Refresh Thumbnail"), Some("ctx.refresh-thumbnail"));
+    refresh_submenu.append(Some("Refresh Metadata"), Some("ctx.refresh-metadata"));
+    refresh_submenu.append(Some("Refresh Folder Thumbnails"), Some("ctx.refresh-folder-thumbnails"));
+    refresh_submenu.append(Some("Refresh Folder Metadata"), Some("ctx.refresh-folder-metadata"));
+    view_menu.append_submenu(Some("Refresh"), &refresh_submenu);
+
+    let open_section = gio::Menu::new();
+    open_section.append(Some("Open in File Manager"), Some("ctx.open-in-file-manager"));
+    open_section.append(Some("Open in External Editor"), Some("ctx.open-in-external-editor"));
+    view_menu.append_section(None, &open_section);
+
+    menu_model.append_submenu(Some("View"), &view_menu);
+
     let menubar = gtk4::PopoverMenuBar::from_model(Some(&menu_model));
     menubar.set_halign(gtk4::Align::Start);
     menubar.set_valign(gtk4::Align::Center);
@@ -105,6 +153,25 @@ pub(crate) fn build_header_controls(
         dialog.present();
     });
     window.add_action(&get_config_action);
+
+    // ── About dialog action ──────────────────────────────────────────────────
+    let about_action = gio::SimpleAction::new("about", None);
+    let window_for_about = window.clone();
+    about_action.connect_activate(move |_, _| {
+        let dialog = gtk4::AboutDialog::new();
+        dialog.set_transient_for(Some(&window_for_about));
+        dialog.set_modal(true);
+        dialog.set_program_name(Some("LumenNode"));
+        dialog.set_version(Some(env!("CARGO_PKG_VERSION")));
+        dialog.set_comments(Some("A desktop image gallery for AI-generated art, featuring per-folder indexing, metadata extraction, and thumbnail caching."));
+        dialog.set_website(Some("https://github.com/nemesarial/lumen-node"));
+        dialog.set_website_label("GitHub Project");
+        dialog.set_license_type(gtk4::License::MitX11);
+        dialog.set_authors(&["nemesarial"]);
+        dialog.set_logo_icon_name(Some("com.lumennode.app"));
+        dialog.present();
+    });
+    window.add_action(&about_action);
 
     let sort_options =
         gtk4::StringList::new(&["Name ↑", "Name ↓", "Date ↑", "Date ↓", "Size ↑", "Size ↓"]);
@@ -355,7 +422,7 @@ pub(crate) fn mount_window_content(
     status_bar.append(progress_box);
 
     let update_banner = adw::Banner::new("");
-    update_banner.set_button_label(Some("View release"));
+    update_banner.set_button_label(Some("Dismiss"));
     update_banner.set_revealed(false);
 
     let content_with_status = gtk4::Box::new(Orientation::Vertical, 0);
