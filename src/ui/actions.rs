@@ -6,6 +6,7 @@ use crate::metadata_view::{
     extract_seed_from_parameters, format_generation_command, format_metadata_text,
     has_generation_command_content,
 };
+use crate::ui::list_mutation::ListMutationContext;
 use crate::thumbnails;
 use crate::view_helpers::{attach_context_menu, selected_image_path};
 use gtk4::glib::prelude::*;
@@ -144,6 +145,7 @@ pub fn install_context_menu(
     grid_view: &GridView,
     single_picture: &Picture,
     meta_preview: &Picture,
+    mutation_ctx: &ListMutationContext,
 ) -> Rc<dyn Fn()> {
     let action_group = gio::SimpleActionGroup::new();
     let sync_context_menu_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
@@ -505,19 +507,12 @@ pub fn install_context_menu(
     let selection_for_actions = selection_model.clone();
     let window_for_trash = window.clone();
     let toast_for_trash = toast_overlay.clone();
-    let start_scan_for_trash = start_scan_for_folder.clone();
-    let current_folder_for_trash = current_folder.clone();
+    let mutation_ctx_for_trash = mutation_ctx.clone();
     move_to_trash_action.connect_activate(move |_, _| {
         let Some(path) = selected_image_path(&selection_for_actions) else {
             return;
         };
-        open_trash_dialog(
-            &window_for_trash,
-            &toast_for_trash,
-            &start_scan_for_trash,
-            &current_folder_for_trash,
-            path,
-        );
+        open_trash_dialog(&window_for_trash, &toast_for_trash, &mutation_ctx_for_trash, path);
     });
 
     action_group.add_action(&copy_prompt_action);

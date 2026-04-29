@@ -8,13 +8,14 @@ use crate::ui::controls::{
     install_thumbnail_size_handlers,
 };
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
+use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::open_folder::{build_open_folder_action, OpenFolderActionDeps};
 use crate::ui::right_sidebar::RightSidebarBundle;
 use crate::ui::selection::{handle_selection_change_event, ClickTrace};
 use crate::ui::shell::{install_history_popover_handler, install_open_button_handler};
 use crate::ui::sidebar::populate_metadata_sidebar;
 use gtk4::prelude::*;
-use gtk4::StringObject;
+use gtk4::{ListScrollFlags, StringObject};
 use libadwaita as adw;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
@@ -56,12 +57,18 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
         &deps.center.grid_view,
         &deps.center.single_picture,
         &deps.right.meta_preview,
+        &ListMutationContext {
+            app_state: deps.app_state.clone(),
+            selection_model: deps.selection_model.clone(),
+            start_scan_for_folder: deps.start_scan_for_folder.clone(),
+        },
     )
 }
 
 pub(crate) struct SelectionWiringDeps {
     pub(crate) app_state: AppState,
     pub(crate) selection_model: gtk4::SingleSelection,
+    pub(crate) center: CenterContentBundle,
     pub(crate) right: RightSidebarBundle,
 }
 
@@ -76,11 +83,20 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
     let meta_preview_sel = deps.right.meta_preview.clone();
     let meta_cache_sel = deps.app_state.meta_cache.clone();
     let app_state_sel = deps.app_state.clone();
+    let grid_view_sel = deps.center.grid_view.clone();
     deps.selection_model
         .connect_selection_changed(move |model, _, _| {
             let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
                 return;
             };
+            let selected = model.selected();
+            if selected < model.n_items() {
+                grid_view_sel.scroll_to(
+                    selected,
+                    ListScrollFlags::SELECT | ListScrollFlags::FOCUS,
+                    None,
+                );
+            }
             handle_selection_change_event(
                 &item,
                 &click_trace_state_sel,

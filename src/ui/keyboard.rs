@@ -1,8 +1,11 @@
 use crate::dialogs::{open_delete_dialog, open_rename_dialog};
 use crate::file_name_ops::clipboard_base_name_hint;
 use crate::ui::center::CenterContentBundle;
+use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::preview::load_picture_async;
 use crate::view_helpers::selected_image_path;
+use crate::core::app_state::AppState;
+use crate::db;
 use gtk4::prelude::*;
 use gtk4::{
     gdk, gio, glib, EventControllerKey, EventControllerScroll, EventControllerScrollFlags,
@@ -12,6 +15,7 @@ use libadwaita as adw;
 use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 
 pub(crate) struct KeyboardDeps {
+    pub(crate) app_state: AppState,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) center: CenterContentBundle,
     pub(crate) selection_model: gtk4::SingleSelection,
@@ -27,6 +31,7 @@ pub(crate) struct KeyboardDeps {
 
 pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
     let esc_pending: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let cut_source_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
     let key_controller = EventControllerKey::new();
     key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
     let stack_for_keys = deps.center.view_stack.clone();
@@ -38,11 +43,15 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
     let toast_overlay_for_keys = deps.toast_overlay.clone();
     let window_for_keys = deps.window.clone();
     let current_folder_for_keys = deps.current_folder.clone();
-    let start_scan_for_folder_keys = deps.start_scan_for_folder.clone();
     let left_toggle_for_keys = deps.left_toggle.clone();
     let right_toggle_for_keys = deps.right_toggle.clone();
     let pre_fullview_left_keys = deps.pre_fullview_left.clone();
     let pre_fullview_right_keys = deps.pre_fullview_right.clone();
+    let mutation_ctx_keys = ListMutationContext {
+        app_state: deps.app_state.clone(),
+        selection_model: deps.selection_model.clone(),
+        start_scan_for_folder: deps.start_scan_for_folder.clone(),
+    };
     key_controller.connect_key_pressed(move |_, key, _, state| {
         let ctrl_pressed = state.contains(gdk::ModifierType::CONTROL_MASK);
         if ctrl_pressed && key == gdk::Key::c {
@@ -60,6 +69,19 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             }
             return glib::Propagation::Stop;
         }
+        if ctrl_pressed && key == gdk::Key::x {
+            let Some(path) = selected_image_path(&selection_for_keys) else {
+                return glib::Propagation::Stop;
+            };
+            *cut_source_path.borrow_mut() = Some(path.clone());
+            gtk4::prelude::WidgetExt::display(&window_for_keys)
+                .clipboard()
+                .set_text(&path.to_string_lossy());
+            let toast = adw::Toast::new("Cut image: press Ctrl+V to move into the open folder");
+            toast.set_timeout(2);
+            toast_overlay_for_keys.add_toast(toast);
+            return glib::Propagation::Stop;
+        }
         if ctrl_pressed && key == gdk::Key::v {
             let Some(folder) = current_folder_for_keys.borrow().as_ref().cloned() else {
                 let toast = adw::Toast::new("Open a folder before pasting");
@@ -71,9 +93,34 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             let clipboard = display.clipboard();
             let toast_overlay = toast_overlay_for_keys.clone();
             let window = window_for_keys.clone();
-            let current_folder = current_folder_for_keys.clone();
-            let start_scan_for_folder = start_scan_for_folder_keys.clone();
+            let cut_source_path = cut_source_path.clone();
+            let mutation_ctx = mutation_ctx_keys.clone();
             glib::MainContext::default().spawn_local(async move {
+                if let Some(source) = cut_source_path.borrow_mut().take() {
+                    if source.exists() {
+                        let file_name = source
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "moved-image.png".to_string());
+                        let destination = unique_destination_path(&folder, &file_name);
+                        if std::fs::rename(&source, &destination).is_ok() {
+                            if let Ok(conn) = db::open(&folder) {
+                                if source.parent() == Some(folder.as_path()) {
+                                    let _ = db::remove_image_row(&conn, &source);
+                                }
+                            }
+                            if source.parent() == Some(folder.as_path()) {
+                                let _ = mutation_ctx.replace_path(&source, &destination, true);
+                            } else if !mutation_ctx.insert_path(&destination, true) {
+                                mutation_ctx.fallback_rescan();
+                            }
+                            let toast = adw::Toast::new("Image moved");
+                            toast.set_timeout(2);
+                            toast_overlay.add_toast(toast);
+                            return;
+                        }
+                    }
+                }
                 let Ok(Some(texture)) = clipboard.read_texture_future().await else {
                     let toast = adw::Toast::new("Clipboard does not contain an image");
                     toast.set_timeout(2);
@@ -91,12 +138,13 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                 let target_path = folder.join(format!("{uuid_base}.png"));
                 match texture.save_to_png(&target_path) {
                     Ok(()) => {
-                        start_scan_for_folder(folder.clone());
+                        if !mutation_ctx.insert_path(&target_path, true) {
+                            mutation_ctx.fallback_rescan();
+                        }
                         open_rename_dialog(
                             &window,
                             &toast_overlay,
-                            &start_scan_for_folder,
-                            &current_folder,
+                            &mutation_ctx,
                             target_path,
                             Some(suggested_name.unwrap_or(uuid_base)),
                         );
@@ -118,8 +166,7 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                 open_delete_dialog(
                     &window_for_keys,
                     &toast_overlay_for_keys,
-                    &start_scan_for_folder_keys,
-                    &current_folder_for_keys,
+                    &mutation_ctx_keys,
                     path,
                 );
                 return glib::Propagation::Stop;
@@ -323,4 +370,31 @@ fn widget_is_or_inside_text_input(widget: &Widget) -> bool {
         current = w.parent();
     }
     false
+}
+
+fn unique_destination_path(folder: &std::path::Path, file_name: &str) -> PathBuf {
+    let candidate = folder.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let stem = std::path::Path::new(file_name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "image".to_string());
+    let ext = std::path::Path::new(file_name)
+        .extension()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    for i in 1..10_000 {
+        let name = if ext.is_empty() {
+            format!("{stem}-{i}")
+        } else {
+            format!("{stem}-{i}.{ext}")
+        };
+        let p = folder.join(name);
+        if !p.exists() {
+            return p;
+        }
+    }
+    folder.join(format!("{}-{}.png", stem, glib::uuid_string_random()))
 }

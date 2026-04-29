@@ -432,6 +432,16 @@ pub fn set_favourite(conn: &Connection, path: &Path, favourite: bool) -> rusqlit
     Ok(n > 0)
 }
 
+/// Deletes one indexed image row by absolute file path.
+pub fn remove_image_row(conn: &Connection, path: &Path) -> rusqlite::Result<bool> {
+    let path_str = path.to_string_lossy();
+    let affected = conn.execute(
+        "DELETE FROM images WHERE path = ?1",
+        params![path_str.as_ref()],
+    )?;
+    Ok(affected > 0)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

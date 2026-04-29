@@ -270,19 +270,6 @@ fn apply_consistent_theme_defaults() {
     }
 }
 
-fn apply_consistent_scale_defaults() {
-    let should_pin_scale = std::env::var("LUMEN_NODE_PIN_SCALE")
-        .map(|v| v != "0")
-        .unwrap_or(false);
-    if !should_pin_scale {
-        return;
-    }
-    // Set before GTK initialization for deterministic widget geometry across
-    // AppImage and direct binary launches.
-    std::env::set_var("GDK_SCALE", "1");
-    std::env::set_var("GDK_DPI_SCALE", "1");
-}
-
 pub(crate) fn sync_progress_widgets(
     state: &ScanProgressState,
     progress_box: &gtk4::Box,
@@ -408,7 +395,6 @@ fn build_ui(app: &adw::Application) {
         window: window.clone(),
         toast_overlay: toast_overlay.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
-        current_folder: current_folder.clone(),
         thumb_generations: thumb_generations.clone(),
         bound_paths: app_state.bound_paths.clone(),
     });
@@ -480,6 +466,7 @@ fn build_ui(app: &adw::Application) {
     install_selection_wiring(SelectionWiringDeps {
         app_state: app_state.clone(),
         selection_model: selection_model.clone(),
+        center: center.clone(),
         right: right.clone(),
     });
 
@@ -573,6 +560,7 @@ fn build_ui(app: &adw::Application) {
 
     install_lifecycle(LifecycleDeps {
         update_banner,
+        app_state: app_state.clone(),
         window: window.clone(),
         center: center.clone(),
         right: right.clone(),
@@ -606,6 +594,7 @@ fn build_ui(app: &adw::Application) {
         min_left_pane_px: MIN_LEFT_PANE_PX,
         min_right_pane_px: MIN_RIGHT_PANE_PX,
         min_center_pane_px: MIN_CENTER_PANE_PX,
+        sorter: sorter.clone(),
     });
 }
 
@@ -614,7 +603,6 @@ fn build_ui(app: &adw::Application) {
 // ---------------------------------------------------------------------------
 
 fn main() -> glib::ExitCode {
-    apply_consistent_scale_defaults();
     let app_id =
         std::env::var("LUMEN_NODE_APP_ID").unwrap_or_else(|_| "com.lumennode.app".to_string());
     let non_unique = std::env::var("LUMEN_NODE_NON_UNIQUE")

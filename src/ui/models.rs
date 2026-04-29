@@ -142,11 +142,38 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
 
     let selection_model = SingleSelection::new(Some(sort_model.clone()));
     let selection_for_default = selection_model.clone();
-    sort_model.connect_items_changed(move |model, _, _, _| {
-        if model.n_items() > 0 && selection_for_default.selected_item().is_none() {
-            selection_for_default.set_selected(0);
-        }
-    });
+    let selected_path_hint: std::rc::Rc<std::cell::RefCell<Option<String>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    {
+        let selected_path_hint = selected_path_hint.clone();
+        selection_model.connect_selection_changed(move |model, _, _| {
+            let path = model
+                .selected_item()
+                .and_downcast::<StringObject>()
+                .map(|obj| obj.string().to_string());
+            *selected_path_hint.borrow_mut() = path;
+        });
+    }
+    {
+        let selected_path_hint = selected_path_hint.clone();
+        sort_model.connect_items_changed(move |model, _, _, _| {
+            if model.n_items() == 0 || selection_for_default.selected_item().is_some() {
+                return;
+            }
+
+            let target_pos = selected_path_hint.borrow().as_ref().and_then(|wanted_path| {
+                (0..model.n_items()).find(|idx| {
+                    model
+                        .item(*idx)
+                        .and_downcast::<StringObject>()
+                        .map(|obj| obj.string().as_str() == wanted_path.as_str())
+                        .unwrap_or(false)
+                })
+            });
+
+            selection_for_default.set_selected(target_pos.unwrap_or(0));
+        });
+    }
 
     ModelBundle {
         filter,

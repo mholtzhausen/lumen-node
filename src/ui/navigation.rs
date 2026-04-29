@@ -220,17 +220,35 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
     });
     deps.right.meta_preview.add_controller(dbl_click);
 
-    let window_for_single = deps.window.clone();
+    let window_for_single_dbl = deps.window.clone();
+    let window_for_single_middle = deps.window.clone();
+    let stack_for_single_middle = deps.center.view_stack.clone();
+    let left_toggle_for_single_middle = deps.left_toggle.clone();
+    let right_toggle_for_single_middle = deps.right_toggle.clone();
+    let pre_fullview_left_single_middle = deps.pre_fullview_left.clone();
+    let pre_fullview_right_single_middle = deps.pre_fullview_right.clone();
     let dbl_click_single = GestureClick::new();
     dbl_click_single.connect_pressed(move |_, n_press, _, _| {
         if n_press < 2 {
             return;
         }
-        if window_for_single.is_fullscreen() {
-            window_for_single.unfullscreen();
+        if window_for_single_dbl.is_fullscreen() {
+            window_for_single_dbl.unfullscreen();
         } else {
-            window_for_single.fullscreen();
+            window_for_single_dbl.fullscreen();
         }
     });
     deps.center.single_picture.add_controller(dbl_click_single);
+
+    let middle_click_single = GestureClick::new();
+    middle_click_single.set_button(2);
+    middle_click_single.connect_pressed(move |_, _, _, _| {
+        if window_for_single_middle.is_fullscreen() {
+            window_for_single_middle.unfullscreen();
+        }
+        stack_for_single_middle.set_visible_child_name("grid");
+        left_toggle_for_single_middle.set_active(pre_fullview_left_single_middle.get());
+        right_toggle_for_single_middle.set_active(pre_fullview_right_single_middle.get());
+    });
+    deps.center.single_picture.add_controller(middle_click_single);
 }
