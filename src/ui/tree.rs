@@ -156,8 +156,10 @@ pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
     let tree_root = deps.chrome.tree_root.clone();
     let sort_key = deps.app_state.sort_key.clone();
     let search_text = deps.app_state.search_text.clone();
+    let favorites_only = deps.app_state.favorites_only.clone();
     let thumbnail_size = deps.app_state.thumbnail_size.clone();
     let sort_dropdown = deps.chrome.sort_dropdown.clone();
+    let favourites_filter_btn = deps.chrome.favourites_filter_btn.clone();
     let search_entry = deps.chrome.search_entry.clone();
     let size_buttons = deps.chrome.size_buttons.clone();
     let progress_state = deps.app_state.progress_state.clone();
@@ -182,11 +184,18 @@ pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
                 let selected_sort = sort_index_for_key(&saved_ui_state.sort_key);
                 *sort_key.borrow_mut() = saved_ui_state.sort_key;
                 *search_text.borrow_mut() = saved_ui_state.search_text.clone();
+                favorites_only.set(saved_ui_state.favorites_only);
                 *thumbnail_size.borrow_mut() =
                     normalize_thumbnail_size(saved_ui_state.thumbnail_size);
 
                 if sort_dropdown.selected() != selected_sort {
                     sort_dropdown.set_selected(selected_sort);
+                }
+                favourites_filter_btn.set_active(saved_ui_state.favorites_only);
+                if saved_ui_state.favorites_only {
+                    favourites_filter_btn.add_css_class("favorites-filter-active");
+                } else {
+                    favourites_filter_btn.remove_css_class("favorites-filter-active");
                 }
                 search_entry.set_text(&saved_ui_state.search_text);
                 for (i, btn) in size_buttons.iter().enumerate() {
@@ -196,6 +205,7 @@ pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
                 let seeded_state = db::UiState {
                     sort_key: sort_key.borrow().clone(),
                     search_text: search_text.borrow().clone(),
+                    favorites_only: favorites_only.get(),
                     thumbnail_size: *thumbnail_size.borrow(),
                 };
                 let _ = db::save_ui_state(path.as_path(), &seeded_state);

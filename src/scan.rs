@@ -13,6 +13,7 @@ pub enum ScanMessage {
         path: String,
         hash: String,
         meta: ImageMetadata,
+        favourite: bool,
         indexed_from_cache: bool,
         generation: u64,
     },

@@ -5,6 +5,7 @@ use crate::image_types::is_supported_image_path;
 use crate::sort_flags::compute_sort_fields;
 use crate::services::update_checker::install_update_checker;
 use crate::ui::center::CenterContentBundle;
+use crate::ui::grid::refresh_realized_grid_favourite_icons;
 use crate::ui::keyboard::{
     install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps,
 };
@@ -44,6 +45,7 @@ pub(crate) struct LifecycleDeps {
     pub(crate) inner_paned: gtk4::Paned,
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
+    pub(crate) favorites_only: Rc<Cell<bool>>,
     pub(crate) recent_folders: Rc<RefCell<Vec<PathBuf>>>,
     pub(crate) outer_split_dirty: Rc<Cell<bool>>,
     pub(crate) inner_split_dirty: Rc<Cell<bool>>,
@@ -98,6 +100,7 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         meta_split_before_auto_collapse: deps.right.meta_split_before_auto_collapse.clone(),
         sort_key: deps.sort_key.clone(),
         search_text: deps.search_text.clone(),
+        favorites_only: deps.favorites_only.clone(),
         thumbnail_size: deps.thumbnail_size.clone(),
         recent_folders: deps.recent_folders.clone(),
         left_toggle: deps.chrome.left_toggle.clone(),
@@ -120,6 +123,7 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         open_folder_action: deps.open_folder_action,
         sort_key: deps.sort_key,
         search_text: deps.search_text,
+        favourites_filter_btn: deps.chrome.favourites_filter_btn,
         sort_dropdown: deps.chrome.sort_dropdown,
         search_entry: deps.chrome.search_entry,
         filter: deps.filter,
@@ -237,6 +241,7 @@ fn install_folder_delta_watcher(
             app_state.sort_fields_cache.borrow_mut().remove(path);
             app_state.hash_cache.borrow_mut().remove(path);
             app_state.meta_cache.borrow_mut().remove(path);
+            app_state.favourite_cache.borrow_mut().remove(path);
         }
         for path in &added {
             if !mutation_ctx.insert_path(PathBuf::from(path).as_path(), false) {
@@ -251,6 +256,7 @@ fn install_folder_delta_watcher(
                 .insert(path.clone(), compute_sort_fields(path));
             app_state.hash_cache.borrow_mut().remove(path);
             app_state.meta_cache.borrow_mut().remove(path);
+            app_state.favourite_cache.borrow_mut().remove(path);
             schedule_path_index_refresh(&app_state, folder.clone(), path.clone(), true);
         }
         if had_failure {
@@ -314,19 +320,23 @@ fn schedule_path_index_refresh(
             return None;
         };
         if force_refresh {
-            db::refresh_indexed(&conn, &path_buf).map(|row| (row.hash, row.meta))
+            db::refresh_indexed(&conn, &path_buf)
+                .map(|row| (row.hash, row.meta, row.favourite != 0))
         } else {
-            db::ensure_indexed_with_outcome(&conn, &path_buf).map(|(row, _)| (row.hash, row.meta))
+            db::ensure_indexed_with_outcome(&conn, &path_buf)
+                .map(|(row, _)| (row.hash, row.meta, row.favourite != 0))
         }
     });
     glib::MainContext::default().spawn_local(async move {
-        let Ok(Some((hash, meta))) = task.await else {
+        let Ok(Some((hash, meta, favourite))) = task.await else {
             return;
         };
         if app_state.current_folder.borrow().as_ref().is_none() {
             return;
         }
         app_state.hash_cache.borrow_mut().insert(path.clone(), hash);
-        app_state.meta_cache.borrow_mut().insert(path, meta);
+        app_state.meta_cache.borrow_mut().insert(path.clone(), meta);
+        app_state.favourite_cache.borrow_mut().insert(path, favourite);
+        refresh_realized_grid_favourite_icons(&app_state);
     });
 }

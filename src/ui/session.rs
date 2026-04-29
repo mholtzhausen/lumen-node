@@ -14,6 +14,7 @@ pub(crate) struct ClosePersistenceDeps {
     pub(crate) meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
+    pub(crate) favorites_only: Rc<Cell<bool>>,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) recent_folders: Rc<RefCell<Vec<PathBuf>>>,
     pub(crate) left_toggle: gtk4::ToggleButton,
@@ -109,6 +110,7 @@ pub(crate) fn install_close_persistence_handler(deps: ClosePersistenceDeps) {
                 &db::UiState {
                     sort_key: deps.sort_key.borrow().clone(),
                     search_text: deps.search_text.borrow().clone(),
+                    favorites_only: deps.favorites_only.get(),
                     thumbnail_size: *deps.thumbnail_size.borrow(),
                 },
             );
@@ -122,6 +124,7 @@ pub(crate) struct RestoreSessionDeps {
     pub(crate) open_folder_action: Rc<dyn Fn(PathBuf, bool)>,
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
+    pub(crate) favourites_filter_btn: gtk4::ToggleButton,
     pub(crate) sort_dropdown: gtk4::DropDown,
     pub(crate) search_entry: gtk4::SearchEntry,
     pub(crate) filter: CustomFilter,
@@ -155,6 +158,13 @@ pub(crate) fn restore_session_state(deps: RestoreSessionDeps) {
     if !initial_search.is_empty() {
         deps.search_entry.set_text(&initial_search);
         deps.filter.changed(gtk4::FilterChange::Different);
+    }
+    if deps.favourites_filter_btn.is_active() {
+        deps.favourites_filter_btn
+            .add_css_class("favorites-filter-active");
+    } else {
+        deps.favourites_filter_btn
+            .remove_css_class("favorites-filter-active");
     }
 
     if deps.app_config.window_maximized.unwrap_or(false) {

@@ -20,11 +20,13 @@ pub(crate) struct AppState {
     pub(crate) progress_state: Rc<RefCell<ScanProgressState>>,
     pub(crate) hash_cache: Rc<RefCell<HashMap<String, String>>>,
     pub(crate) meta_cache: Rc<RefCell<HashMap<String, ImageMetadata>>>,
+    pub(crate) favourite_cache: Rc<RefCell<HashMap<String, bool>>>,
     pub(crate) sort_fields_cache: Rc<RefCell<HashMap<String, SortFields>>>,
     pub(crate) active_scan_generation: Rc<Cell<u64>>,
     pub(crate) scan_in_progress: Rc<Cell<bool>>,
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
+    pub(crate) favorites_only: Rc<Cell<bool>>,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     pub(crate) realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
@@ -71,6 +73,7 @@ pub(crate) fn build_app_state(
     let search_text: Rc<RefCell<String>> = Rc::new(RefCell::new(
         app_config.search_text.clone().unwrap_or_default(),
     ));
+    let favorites_only: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let initial_thumbnail_size =
         normalize_thumbnail_size(app_config.thumbnail_size.unwrap_or(default_thumbnail_size));
     let thumbnail_size: Rc<RefCell<i32>> = Rc::new(RefCell::new(initial_thumbnail_size));
@@ -82,11 +85,13 @@ pub(crate) fn build_app_state(
         progress_state: Rc::new(RefCell::new(ScanProgressState::default())),
         hash_cache: Rc::new(RefCell::new(HashMap::new())),
         meta_cache: Rc::new(RefCell::new(HashMap::new())),
+        favourite_cache: Rc::new(RefCell::new(HashMap::new())),
         sort_fields_cache: Rc::new(RefCell::new(HashMap::new())),
         active_scan_generation: Rc::new(Cell::new(0_u64)),
         scan_in_progress: Rc::new(Cell::new(false)),
         sort_key,
         search_text,
+        favorites_only,
         thumbnail_size,
         realized_thumb_images: Rc::new(RefCell::new(Vec::new())),
         realized_cell_boxes: Rc::new(RefCell::new(Vec::new())),

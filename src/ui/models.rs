@@ -22,23 +22,34 @@ pub(crate) struct ModelBundle {
 pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
     // Filter model: wraps list_store, applies search text.
     let meta_cache_filter = deps.app_state.meta_cache.clone();
+    let favourite_cache_filter = deps.app_state.favourite_cache.clone();
     let search_text_filter = deps.app_state.search_text.clone();
+    let favorites_only_filter = deps.app_state.favorites_only.clone();
     let filter = CustomFilter::new(move |obj| {
-        let query = search_text_filter.borrow().to_lowercase();
-        if query.is_empty() {
-            return true;
-        }
         let path_str = obj
             .downcast_ref::<StringObject>()
             .map(|s| s.string().to_string())
             .unwrap_or_default();
+        let matches_favorite = if favorites_only_filter.get() {
+            favourite_cache_filter
+                .borrow()
+                .get(&path_str)
+                .copied()
+                .unwrap_or(false)
+        } else {
+            true
+        };
+        let query = search_text_filter.borrow().clone();
+        if query.is_empty() {
+            return matches_favorite;
+        }
         // Match against filename.
         let filename = Path::new(&path_str)
             .file_name()
             .map(|n| n.to_string_lossy().to_lowercase())
             .unwrap_or_default();
         if filename.contains(&query) {
-            return true;
+            return matches_favorite;
         }
         // Match against cached metadata fields.
         let cache = meta_cache_filter.borrow();
@@ -55,7 +66,7 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
             ];
             for field in fields.iter().flatten() {
                 if field.to_lowercase().contains(&query) {
-                    return true;
+                    return matches_favorite;
                 }
             }
         }

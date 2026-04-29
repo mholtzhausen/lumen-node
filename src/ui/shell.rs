@@ -20,6 +20,7 @@ pub(crate) struct HeaderControls {
     pub(crate) controls_row: gtk4::Box,
     pub(crate) sort_dropdown: gtk4::DropDown,
     pub(crate) size_buttons: Rc<Vec<gtk4::ToggleButton>>,
+    pub(crate) favourites_filter_btn: gtk4::ToggleButton,
     pub(crate) search_entry: gtk4::SearchEntry,
     pub(crate) clear_btn: gtk4::Button,
     pub(crate) left_toggle: gtk4::ToggleButton,
@@ -199,6 +200,11 @@ pub(crate) fn build_header_controls(
     search_entry.set_width_request(220);
     search_entry.set_hexpand(true);
 
+    let favourites_filter_btn = gtk4::ToggleButton::new();
+    favourites_filter_btn.set_icon_name("starred-symbolic");
+    favourites_filter_btn.set_tooltip_text(Some("Show favourites only"));
+    favourites_filter_btn.add_css_class("flat");
+
     let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
     clear_btn.set_tooltip_text(Some("Clear filters"));
 
@@ -235,6 +241,7 @@ pub(crate) fn build_header_controls(
     controls_row.append(&history_btn);
     controls_row.append(&sort_dropdown);
     controls_row.append(&size_selector);
+    controls_row.append(&favourites_filter_btn);
     controls_row.append(&search_entry);
     controls_row.append(&clear_btn);
     header_bar.pack_start(&menubar);
@@ -251,6 +258,7 @@ pub(crate) fn build_header_controls(
         controls_row,
         sort_dropdown,
         size_buttons,
+        favourites_filter_btn,
         search_entry,
         clear_btn,
         left_toggle,
@@ -304,6 +312,19 @@ pub(crate) fn create_window_with_defaults(
             background-color: alpha(@theme_fg_color, 0.04);
             border-radius: 8px;
             padding: 4px;
+        }
+        .thumbnail-favourite-button {
+            background-color: alpha(@theme_bg_color, 0.62);
+            color: alpha(@theme_fg_color, 0.90);
+            min-width: 28px;
+            min-height: 28px;
+            padding: 2px;
+        }
+        .thumbnail-favourite-active {
+            color: @accent_color;
+        }
+        .favorites-filter-active {
+            color: @accent_color;
         }
         gridview > child {
             background-color: transparent;

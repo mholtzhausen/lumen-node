@@ -22,6 +22,7 @@ pub(crate) struct CenterContentDeps {
     pub(crate) realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
     pub(crate) realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<gtk4::Image>>>>,
     pub(crate) fast_scroll_active: Rc<Cell<bool>>,
+    pub(crate) filter: gtk4::CustomFilter,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
@@ -42,10 +43,12 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
     let view_stack = adw::ViewStack::new();
 
     let factory = install_grid_factory(GridFactoryDeps {
+        app_state: deps.app_state.clone(),
         thumbnail_size: deps.thumbnail_size.clone(),
         realized_cell_boxes: deps.realized_cell_boxes.clone(),
         realized_thumb_images: deps.realized_thumb_images.clone(),
         fast_scroll_active: deps.fast_scroll_active.clone(),
+        filter: deps.filter.clone(),
         hash_cache: deps.app_state.hash_cache.clone(),
         window: deps.window.clone(),
         toast_overlay: deps.toast_overlay.clone(),
