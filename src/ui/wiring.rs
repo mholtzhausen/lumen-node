@@ -4,8 +4,8 @@ use crate::thumbnail_sizing::thumbnail_size_options;
 use crate::ui::actions::install_context_menu;
 use crate::ui::center::CenterContentBundle;
 use crate::ui::controls::{
-    install_clear_button_handler, install_search_entry_handler, install_sort_dropdown_handler,
-    install_thumbnail_size_handlers,
+    install_clear_button_handler, install_favorites_only_handler, install_search_entry_handler,
+    install_sort_dropdown_handler, install_thumbnail_size_handlers,
 };
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::list_mutation::ListMutationContext;
@@ -29,6 +29,7 @@ pub(crate) struct ContextMenuWiringDeps {
     pub(crate) min_meta_split_px: i32,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) external_editor: Option<PathBuf>,
+    pub(crate) filter: gtk4::CustomFilter,
 }
 
 pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn Fn()> {
@@ -62,6 +63,7 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
             selection_model: deps.selection_model.clone(),
             start_scan_for_folder: deps.start_scan_for_folder.clone(),
         },
+        &deps.filter,
     )
 }
 
@@ -132,8 +134,10 @@ pub(crate) fn install_open_folder_wiring(deps: OpenFolderWiringDeps) -> Rc<dyn F
         recent_folders: deps.app_state.recent_folders.clone(),
         sort_key: deps.app_state.sort_key.clone(),
         search_text: deps.app_state.search_text.clone(),
+        favorites_only: deps.app_state.favorites_only.clone(),
         thumbnail_size: deps.app_state.thumbnail_size.clone(),
         sort_dropdown: deps.chrome.sort_dropdown,
+        favourites_filter_btn: deps.chrome.favourites_filter_btn,
         search_entry: deps.chrome.search_entry,
         filter: deps.filter,
         sorter: deps.sorter,
@@ -188,12 +192,20 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
     install_clear_button_handler(
         &deps.chrome.clear_btn,
         &deps.app_state.search_text,
+        &deps.app_state.favorites_only,
         &deps.app_state.sort_key,
         &deps.filter,
         &deps.sorter,
+        &deps.chrome.favourites_filter_btn,
         &deps.chrome.search_entry,
         &deps.chrome.sort_dropdown,
         &deps.app_state.thumbnail_size,
+        &deps.app_state.current_folder,
+    );
+    install_favorites_only_handler(
+        &deps.chrome.favourites_filter_btn,
+        &deps.app_state.favorites_only,
+        &deps.filter,
         &deps.app_state.current_folder,
     );
     install_thumbnail_size_handlers(

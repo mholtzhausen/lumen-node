@@ -7,7 +7,11 @@ use crate::tree_sidebar::{reset_tree_root, sync_tree_to_path};
 use crate::ScanProgressState;
 use gtk4::gio;
 use gtk4::prelude::*;
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    path::PathBuf,
+    rc::Rc,
+};
 
 pub(crate) struct OpenFolderActionDeps {
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
@@ -18,8 +22,10 @@ pub(crate) struct OpenFolderActionDeps {
     pub(crate) recent_folders: Rc<RefCell<Vec<PathBuf>>>,
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
+    pub(crate) favorites_only: Rc<Cell<bool>>,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) sort_dropdown: gtk4::DropDown,
+    pub(crate) favourites_filter_btn: gtk4::ToggleButton,
     pub(crate) search_entry: gtk4::SearchEntry,
     pub(crate) filter: gtk4::CustomFilter,
     pub(crate) sorter: gtk4::CustomSorter,
@@ -38,11 +44,20 @@ pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(
             let selected_sort = sort_index_for_key(&saved_ui_state.sort_key);
             *deps.sort_key.borrow_mut() = saved_ui_state.sort_key;
             *deps.search_text.borrow_mut() = saved_ui_state.search_text.clone();
+            deps.favorites_only.set(saved_ui_state.favorites_only);
             *deps.thumbnail_size.borrow_mut() =
                 normalize_thumbnail_size(saved_ui_state.thumbnail_size);
 
             if deps.sort_dropdown.selected() != selected_sort {
                 deps.sort_dropdown.set_selected(selected_sort);
+            }
+            deps.favourites_filter_btn.set_active(saved_ui_state.favorites_only);
+            if saved_ui_state.favorites_only {
+                deps.favourites_filter_btn
+                    .add_css_class("favorites-filter-active");
+            } else {
+                deps.favourites_filter_btn
+                    .remove_css_class("favorites-filter-active");
             }
             deps.search_entry.set_text(&saved_ui_state.search_text);
             deps.filter.changed(gtk4::FilterChange::Different);
@@ -54,6 +69,7 @@ pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(
             let seeded_state = db::UiState {
                 sort_key: deps.sort_key.borrow().clone(),
                 search_text: deps.search_text.borrow().clone(),
+                favorites_only: deps.favorites_only.get(),
                 thumbnail_size: *deps.thumbnail_size.borrow(),
             };
             let _ = db::save_ui_state(path.as_path(), &seeded_state);

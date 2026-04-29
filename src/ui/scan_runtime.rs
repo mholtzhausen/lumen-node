@@ -23,6 +23,7 @@ pub(crate) struct ScanRuntimeDeps {
     pub(crate) progress_box: gtk4::Box,
     pub(crate) progress_label: Label,
     pub(crate) progress_bar: ProgressBar,
+    pub(crate) filter: gtk4::CustomFilter,
     /// When set, invoked after each scan drain batch so context menu actions stay in sync.
     pub(crate) sync_context_menu: Option<Rc<dyn Fn()>>,
 }
@@ -53,6 +54,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
         let progress_box_recv = deps.progress_box.clone();
         let progress_label_recv = deps.progress_label.clone();
         let progress_bar_recv = deps.progress_bar.clone();
+        let filter_recv = deps.filter.clone();
         let app_state_recv = deps.app_state.clone();
         let sync_context_menu_sticky = sync_context_menu.clone();
         Rc::new(move || {
@@ -77,6 +79,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
             let progress_box_recv = progress_box_recv.clone();
             let progress_label_recv = progress_label_recv.clone();
             let progress_bar_recv = progress_bar_recv.clone();
+            let filter_recv = filter_recv.clone();
             let sync_context_menu_recv = sync_context_menu_sticky.clone();
             glib::idle_add_local(move || {
                 *drain_scheduled.borrow_mut() = false;
@@ -102,6 +105,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                 let mut scan_complete = false;
                 let mut unlock_thumbnail_dispatch = false;
                 let mut progress_changed = false;
+                let mut filter_changed = false;
                 let active_generation = active_scan_generation_recv.get();
 
                 for msg in batch {
@@ -163,6 +167,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                             }
                             meta_cache_recv.borrow_mut().insert(path.clone(), meta);
                             favourite_cache_recv.borrow_mut().insert(path, favourite);
+                            filter_changed = true;
                             let mut progress = progress_state_recv.borrow_mut();
                             if progress.generation == generation {
                                 progress.enriched_done = progress
@@ -262,6 +267,9 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                         &progress_label_recv,
                         &progress_bar_recv,
                     );
+                }
+                if filter_changed {
+                    filter_recv.changed(gtk4::FilterChange::Different);
                 }
 
                 refresh_realized_grid_favourite_icons(&app_state_recv);

@@ -392,6 +392,7 @@ fn build_ui(app: &adw::Application) {
         realized_cell_boxes: realized_cell_boxes.clone(),
         realized_thumb_images: realized_thumb_images.clone(),
         fast_scroll_active: fast_scroll_active.clone(),
+        filter: filter.clone(),
         window: window.clone(),
         toast_overlay: toast_overlay.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
@@ -428,6 +429,7 @@ fn build_ui(app: &adw::Application) {
         min_meta_split_px: MIN_META_SPLIT_PX,
         start_scan_for_folder: start_scan_for_folder.clone(),
         external_editor: app_config.external_editor.clone(),
+        filter: filter.clone(),
     });
 
     install_scan_runtime(ScanRuntimeDeps {
@@ -437,6 +439,7 @@ fn build_ui(app: &adw::Application) {
         progress_box: progress_box.clone(),
         progress_label: progress_label.clone(),
         progress_bar: progress_bar.clone(),
+        filter: filter.clone(),
         sync_context_menu: Some(sync_ctx_menu),
     });
 
@@ -576,6 +579,7 @@ fn build_ui(app: &adw::Application) {
         inner_paned: inner_paned.clone(),
         sort_key: sort_key.clone(),
         search_text: search_text.clone(),
+        favorites_only: app_state.favorites_only.clone(),
         recent_folders: recent_folders.clone(),
         outer_split_dirty: outer_split_dirty.clone(),
         inner_split_dirty: inner_split_dirty.clone(),

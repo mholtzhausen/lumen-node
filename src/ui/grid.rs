@@ -38,6 +38,7 @@ pub struct GridFactoryDeps {
     pub realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<GtkBox>>>>,
     pub realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     pub fast_scroll_active: Rc<Cell<bool>>,
+    pub filter: gtk4::CustomFilter,
     pub hash_cache: Rc<RefCell<HashMap<String, String>>>,
     pub window: adw::ApplicationWindow,
     pub toast_overlay: adw::ToastOverlay,
@@ -67,6 +68,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let bound_paths_setup = deps.bound_paths.clone();
     let app_state_setup = deps.app_state.clone();
     let toast_overlay_setup = deps.toast_overlay.clone();
+    let filter_setup = deps.filter.clone();
     factory.connect_setup(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
@@ -82,6 +84,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             &bound_paths_setup,
             app_state_setup.clone(),
             toast_overlay_setup.clone(),
+            filter_setup.clone(),
         );
     });
 
@@ -335,6 +338,7 @@ pub fn refresh_realized_grid_favourite_icons(app_state: &AppState) {
 fn toggle_grid_favourite(
     app_state: &AppState,
     toast_overlay: &adw::ToastOverlay,
+    filter: &gtk4::CustomFilter,
     favourite_btn: &Button,
     path: String,
     bound_paths: Rc<RefCell<HashMap<usize, String>>>,
@@ -363,6 +367,7 @@ fn toggle_grid_favourite(
 
     let app_state = app_state.clone();
     let toast_overlay = toast_overlay.clone();
+    let filter = filter.clone();
     let favourite_btn_weak = favourite_btn.downgrade();
     glib::MainContext::default().spawn_local(async move {
         let Ok(Some((hash, meta, favourite))) = task.await else {
@@ -381,6 +386,7 @@ fn toggle_grid_favourite(
             .favourite_cache
             .borrow_mut()
             .insert(path.clone(), favourite);
+        filter.changed(gtk4::FilterChange::Different);
 
         if let Some(button) = favourite_btn_weak.upgrade() {
             button.set_sensitive(true);
@@ -419,6 +425,7 @@ pub fn setup_grid_list_item(
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
     app_state: AppState,
     toast_overlay: adw::ToastOverlay,
+    filter: gtk4::CustomFilter,
 ) {
     let cell_box = GtkBox::new(Orientation::Vertical, 4);
     cell_box.add_css_class("thumbnail-card");
@@ -492,6 +499,7 @@ pub fn setup_grid_list_item(
     });
     let app_state_favourite = app_state.clone();
     let toast_overlay_favourite = toast_overlay.clone();
+    let filter_favourite = filter.clone();
     let bound_paths_favourite = bound_paths.clone();
     favourite_btn.connect_clicked(move |btn| {
         let key = btn.as_ptr() as usize;
@@ -500,6 +508,7 @@ pub fn setup_grid_list_item(
         toggle_grid_favourite(
             &app_state_favourite,
             &toast_overlay_favourite,
+            &filter_favourite,
             btn,
             path,
             bound_paths_favourite.clone(),

@@ -37,6 +37,7 @@ pub enum IndexOutcome {
 pub struct UiState {
     pub sort_key: String,
     pub search_text: String,
+    pub favorites_only: bool,
     pub thumbnail_size: i32,
 }
 
@@ -45,6 +46,7 @@ impl Default for UiState {
         Self {
             sort_key: "name_asc".to_string(),
             search_text: String::new(),
+            favorites_only: false,
             thumbnail_size: crate::thumbnails::THUMB_NORMAL_SIZE,
         }
     }
@@ -52,6 +54,7 @@ impl Default for UiState {
 
 const UI_STATE_SORT_KEY: &str = "sort_key";
 const UI_STATE_SEARCH_TEXT: &str = "search_text";
+const UI_STATE_FAVORITES_ONLY: &str = "favorites_only";
 const UI_STATE_THUMBNAIL_SIZE: &str = "thumbnail_size";
 
 // ---------------------------------------------------------------------------
@@ -150,6 +153,10 @@ pub fn load_ui_state(folder: &Path) -> Option<UiState> {
             UI_STATE_SEARCH_TEXT => {
                 state.search_text = value;
             }
+            UI_STATE_FAVORITES_ONLY => {
+                let normalized = value.trim().to_ascii_lowercase();
+                state.favorites_only = normalized == "1" || normalized == "true";
+            }
             UI_STATE_THUMBNAIL_SIZE => {
                 if let Ok(parsed) = value.trim().parse::<i32>() {
                     state.thumbnail_size = parsed;
@@ -178,6 +185,14 @@ pub fn save_ui_state(folder: &Path, state: &UiState) -> rusqlite::Result<()> {
         "INSERT INTO ui_state(key, value) VALUES(?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![UI_STATE_SEARCH_TEXT, state.search_text.as_str()],
+    )?;
+    tx.execute(
+        "INSERT INTO ui_state(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![
+            UI_STATE_FAVORITES_ONLY,
+            if state.favorites_only { "1" } else { "0" }
+        ],
     )?;
     tx.execute(
         "INSERT INTO ui_state(key, value) VALUES(?1, ?2)
@@ -695,6 +710,7 @@ mod tests {
         let state = UiState {
             sort_key: "date_desc".to_string(),
             search_text: "sunset".to_string(),
+            favorites_only: true,
             thumbnail_size: 256,
         };
         save_ui_state(&dir, &state).unwrap();
@@ -702,6 +718,7 @@ mod tests {
         let loaded = load_ui_state(&dir).unwrap();
         assert_eq!(loaded.sort_key, "date_desc");
         assert_eq!(loaded.search_text, "sunset");
+        assert!(loaded.favorites_only);
         assert_eq!(loaded.thumbnail_size, 256);
     }
 }

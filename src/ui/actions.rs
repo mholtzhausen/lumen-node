@@ -182,6 +182,7 @@ pub fn install_context_menu(
     single_picture: &Picture,
     meta_preview: &Picture,
     mutation_ctx: &ListMutationContext,
+    filter: &gtk4::CustomFilter,
 ) -> Rc<dyn Fn()> {
     let action_group = gio::SimpleActionGroup::new();
     let sync_context_menu_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
@@ -496,6 +497,7 @@ pub fn install_context_menu(
     let sync_context_menu_slot_fav = sync_context_menu_slot.clone();
     let toggle_favourite_for_state = toggle_favourite_action.clone();
     let app_state_for_favourite = mutation_ctx.app_state.clone();
+    let filter_for_favourite = filter.clone();
     toggle_favourite_action.connect_change_state(move |_, requested| {
         let Some(requested) = requested else {
             return;
@@ -538,6 +540,7 @@ pub fn install_context_menu(
                 .favourite_cache
                 .borrow_mut()
                 .insert(path_key, want_fav);
+            filter_for_favourite.changed(gtk4::FilterChange::Different);
             refresh_realized_grid_favourite_icons(&app_state_for_favourite);
         } else {
             toggle_favourite_for_state.set_state(&prev.to_variant());
