@@ -7,8 +7,9 @@ use crate::metadata_view::{
     has_generation_command_content,
 };
 use crate::ui::list_mutation::ListMutationContext;
+use crate::ui::grid::refresh_realized_grid_favourite_icons;
 use crate::thumbnails;
-use crate::view_helpers::{attach_context_menu, selected_image_path};
+use crate::view_helpers::{attach_context_menu_with_prepare, selected_image_path};
 use gtk4::glib::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{gdk, gio, GridView, Picture, SingleSelection, StringObject};
@@ -50,6 +51,41 @@ fn register_context_menu_accels(window: &adw::ApplicationWindow) {
     app.set_accels_for_action("ctx.refresh-folder-thumbnails", &["<Primary><Alt>t"]);
     app.set_accels_for_action("ctx.refresh-folder-metadata", &["<Primary><Alt>m"]);
     // Delete → trash is handled in `keyboard.rs` so `SearchEntry` and other text widgets keep Delete.
+}
+
+fn select_path_for_context_menu(selection_model: &SingleSelection, path: &str) {
+    for idx in 0..selection_model.n_items() {
+        let is_match = selection_model
+            .item(idx)
+            .and_downcast::<StringObject>()
+            .map(|obj| obj.string().as_str() == path)
+            .unwrap_or(false);
+        if is_match {
+            selection_model.set_selected(idx);
+            return;
+        }
+    }
+}
+
+fn bound_path_at_widget_point(
+    widget: &gtk4::Widget,
+    x: f64,
+    y: f64,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+) -> Option<String> {
+    let root_ptr = widget.as_ptr() as usize;
+    let mut current = widget.pick(x, y, gtk4::PickFlags::DEFAULT);
+    while let Some(candidate) = current {
+        let key = candidate.as_ptr() as usize;
+        if let Some(path) = bound_paths.borrow().get(&key).cloned() {
+            return Some(path);
+        }
+        if key == root_ptr {
+            break;
+        }
+        current = candidate.parent();
+    }
+    None
 }
 
 fn sync_context_menu_action_states(
@@ -459,6 +495,7 @@ pub fn install_context_menu(
     let current_folder_for_favourite = current_folder.clone();
     let sync_context_menu_slot_fav = sync_context_menu_slot.clone();
     let toggle_favourite_for_state = toggle_favourite_action.clone();
+    let app_state_for_favourite = mutation_ctx.app_state.clone();
     toggle_favourite_action.connect_change_state(move |_, requested| {
         let Some(requested) = requested else {
             return;
@@ -496,6 +533,12 @@ pub fn install_context_menu(
         toast_overlay_for_actions.add_toast(toast);
         if applied {
             toggle_favourite_for_state.set_state(requested);
+            let path_key = path.to_string_lossy().to_string();
+            app_state_for_favourite
+                .favourite_cache
+                .borrow_mut()
+                .insert(path_key, want_fav);
+            refresh_realized_grid_favourite_icons(&app_state_for_favourite);
         } else {
             toggle_favourite_for_state.set_state(&prev.to_variant());
         }
@@ -582,10 +625,6 @@ pub fn install_context_menu(
     );
     menu_model.append_submenu(Some("Refresh"), &refresh_submenu);
 
-    attach_context_menu(grid_view, &menu_model);
-    attach_context_menu(single_picture, &menu_model);
-    attach_context_menu(meta_preview, &menu_model);
-
     let handles = CtxMenuActionHandles {
         copy_prompt: copy_prompt_action.clone(),
         copy_negative_prompt: copy_negative_prompt_action.clone(),
@@ -618,6 +657,29 @@ pub fn install_context_menu(
         }
     });
     *sync_context_menu_slot.borrow_mut() = Some(sync_fn.clone());
+    {
+        let selection_for_menu = selection_model.clone();
+        let sync_for_menu = sync_fn.clone();
+        let bound_paths_for_menu = mutation_ctx.app_state.bound_paths.clone();
+        attach_context_menu_with_prepare(grid_view, &menu_model, move |widget, x, y| {
+            if let Some(path) = bound_path_at_widget_point(widget, x, y, &bound_paths_for_menu) {
+                select_path_for_context_menu(&selection_for_menu, &path);
+            }
+            sync_for_menu();
+        });
+    }
+    {
+        let sync_for_menu = sync_fn.clone();
+        attach_context_menu_with_prepare(single_picture, &menu_model, move |_, _, _| {
+            sync_for_menu();
+        });
+    }
+    {
+        let sync_for_menu = sync_fn.clone();
+        attach_context_menu_with_prepare(meta_preview, &menu_model, move |_, _, _| {
+            sync_for_menu();
+        });
+    }
     {
         let sync_on_sel = sync_fn.clone();
         selection_model.connect_selection_changed(move |_, _, _| {

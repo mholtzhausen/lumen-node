@@ -2,12 +2,17 @@ use gtk4::prelude::*;
 use gtk4::{gdk, gio, GestureClick, PopoverMenu, SingleSelection, StringObject};
 use std::path::PathBuf;
 
-pub fn attach_context_menu<W: IsA<gtk4::Widget>>(widget: &W, menu_model: &gio::Menu) {
+pub fn attach_context_menu_with_prepare<W, F>(widget: &W, menu_model: &gio::Menu, prepare: F)
+where
+    W: IsA<gtk4::Widget>,
+    F: Fn(&gtk4::Widget, f64, f64) + 'static,
+{
     let widget_obj = widget.as_ref().clone();
     let menu_model = menu_model.clone();
     let click = GestureClick::new();
     click.set_button(3);
     click.connect_pressed(move |_, _, x, y| {
+        prepare(&widget_obj, x, y);
         let pop = PopoverMenu::from_model(Some(&menu_model));
         pop.set_parent(&widget_obj);
         pop.set_has_arrow(true);

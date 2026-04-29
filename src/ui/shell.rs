@@ -305,6 +305,16 @@ pub(crate) fn create_window_with_defaults(
             border-radius: 8px;
             padding: 4px;
         }
+        .thumbnail-favourite-button {
+            background-color: alpha(@theme_bg_color, 0.62);
+            color: alpha(@theme_fg_color, 0.90);
+            min-width: 28px;
+            min-height: 28px;
+            padding: 2px;
+        }
+        .thumbnail-favourite-active {
+            color: @accent_color;
+        }
         gridview > child {
             background-color: transparent;
             border-color: transparent;

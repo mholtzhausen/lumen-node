@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{
     gdk, gio, glib, Box as GtkBox, Button, EventControllerMotion, GridView, Image, Label, ListItem,
-    Orientation, ScrolledWindow, SignalListItemFactory, SingleSelection, StringObject,
+    Orientation, Overlay, ScrolledWindow, SignalListItemFactory, SingleSelection, StringObject,
 };
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
@@ -33,6 +33,7 @@ pub fn create_grid_view(
 }
 
 pub struct GridFactoryDeps {
+    pub app_state: AppState,
     pub thumbnail_size: Rc<RefCell<i32>>,
     pub realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<GtkBox>>>>,
     pub realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
@@ -64,6 +65,8 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let realized_cell_boxes_setup = deps.realized_cell_boxes.clone();
     let thumb_generations_setup = deps.thumb_generations.clone();
     let bound_paths_setup = deps.bound_paths.clone();
+    let app_state_setup = deps.app_state.clone();
+    let toast_overlay_setup = deps.toast_overlay.clone();
     factory.connect_setup(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
@@ -77,10 +80,13 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             on_delete.clone(),
             &thumb_generations_setup,
             &bound_paths_setup,
+            app_state_setup.clone(),
+            toast_overlay_setup.clone(),
         );
     });
 
     let hash_cache_bind = deps.hash_cache.clone();
+    let favourite_cache_bind = deps.app_state.favourite_cache.clone();
     let thumbnail_size_bind = deps.thumbnail_size.clone();
     let fast_scroll_active_bind = deps.fast_scroll_active.clone();
     let thumb_generations_bind = deps.thumb_generations.clone();
@@ -94,6 +100,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             &thumbnail_size_bind,
             &fast_scroll_active_bind,
             hash_cache_bind.clone(),
+            favourite_cache_bind.clone(),
             &thumb_generations_bind,
             &bound_paths_bind,
         );
@@ -270,6 +277,137 @@ pub fn refresh_realized_grid_cell_sizes(
     }
 }
 
+fn apply_favourite_button_state(
+    favourite_btn: &Button,
+    favourite_cache: &Rc<RefCell<HashMap<String, bool>>>,
+    bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+    hover_active: bool,
+) {
+    let key = favourite_btn.as_ptr() as usize;
+    let is_favourite = bound_paths
+        .borrow()
+        .get(&key)
+        .and_then(|path| favourite_cache.borrow().get(path).copied())
+        .unwrap_or(false);
+
+    favourite_btn.set_icon_name(if is_favourite {
+        "starred-symbolic"
+    } else {
+        "non-starred-symbolic"
+    });
+    if is_favourite {
+        favourite_btn.add_css_class("thumbnail-favourite-active");
+    } else {
+        favourite_btn.remove_css_class("thumbnail-favourite-active");
+    }
+    favourite_btn.set_opacity(if is_favourite {
+        1.0
+    } else if hover_active {
+        0.66
+    } else {
+        0.0
+    });
+    favourite_btn.set_visible(is_favourite || hover_active);
+}
+
+pub fn refresh_realized_grid_favourite_icons(app_state: &AppState) {
+    let mut boxes = app_state.realized_cell_boxes.borrow_mut();
+    boxes.retain(|weak| weak.upgrade().is_some());
+    for weak in boxes.iter() {
+        let Some(cell_box) = weak.upgrade() else {
+            continue;
+        };
+        let Some(overlay) = cell_box.first_child().and_downcast::<Overlay>() else {
+            continue;
+        };
+        let Some(favourite_btn) = overlay.last_child().and_downcast::<Button>() else {
+            continue;
+        };
+        apply_favourite_button_state(
+            &favourite_btn,
+            &app_state.favourite_cache,
+            &app_state.bound_paths,
+            false,
+        );
+    }
+}
+
+fn toggle_grid_favourite(
+    app_state: &AppState,
+    toast_overlay: &adw::ToastOverlay,
+    favourite_btn: &Button,
+    path: String,
+    bound_paths: Rc<RefCell<HashMap<usize, String>>>,
+) {
+    let Some(folder) = app_state.current_folder.borrow().as_ref().cloned() else {
+        return;
+    };
+    let want_favourite = !app_state
+        .favourite_cache
+        .borrow()
+        .get(&path)
+        .copied()
+        .unwrap_or(false);
+
+    favourite_btn.set_sensitive(false);
+    let path_for_task = path.clone();
+    let task = gio::spawn_blocking(move || {
+        let path_buf = std::path::PathBuf::from(&path_for_task);
+        let conn = db::open(&folder).ok()?;
+        let (row, _) = db::ensure_indexed_with_outcome(&conn, &path_buf)?;
+        match db::set_favourite(&conn, &path_buf, want_favourite) {
+            Ok(true) => Some((row.hash, row.meta, want_favourite)),
+            _ => None,
+        }
+    });
+
+    let app_state = app_state.clone();
+    let toast_overlay = toast_overlay.clone();
+    let favourite_btn_weak = favourite_btn.downgrade();
+    glib::MainContext::default().spawn_local(async move {
+        let Ok(Some((hash, meta, favourite))) = task.await else {
+            if let Some(button) = favourite_btn_weak.upgrade() {
+                button.set_sensitive(true);
+            }
+            let toast = adw::Toast::new("Could not update favourite");
+            toast.set_timeout(2);
+            toast_overlay.add_toast(toast);
+            return;
+        };
+
+        app_state.hash_cache.borrow_mut().insert(path.clone(), hash);
+        app_state.meta_cache.borrow_mut().insert(path.clone(), meta);
+        app_state
+            .favourite_cache
+            .borrow_mut()
+            .insert(path.clone(), favourite);
+
+        if let Some(button) = favourite_btn_weak.upgrade() {
+            button.set_sensitive(true);
+            let is_current = bound_paths
+                .borrow()
+                .get(&(button.as_ptr() as usize))
+                .map(|bound| bound.as_str() == path.as_str())
+                .unwrap_or(false);
+            if is_current {
+                apply_favourite_button_state(
+                    &button,
+                    &app_state.favourite_cache,
+                    &bound_paths,
+                    true,
+                );
+            }
+        }
+        let toast = adw::Toast::new(if favourite {
+            "Added to favourites"
+        } else {
+            "Removed from favourites"
+        });
+        toast.set_timeout(2);
+        toast_overlay.add_toast(toast);
+    });
+}
+
 pub fn setup_grid_list_item(
     list_item: &ListItem,
     thumbnail_size: &Rc<RefCell<i32>>,
@@ -279,6 +417,8 @@ pub fn setup_grid_list_item(
     on_delete: Rc<dyn Fn(std::path::PathBuf)>,
     thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+    app_state: AppState,
+    toast_overlay: adw::ToastOverlay,
 ) {
     let cell_box = GtkBox::new(Orientation::Vertical, 4);
     cell_box.add_css_class("thumbnail-card");
@@ -291,6 +431,21 @@ pub fn setup_grid_list_item(
     cell_box.set_size_request(size + 12, size + 28);
     let thumb_image = Image::new();
     thumb_image.set_pixel_size(size);
+    let thumb_overlay = Overlay::new();
+    thumb_overlay.set_child(Some(&thumb_image));
+    let favourite_btn = Button::from_icon_name("non-starred-symbolic");
+    favourite_btn.add_css_class("flat");
+    favourite_btn.add_css_class("circular");
+    favourite_btn.add_css_class("thumbnail-favourite-button");
+    favourite_btn.set_tooltip_text(Some("Toggle favourite"));
+    favourite_btn.set_focus_on_click(false);
+    favourite_btn.set_halign(gtk4::Align::End);
+    favourite_btn.set_valign(gtk4::Align::Start);
+    favourite_btn.set_margin_top(4);
+    favourite_btn.set_margin_end(4);
+    favourite_btn.set_opacity(0.0);
+    favourite_btn.set_visible(false);
+    thumb_overlay.add_overlay(&favourite_btn);
     let generation_token = Rc::new(Cell::new(0_u64));
     thumb_generations.borrow_mut().insert(
         thumb_image.as_ptr() as usize,
@@ -335,6 +490,21 @@ pub fn setup_grid_list_item(
         let Some(path) = path else { return };
         on_delete_btn(std::path::PathBuf::from(path));
     });
+    let app_state_favourite = app_state.clone();
+    let toast_overlay_favourite = toast_overlay.clone();
+    let bound_paths_favourite = bound_paths.clone();
+    favourite_btn.connect_clicked(move |btn| {
+        let key = btn.as_ptr() as usize;
+        let path = bound_paths_favourite.borrow().get(&key).cloned();
+        let Some(path) = path else { return };
+        toggle_grid_favourite(
+            &app_state_favourite,
+            &toast_overlay_favourite,
+            btn,
+            path,
+            bound_paths_favourite.clone(),
+        );
+    });
     let name_row = GtkBox::new(Orientation::Horizontal, 4);
     name_row.set_hexpand(true);
     name_row.set_halign(gtk4::Align::Fill);
@@ -347,17 +517,35 @@ pub fn setup_grid_list_item(
     let rename_btn_leave = rename_btn.clone();
     let delete_btn_enter = delete_btn.clone();
     let delete_btn_leave = delete_btn.clone();
+    let favourite_btn_enter = favourite_btn.clone();
+    let favourite_btn_leave = favourite_btn.clone();
+    let favourite_cache_enter = app_state.favourite_cache.clone();
+    let favourite_cache_leave = app_state.favourite_cache.clone();
+    let bound_paths_enter = bound_paths.clone();
+    let bound_paths_leave = bound_paths.clone();
     let motion = EventControllerMotion::new();
     motion.connect_enter(move |_, _, _| {
         rename_btn_enter.set_opacity(1.0);
         delete_btn_enter.set_opacity(1.0);
+        apply_favourite_button_state(
+            &favourite_btn_enter,
+            &favourite_cache_enter,
+            &bound_paths_enter,
+            true,
+        );
     });
     motion.connect_leave(move |_| {
         rename_btn_leave.set_opacity(0.0);
         delete_btn_leave.set_opacity(0.0);
+        apply_favourite_button_state(
+            &favourite_btn_leave,
+            &favourite_cache_leave,
+            &bound_paths_leave,
+            false,
+        );
     });
     cell_box.add_controller(motion);
-    cell_box.append(&thumb_image);
+    cell_box.append(&thumb_overlay);
     cell_box.append(&name_row);
     list_item.set_child(Some(&cell_box));
 }
@@ -367,6 +555,7 @@ pub fn bind_grid_list_item(
     thumbnail_size: &Rc<RefCell<i32>>,
     fast_scroll_active: &Rc<Cell<bool>>,
     hash_cache: Rc<RefCell<HashMap<String, String>>>,
+    favourite_cache: Rc<RefCell<HashMap<String, bool>>>,
     thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
@@ -379,7 +568,13 @@ pub fn bind_grid_list_item(
     let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() else {
         return;
     };
-    let Some(thumb_image) = cell_box.first_child().and_downcast::<Image>() else {
+    let Some(thumb_overlay) = cell_box.first_child().and_downcast::<Overlay>() else {
+        return;
+    };
+    let Some(thumb_image) = thumb_overlay.child().and_downcast::<Image>() else {
+        return;
+    };
+    let Some(favourite_btn) = thumb_overlay.last_child().and_downcast::<Button>() else {
         return;
     };
     let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() else {
@@ -416,7 +611,17 @@ pub fn bind_grid_list_item(
         delete_btn.as_ptr() as usize,
         path_str.clone(),
     );
+    bound_paths_map.insert(
+        favourite_btn.as_ptr() as usize,
+        path_str.clone(),
+    );
+    bound_paths_map.insert(cell_box.as_ptr() as usize, path_str.clone());
+    bound_paths_map.insert(thumb_overlay.as_ptr() as usize, path_str.clone());
+    bound_paths_map.insert(name_row.as_ptr() as usize, path_str.clone());
+    bound_paths_map.insert(name_label.as_ptr() as usize, path_str.clone());
+    bound_paths_map.insert(action_box.as_ptr() as usize, path_str.clone());
     drop(bound_paths_map);
+    apply_favourite_button_state(&favourite_btn, &favourite_cache, bound_paths, false);
     let thumb_key = thumb_image.as_ptr() as usize;
     let generation_token = thumb_generations
         .borrow()
@@ -448,7 +653,19 @@ pub fn unbind_grid_list_item(
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
     if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
-        if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
+        if let Some(overlay) = cell_box.first_child().and_downcast::<Overlay>() {
+            let favourite_btn = overlay.last_child().and_downcast::<Button>();
+            if let Some(favourite_btn) = favourite_btn.as_ref() {
+                bound_paths
+                    .borrow_mut()
+                    .remove(&(favourite_btn.as_ptr() as usize));
+                favourite_btn.set_opacity(0.0);
+                favourite_btn.set_visible(false);
+                favourite_btn.set_icon_name("non-starred-symbolic");
+            }
+            let Some(image) = overlay.child().and_downcast::<Image>() else {
+                return;
+            };
             let thumb_key = image.as_ptr() as usize;
             // Cancel any in-flight thumbnail load for this item by bumping the
             // generation token, but KEEP the entry in the map so the next
@@ -457,7 +674,18 @@ pub fn unbind_grid_list_item(
                 generation_token.set(generation_token.get().saturating_add(1));
             }
             if let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() {
+                bound_paths
+                    .borrow_mut()
+                    .remove(&(name_row.as_ptr() as usize));
                 if let Some(action_box) = name_row.last_child().and_downcast::<GtkBox>() {
+                    bound_paths
+                        .borrow_mut()
+                        .remove(&(action_box.as_ptr() as usize));
+                    if let Some(name_label) = name_row.first_child().and_downcast::<Label>() {
+                        bound_paths
+                            .borrow_mut()
+                            .remove(&(name_label.as_ptr() as usize));
+                    }
                     if let Some(rename_btn) = action_box.first_child().and_downcast::<Button>() {
                         bound_paths.borrow_mut().remove(&(rename_btn.as_ptr() as usize));
                     }
@@ -467,6 +695,12 @@ pub fn unbind_grid_list_item(
                 }
             }
             bound_paths.borrow_mut().remove(&thumb_key);
+            bound_paths
+                .borrow_mut()
+                .remove(&(overlay.as_ptr() as usize));
+            bound_paths
+                .borrow_mut()
+                .remove(&(cell_box.as_ptr() as usize));
             image.set_icon_name(Some("image-x-generic-symbolic"));
         }
     }
@@ -481,13 +715,34 @@ pub fn teardown_grid_list_item(
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
     if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
-        if let Some(image) = cell_box.first_child().and_downcast::<Image>() {
-            let thumb_key = image.as_ptr() as usize;
-            thumb_generations.borrow_mut().remove(&thumb_key);
-            bound_paths.borrow_mut().remove(&thumb_key);
+        if let Some(overlay) = cell_box.first_child().and_downcast::<Overlay>() {
+            bound_paths
+                .borrow_mut()
+                .remove(&(overlay.as_ptr() as usize));
+            if let Some(favourite_btn) = overlay.last_child().and_downcast::<Button>() {
+                bound_paths
+                    .borrow_mut()
+                    .remove(&(favourite_btn.as_ptr() as usize));
+            }
+            if let Some(image) = overlay.child().and_downcast::<Image>() {
+                let thumb_key = image.as_ptr() as usize;
+                thumb_generations.borrow_mut().remove(&thumb_key);
+                bound_paths.borrow_mut().remove(&thumb_key);
+            }
         }
         if let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() {
+            bound_paths
+                .borrow_mut()
+                .remove(&(name_row.as_ptr() as usize));
             if let Some(action_box) = name_row.last_child().and_downcast::<GtkBox>() {
+                bound_paths
+                    .borrow_mut()
+                    .remove(&(action_box.as_ptr() as usize));
+                if let Some(name_label) = name_row.first_child().and_downcast::<Label>() {
+                    bound_paths
+                        .borrow_mut()
+                        .remove(&(name_label.as_ptr() as usize));
+                }
                 if let Some(rename_btn) = action_box.first_child().and_downcast::<Button>() {
                     bound_paths.borrow_mut().remove(&(rename_btn.as_ptr() as usize));
                 }
@@ -496,6 +751,9 @@ pub fn teardown_grid_list_item(
                 }
             }
         }
+        bound_paths
+            .borrow_mut()
+            .remove(&(cell_box.as_ptr() as usize));
     }
 }
 

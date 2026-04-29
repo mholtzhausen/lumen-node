@@ -5,6 +5,7 @@ use crate::image_types::is_supported_image_path;
 use crate::sort_flags::compute_sort_fields;
 use crate::services::update_checker::install_update_checker;
 use crate::ui::center::CenterContentBundle;
+use crate::ui::grid::refresh_realized_grid_favourite_icons;
 use crate::ui::keyboard::{
     install_keyboard_handler, install_scroll_navigation_handlers, KeyboardDeps,
 };
@@ -237,6 +238,7 @@ fn install_folder_delta_watcher(
             app_state.sort_fields_cache.borrow_mut().remove(path);
             app_state.hash_cache.borrow_mut().remove(path);
             app_state.meta_cache.borrow_mut().remove(path);
+            app_state.favourite_cache.borrow_mut().remove(path);
         }
         for path in &added {
             if !mutation_ctx.insert_path(PathBuf::from(path).as_path(), false) {
@@ -251,6 +253,7 @@ fn install_folder_delta_watcher(
                 .insert(path.clone(), compute_sort_fields(path));
             app_state.hash_cache.borrow_mut().remove(path);
             app_state.meta_cache.borrow_mut().remove(path);
+            app_state.favourite_cache.borrow_mut().remove(path);
             schedule_path_index_refresh(&app_state, folder.clone(), path.clone(), true);
         }
         if had_failure {
@@ -314,19 +317,23 @@ fn schedule_path_index_refresh(
             return None;
         };
         if force_refresh {
-            db::refresh_indexed(&conn, &path_buf).map(|row| (row.hash, row.meta))
+            db::refresh_indexed(&conn, &path_buf)
+                .map(|row| (row.hash, row.meta, row.favourite != 0))
         } else {
-            db::ensure_indexed_with_outcome(&conn, &path_buf).map(|(row, _)| (row.hash, row.meta))
+            db::ensure_indexed_with_outcome(&conn, &path_buf)
+                .map(|(row, _)| (row.hash, row.meta, row.favourite != 0))
         }
     });
     glib::MainContext::default().spawn_local(async move {
-        let Ok(Some((hash, meta))) = task.await else {
+        let Ok(Some((hash, meta, favourite))) = task.await else {
             return;
         };
         if app_state.current_folder.borrow().as_ref().is_none() {
             return;
         }
         app_state.hash_cache.borrow_mut().insert(path.clone(), hash);
-        app_state.meta_cache.borrow_mut().insert(path, meta);
+        app_state.meta_cache.borrow_mut().insert(path.clone(), meta);
+        app_state.favourite_cache.borrow_mut().insert(path, favourite);
+        refresh_realized_grid_favourite_icons(&app_state);
     });
 }

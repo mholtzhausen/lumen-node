@@ -2,7 +2,8 @@ use crate::core::app_state::AppState;
 use crate::scan::ScanMessage;
 use crate::sort_flags::compute_sort_fields;
 use crate::ui::grid::{
-    refresh_realized_grid_thumbnails, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
+    refresh_realized_grid_favourite_icons, refresh_realized_grid_thumbnails,
+    DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
 };
 use crate::{
     sync_progress_widgets, SCAN_BUFFER_DEPTH, SCAN_DRAIN_BATCH_SIZE, SCAN_DRAIN_SCHEDULED,
@@ -43,6 +44,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
         let list_store_recv = deps.app_state.list_store.clone();
         let hash_cache_recv = deps.app_state.hash_cache.clone();
         let meta_cache_recv = deps.app_state.meta_cache.clone();
+        let favourite_cache_recv = deps.app_state.favourite_cache.clone();
         let sort_fields_cache_recv = deps.app_state.sort_fields_cache.clone();
         let active_scan_generation_recv = deps.app_state.active_scan_generation.clone();
         let scan_in_progress_recv = deps.app_state.scan_in_progress.clone();
@@ -65,6 +67,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
             let list_store_recv = list_store_recv.clone();
             let hash_cache_recv = hash_cache_recv.clone();
             let meta_cache_recv = meta_cache_recv.clone();
+            let favourite_cache_recv = favourite_cache_recv.clone();
             let sort_fields_cache_recv = sort_fields_cache_recv.clone();
             let active_scan_generation_recv = active_scan_generation_recv.clone();
             let scan_in_progress_recv = scan_in_progress_recv.clone();
@@ -147,6 +150,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                             path,
                             hash,
                             meta,
+                            favourite,
                             indexed_from_cache,
                             generation,
                         } => {
@@ -157,7 +161,8 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                             if has_thumbnail_hash {
                                 hash_cache_recv.borrow_mut().insert(path.clone(), hash);
                             }
-                            meta_cache_recv.borrow_mut().insert(path, meta);
+                            meta_cache_recv.borrow_mut().insert(path.clone(), meta);
+                            favourite_cache_recv.borrow_mut().insert(path, favourite);
                             let mut progress = progress_state_recv.borrow_mut();
                             if progress.generation == generation {
                                 progress.enriched_done = progress
@@ -258,6 +263,8 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                         &progress_bar_recv,
                     );
                 }
+
+                refresh_realized_grid_favourite_icons(&app_state_recv);
 
                 if let Some(sync) = sync_context_menu_recv.as_ref() {
                     sync();

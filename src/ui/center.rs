@@ -42,6 +42,7 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
     let view_stack = adw::ViewStack::new();
 
     let factory = install_grid_factory(GridFactoryDeps {
+        app_state: deps.app_state.clone(),
         thumbnail_size: deps.thumbnail_size.clone(),
         realized_cell_boxes: deps.realized_cell_boxes.clone(),
         realized_thumb_images: deps.realized_thumb_images.clone(),

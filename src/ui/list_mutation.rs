@@ -37,6 +37,7 @@ impl ListMutationContext {
         self.app_state.list_store.remove(remove_idx);
         self.app_state.hash_cache.borrow_mut().remove(&target);
         self.app_state.meta_cache.borrow_mut().remove(&target);
+        self.app_state.favourite_cache.borrow_mut().remove(&target);
         self.app_state.sort_fields_cache.borrow_mut().remove(&target);
 
         if selected_path_before.as_deref() == Some(target.as_str()) {
