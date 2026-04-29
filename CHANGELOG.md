@@ -1,3 +1,16 @@
+## 1.4.0 (1a378ea)
+### Features and Improvements
+- Improved folder indexing and refresh flow by streamlining lifecycle management internals.
+- Enhanced database-backed image row handling and tightened UI interaction behavior.
+- Refined selection handling and UI wiring to improve interaction consistency.
+- Consolidated thumbnail-size and navigation-related refactors plus additional incremental improvements from recent commits.
+
+### Bugfixes
+- No explicit bugfix-only commits were recorded in this release range.
+
+### Deprecations
+- No deprecations were introduced in this release.
+
 ## 1.3.0 (8950049)
 ### Features and Improvements
 - Implemented deferred thumbnail refresh and optimized image loading in grid view.
