@@ -1,3 +1,15 @@
+## 1.5.0 (bfaf208)
+### Features and Improvements
+- Added favorites filter functionality to the UI.
+- Added favourite support in image scanning and UI flows.
+- Included additional incremental improvements from recent commit history.
+
+### Bugfixes
+- No explicit bugfix-only commits were recorded in this release range.
+
+### Deprecations
+- No deprecations were introduced in this release.
+
 ## 1.4.0 (1a378ea)
 ### Features and Improvements
 - Improved folder indexing and refresh flow by streamlining lifecycle management internals.
