@@ -108,7 +108,6 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                                 if source.parent() == Some(folder.as_path()) {
                                     let _ = db::remove_image_row(&conn, &source);
                                 }
-                                let _ = db::refresh_indexed(&conn, &destination);
                             }
                             if source.parent() == Some(folder.as_path()) {
                                 let _ = mutation_ctx.replace_path(&source, &destination, true);

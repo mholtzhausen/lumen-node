@@ -242,18 +242,7 @@ fn install_folder_delta_watcher(
             if !mutation_ctx.insert_path(PathBuf::from(path).as_path(), false) {
                 had_failure = true;
             }
-            if let Ok(conn) = db::open(&folder) {
-                if let Some(row) = db::ensure_indexed_with_outcome(&conn, PathBuf::from(path).as_path()) {
-                    app_state
-                        .hash_cache
-                        .borrow_mut()
-                        .insert(path.clone(), row.0.hash.clone());
-                    app_state
-                        .meta_cache
-                        .borrow_mut()
-                        .insert(path.clone(), row.0.meta.clone());
-                }
-            }
+            schedule_path_index_refresh(&app_state, folder.clone(), path.clone(), false);
         }
         for path in &changed {
             app_state
@@ -262,18 +251,7 @@ fn install_folder_delta_watcher(
                 .insert(path.clone(), compute_sort_fields(path));
             app_state.hash_cache.borrow_mut().remove(path);
             app_state.meta_cache.borrow_mut().remove(path);
-            if let Ok(conn) = db::open(&folder) {
-                if let Some(row) = db::refresh_indexed(&conn, PathBuf::from(path).as_path()) {
-                    app_state
-                        .hash_cache
-                        .borrow_mut()
-                        .insert(path.clone(), row.hash.clone());
-                    app_state
-                        .meta_cache
-                        .borrow_mut()
-                        .insert(path.clone(), row.meta.clone());
-                }
-            }
+            schedule_path_index_refresh(&app_state, folder.clone(), path.clone(), true);
         }
         if had_failure {
             mutation_ctx.fallback_rescan();
@@ -320,4 +298,35 @@ fn list_store_contains_path(list_store: &gtk4::gio::ListStore, path: &str) -> bo
         }
     }
     false
+}
+
+fn schedule_path_index_refresh(
+    app_state: &AppState,
+    folder: PathBuf,
+    path: String,
+    force_refresh: bool,
+) {
+    let app_state = app_state.clone();
+    let path_for_task = path.clone();
+    let task = gtk4::gio::spawn_blocking(move || {
+        let path_buf = PathBuf::from(path_for_task);
+        let Ok(conn) = db::open(&folder) else {
+            return None;
+        };
+        if force_refresh {
+            db::refresh_indexed(&conn, &path_buf).map(|row| (row.hash, row.meta))
+        } else {
+            db::ensure_indexed_with_outcome(&conn, &path_buf).map(|(row, _)| (row.hash, row.meta))
+        }
+    });
+    glib::MainContext::default().spawn_local(async move {
+        let Ok(Some((hash, meta))) = task.await else {
+            return;
+        };
+        if app_state.current_folder.borrow().as_ref().is_none() {
+            return;
+        }
+        app_state.hash_cache.borrow_mut().insert(path.clone(), hash);
+        app_state.meta_cache.borrow_mut().insert(path, meta);
+    });
 }
