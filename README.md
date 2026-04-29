@@ -18,6 +18,10 @@
 
 </div>
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="LumenNode screenshot" width="960" />
+</p>
+
 ---
 
 ## Why LumenNode Exists
@@ -63,7 +67,9 @@ make build && make run    # that's it
 
 ## Screenshots
 
-There are no screenshots checked into this repository yet. Run `make run` after [building from source](#building-from-source) to try the UI locally.
+Current UI screenshot:
+
+![LumenNode screenshot](docs/screenshot.png)
 
 ---
 
@@ -493,7 +499,7 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 
 ## Roadmap
 
-- [ ] **Favourite filtering** — schema and toggle exist; “show only favourites” (or similar) in the chrome is not wired yet
+- [x] **Favourite filtering** — favorites-only toggle is wired in the header and persisted per folder (`ui_state.favorites_only`)
 - [x] **Trash / delete** — move to trash from context menu and `Delete`; permanent delete via `Shift+Delete` with confirmation
 - [x] **External open** — file manager and external editor (optional `external_editor` config); per-format custom apps remain a possible enhancement
 - [ ] **Side-by-side compare** — pin reference image, diff against selection
