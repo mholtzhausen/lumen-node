@@ -8,6 +8,7 @@ use crate::ui::controls::{
     install_thumbnail_size_handlers,
 };
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
+use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::open_folder::{build_open_folder_action, OpenFolderActionDeps};
 use crate::ui::right_sidebar::RightSidebarBundle;
 use crate::ui::selection::{handle_selection_change_event, ClickTrace};
@@ -56,6 +57,11 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
         &deps.center.grid_view,
         &deps.center.single_picture,
         &deps.right.meta_preview,
+        &ListMutationContext {
+            app_state: deps.app_state.clone(),
+            selection_model: deps.selection_model.clone(),
+            start_scan_for_folder: deps.start_scan_for_folder.clone(),
+        },
     )
 }
 

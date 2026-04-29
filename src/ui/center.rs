@@ -5,6 +5,7 @@ use crate::ui::grid::{
     create_single_picture, install_grid_factory, install_grid_scroll_speed_gate,
     set_default_grid_page, GridFactoryDeps,
 };
+use crate::ui::list_mutation::ListMutationContext;
 use gtk4::{glib, SingleSelection};
 use libadwaita as adw;
 use std::{
@@ -24,7 +25,6 @@ pub(crate) struct CenterContentDeps {
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
-    pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
     pub(crate) thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 }
@@ -49,8 +49,11 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
         hash_cache: deps.app_state.hash_cache.clone(),
         window: deps.window.clone(),
         toast_overlay: deps.toast_overlay.clone(),
-        start_scan_for_folder: deps.start_scan_for_folder.clone(),
-        current_folder: deps.current_folder.clone(),
+        mutation_ctx: ListMutationContext {
+            app_state: deps.app_state.clone(),
+            selection_model: deps.selection_model.clone(),
+            start_scan_for_folder: deps.start_scan_for_folder.clone(),
+        },
         thumb_generations: deps.thumb_generations.clone(),
         bound_paths: deps.bound_paths.clone(),
     });

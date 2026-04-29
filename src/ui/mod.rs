@@ -6,6 +6,7 @@ pub mod grid;
 pub mod keyboard;
 pub mod layout;
 pub mod left_chrome_wiring;
+pub mod list_mutation;
 pub mod lifecycle;
 pub mod models;
 pub mod navigation;

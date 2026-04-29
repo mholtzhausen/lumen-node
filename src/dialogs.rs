@@ -1,4 +1,6 @@
 use crate::file_name_ops::{build_renamed_target, split_filename};
+use crate::ui::list_mutation::ListMutationContext;
+use crate::{db, thumbnails};
 use gtk4::gio::prelude::FileExt;
 use gtk4::prelude::*;
 use gtk4::{gio, Label, Orientation};
@@ -8,8 +10,7 @@ use std::{cell::RefCell, rc::Rc};
 pub fn open_rename_dialog(
     window: &adw::ApplicationWindow,
     toast_overlay: &adw::ToastOverlay,
-    start_scan_for_folder: &Rc<dyn Fn(std::path::PathBuf)>,
-    current_folder: &Rc<RefCell<Option<std::path::PathBuf>>>,
+    mutation_ctx: &ListMutationContext,
     source_path: std::path::PathBuf,
     initial_base_name: Option<String>,
 ) {
@@ -90,8 +91,7 @@ pub fn open_rename_dialog(
         (validate_on_change.as_ref())(e.text().as_str());
     });
 
-    let start_scan_for_folder = start_scan_for_folder.clone();
-    let current_folder = current_folder.clone();
+    let mutation_ctx = mutation_ctx.clone();
     let toast_overlay = toast_overlay.clone();
     let dialog_for_cancel = dialog.clone();
     cancel_btn.connect_clicked(move |_| {
@@ -108,8 +108,14 @@ pub fn open_rename_dialog(
         if let Some(target) = candidate_target.borrow().clone() {
             match std::fs::rename(&source_path, &target) {
                 Ok(()) => {
-                    if let Some(folder) = current_folder.borrow().as_ref().cloned() {
-                        start_scan_for_folder(folder);
+                    if let Some(folder) = mutation_ctx.app_state.current_folder.borrow().as_ref() {
+                        if let Ok(conn) = db::open(folder) {
+                            let _ = db::remove_image_row(&conn, &source_path);
+                            let _ = db::refresh_indexed(&conn, &target);
+                        }
+                    }
+                    if !mutation_ctx.replace_path(&source_path, &target, true) {
+                        mutation_ctx.fallback_rescan();
                     }
                     toast_overlay.add_toast(adw::Toast::new("File renamed"));
                 }
@@ -127,8 +133,7 @@ pub fn open_rename_dialog(
 pub fn open_delete_dialog(
     window: &adw::ApplicationWindow,
     toast_overlay: &adw::ToastOverlay,
-    start_scan_for_folder: &Rc<dyn Fn(std::path::PathBuf)>,
-    current_folder: &Rc<RefCell<Option<std::path::PathBuf>>>,
+    mutation_ctx: &ListMutationContext,
     source_path: std::path::PathBuf,
 ) {
     let file_name = source_path
@@ -174,13 +179,24 @@ pub fn open_delete_dialog(
 
     let dialog_for_delete = dialog.clone();
     let toast_overlay = toast_overlay.clone();
-    let start_scan_for_folder = start_scan_for_folder.clone();
-    let current_folder = current_folder.clone();
+    let mutation_ctx = mutation_ctx.clone();
     delete_btn.connect_clicked(move |_| {
         match std::fs::remove_file(&source_path) {
             Ok(()) => {
-                if let Some(folder) = current_folder.borrow().as_ref().cloned() {
-                    start_scan_for_folder(folder);
+                if let Some(folder) = mutation_ctx.app_state.current_folder.borrow().as_ref() {
+                    if let Ok(conn) = db::open(folder) {
+                        if let Ok(Some(hash)) = conn.query_row(
+                            "SELECT hash FROM images WHERE path = ?1",
+                            rusqlite::params![source_path.to_string_lossy().as_ref()],
+                            |row| row.get::<_, Option<String>>(0),
+                        ) {
+                            thumbnails::remove_hash_thumbnail_variants(&hash);
+                        }
+                        let _ = db::remove_image_row(&conn, &source_path);
+                    }
+                }
+                if !mutation_ctx.remove_path(&source_path) {
+                    mutation_ctx.fallback_rescan();
                 }
                 let toast = adw::Toast::new("File deleted");
                 toast.set_timeout(2);
@@ -201,8 +217,7 @@ pub fn open_delete_dialog(
 pub fn open_trash_dialog(
     window: &adw::ApplicationWindow,
     toast_overlay: &adw::ToastOverlay,
-    start_scan_for_folder: &Rc<dyn Fn(std::path::PathBuf)>,
-    current_folder: &Rc<RefCell<Option<std::path::PathBuf>>>,
+    mutation_ctx: &ListMutationContext,
     source_path: std::path::PathBuf,
 ) {
     let file_name = source_path
@@ -248,14 +263,18 @@ pub fn open_trash_dialog(
 
     let dialog_for_trash = dialog.clone();
     let toast_overlay = toast_overlay.clone();
-    let start_scan_for_folder = start_scan_for_folder.clone();
-    let current_folder = current_folder.clone();
+    let mutation_ctx = mutation_ctx.clone();
     trash_btn.connect_clicked(move |_| {
         let file = gio::File::for_path(&source_path);
         match file.trash(gio::Cancellable::NONE) {
             Ok(()) => {
-                if let Some(folder) = current_folder.borrow().as_ref().cloned() {
-                    start_scan_for_folder(folder);
+                if let Some(folder) = mutation_ctx.app_state.current_folder.borrow().as_ref() {
+                    if let Ok(conn) = db::open(folder) {
+                        let _ = db::remove_image_row(&conn, &source_path);
+                    }
+                }
+                if !mutation_ctx.remove_path(&source_path) {
+                    mutation_ctx.fallback_rescan();
                 }
                 let toast = adw::Toast::new(
                     "Moved to trash — Shift+Delete skips trash and deletes permanently",

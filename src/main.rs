@@ -395,7 +395,6 @@ fn build_ui(app: &adw::Application) {
         window: window.clone(),
         toast_overlay: toast_overlay.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
-        current_folder: current_folder.clone(),
         thumb_generations: thumb_generations.clone(),
         bound_paths: app_state.bound_paths.clone(),
     });
@@ -561,6 +560,7 @@ fn build_ui(app: &adw::Application) {
 
     install_lifecycle(LifecycleDeps {
         update_banner,
+        app_state: app_state.clone(),
         window: window.clone(),
         center: center.clone(),
         right: right.clone(),
@@ -594,6 +594,7 @@ fn build_ui(app: &adw::Application) {
         min_left_pane_px: MIN_LEFT_PANE_PX,
         min_right_pane_px: MIN_RIGHT_PANE_PX,
         min_center_pane_px: MIN_CENTER_PANE_PX,
+        sorter: sorter.clone(),
     });
 }
 

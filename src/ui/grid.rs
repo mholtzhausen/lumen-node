@@ -6,7 +6,7 @@ use gtk4::{
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
@@ -16,6 +16,7 @@ use crate::{
     db,
     dialogs::{open_rename_dialog, open_trash_dialog},
     sort_flags::sort_flag_text_for_path,
+    ui::list_mutation::ListMutationContext,
     ui::preview::ACTIVE_PREVIEW_TASKS,
     thumbnails,
     PREVIEW_REQUEST_PENDING,
@@ -39,8 +40,7 @@ pub struct GridFactoryDeps {
     pub hash_cache: Rc<RefCell<HashMap<String, String>>>,
     pub window: adw::ApplicationWindow,
     pub toast_overlay: adw::ToastOverlay,
-    pub start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
-    pub current_folder: Rc<RefCell<Option<PathBuf>>>,
+    pub mutation_ctx: ListMutationContext,
     pub thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     pub bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 }
@@ -51,14 +51,12 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let on_rename = make_rename_action(
         deps.window.clone(),
         deps.toast_overlay.clone(),
-        deps.start_scan_for_folder.clone(),
-        deps.current_folder.clone(),
+        deps.mutation_ctx.clone(),
     );
     let on_delete = make_delete_action(
         deps.window.clone(),
         deps.toast_overlay.clone(),
-        deps.start_scan_for_folder.clone(),
-        deps.current_folder.clone(),
+        deps.mutation_ctx.clone(),
     );
 
     let thumbnail_size_setup = deps.thumbnail_size.clone();
@@ -515,15 +513,13 @@ pub fn apply_thumbnail_size_change(
 pub fn make_rename_action(
     window: adw::ApplicationWindow,
     toast_overlay: adw::ToastOverlay,
-    start_scan_for_folder: Rc<dyn Fn(std::path::PathBuf)>,
-    current_folder: Rc<RefCell<Option<std::path::PathBuf>>>,
+    mutation_ctx: ListMutationContext,
 ) -> Rc<dyn Fn(std::path::PathBuf)> {
     Rc::new(move |path| {
         open_rename_dialog(
             &window,
             &toast_overlay,
-            &start_scan_for_folder,
-            &current_folder,
+            &mutation_ctx,
             path,
             None,
         );
@@ -533,17 +529,10 @@ pub fn make_rename_action(
 pub fn make_delete_action(
     window: adw::ApplicationWindow,
     toast_overlay: adw::ToastOverlay,
-    start_scan_for_folder: Rc<dyn Fn(std::path::PathBuf)>,
-    current_folder: Rc<RefCell<Option<std::path::PathBuf>>>,
+    mutation_ctx: ListMutationContext,
 ) -> Rc<dyn Fn(std::path::PathBuf)> {
     Rc::new(move |path| {
-        open_trash_dialog(
-            &window,
-            &toast_overlay,
-            &start_scan_for_folder,
-            &current_folder,
-            path,
-        );
+        open_trash_dialog(&window, &toast_overlay, &mutation_ctx, path);
     })
 }
 
