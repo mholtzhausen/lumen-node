@@ -113,10 +113,13 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                         };
                         if move_err.is_none() {
                             cut_source_path.borrow_mut().take();
-                            if let Ok(conn) = db::open(&folder) {
-                                if source.parent() == Some(folder.as_path()) {
+                            if let Some(source_dir) = source.parent() {
+                                if let Ok(conn) = db::open(source_dir) {
                                     let _ = db::remove_image_row(&conn, &source);
                                 }
+                            }
+                            if let Ok(conn) = db::open(&folder) {
+                                let _ = db::refresh_indexed(&conn, &destination);
                             }
                             if source.parent() == Some(folder.as_path()) {
                                 let _ = mutation_ctx.replace_path(&source, &destination, true);
