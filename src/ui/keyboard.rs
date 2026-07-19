@@ -207,6 +207,25 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             }
             return glib::Propagation::Proceed;
         }
+        if key == gdk::Key::F2 {
+            if focus_in_text_input(&window_for_keys) {
+                return glib::Propagation::Proceed;
+            }
+            let Some(path) = selected_image_path(&selection_for_keys) else {
+                return glib::Propagation::Proceed;
+            };
+            if !path.exists() {
+                return glib::Propagation::Proceed;
+            }
+            open_rename_dialog(
+                &window_for_keys,
+                &toast_overlay_for_keys,
+                &mutation_ctx_keys,
+                path,
+                None,
+            );
+            return glib::Propagation::Stop;
+        }
         if key == gdk::Key::Escape {
             let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
             if in_grid {

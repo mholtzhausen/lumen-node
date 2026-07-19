@@ -284,6 +284,7 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `Delete` | Grid (selection, not in a text field) | Move selection to trash (same as context menu) |
 | `Shift+Delete` | Grid | Permanent delete (confirmation) |
 | `f` | Selection (not in a text field) | Toggle favourite (grid, preview, and single view) |
+| `F2` | Selection (not in a text field) | Rename selected image |
 | `Ctrl+Shift+P` / `N` / `C` / `M` / `G` | Selection | Copy prompt / negative / path / metadata / generation command |
 | `Ctrl+Alt+T` / `M` | Folder open | Refresh folder thumbnails / folder metadata |
 | Double-click / middle-click | Single view | Toggle window fullscreen |
