@@ -74,10 +74,10 @@ pub struct AppConfig {
     /// Appearance: `system` | `light` | `dark`. Default when unset: system.
     pub color_scheme: Option<ColorSchemePref>,
     /// Show the favourite star HUD in full/single view. Default when unset: true.
-    /// Hand-edit only (not rewritten by `save`).
+    /// Not rewritten by session `save`; updated via Preferences / `save_full_view_favourite_prefs`.
     pub full_view_favourite_icon: Option<bool>,
     /// Seconds the full-view favourite star stays visible before fading. Default: 2.
-    /// Hand-edit only (not rewritten by `save`).
+    /// Not rewritten by session `save`; updated via Preferences / `save_full_view_favourite_prefs`.
     pub full_view_favourite_icon_seconds: Option<f64>,
 }
 
@@ -271,30 +271,100 @@ pub fn save_recent_state(last_folder: Option<&Path>, recent_folders: &[PathBuf])
 
 /// Updates only the `color_scheme` key, preserving other config lines.
 pub fn save_color_scheme(color_scheme: ColorSchemePref) {
+    update_config_keys(&[("color_scheme", Some(color_scheme.as_str().to_string()))]);
+}
+
+/// Updates `external_editor`, preserving other keys. Pass `None` to remove the key.
+pub fn save_external_editor(editor: Option<&Path>) {
+    let value = editor
+        .map(|p| p.display().to_string())
+        .filter(|s| !s.trim().is_empty());
+    update_config_keys(&[("external_editor", value)]);
+}
+
+/// Updates full-view favourite HUD keys, preserving other config lines.
+pub fn save_full_view_favourite_prefs(show_icon: bool, seconds: f64) {
+    let seconds = if seconds.is_finite() && seconds >= 0.0 {
+        seconds
+    } else {
+        2.0
+    };
+    update_config_keys(&[
+        ("full_view_favourite_icon", Some(show_icon.to_string())),
+        (
+            "full_view_favourite_icon_seconds",
+            Some(format_config_f64(seconds)),
+        ),
+    ]);
+}
+
+/// Updates global startup defaults (`sort_key`, `search_text`, `thumbnail_size`).
+/// Does not affect per-folder SQLite `ui_state`.
+pub fn save_startup_defaults(sort_key: &str, search_text: &str, thumbnail_size: i32) {
+    update_config_keys(&[
+        ("sort_key", Some(sort_key.to_string())),
+        ("search_text", Some(search_text.to_string())),
+        ("thumbnail_size", Some(thumbnail_size.to_string())),
+    ]);
+}
+
+/// Upsert or remove `key: value` lines without clobbering unknown keys.
+/// `None` value removes every matching key line.
+fn update_config_keys(updates: &[(&str, Option<String>)]) {
+    if updates.is_empty() {
+        return;
+    }
     let path = config_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
 
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let prefixes: Vec<String> = updates.iter().map(|(k, _)| format!("{k}: ")).collect();
     let mut lines: Vec<String> = Vec::new();
-    let mut replaced = false;
+    let mut seen = vec![false; updates.len()];
+
     for line in existing.lines() {
-        if line.starts_with("color_scheme: ") {
-            lines.push(format!("color_scheme: {}", color_scheme.as_str()));
-            replaced = true;
-        } else {
+        let mut matched = false;
+        for (i, prefix) in prefixes.iter().enumerate() {
+            if line.starts_with(prefix.as_str()) {
+                matched = true;
+                if !seen[i] {
+                    seen[i] = true;
+                    if let Some(ref val) = updates[i].1 {
+                        lines.push(format!("{}: {}", updates[i].0, val));
+                    }
+                }
+                // Duplicate key lines are dropped once replaced/removed.
+                break;
+            }
+        }
+        if !matched {
             lines.push(line.to_string());
         }
     }
-    if !replaced {
-        lines.push(format!("color_scheme: {}", color_scheme.as_str()));
+
+    for (i, (key, val)) in updates.iter().enumerate() {
+        if !seen[i] {
+            if let Some(ref v) = val {
+                lines.push(format!("{key}: {v}"));
+            }
+        }
     }
+
     let mut content = lines.join("\n");
     if !content.is_empty() && !content.ends_with('\n') {
         content.push('\n');
     }
     let _ = std::fs::write(&path, content);
+}
+
+fn format_config_f64(value: f64) -> String {
+    if (value - value.round()).abs() < f64::EPSILON {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value}")
+    }
 }
 
 fn config_path() -> PathBuf {

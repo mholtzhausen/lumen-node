@@ -12,6 +12,7 @@ pub mod lifecycle;
 pub mod models;
 pub mod navigation;
 pub mod open_folder;
+pub mod preferences;
 pub mod preview;
 pub mod right_sidebar;
 pub mod scan_runtime;

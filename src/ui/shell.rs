@@ -6,7 +6,7 @@ use gtk4::{gio, Orientation, Paned, ProgressBar};
 use libadwaita as adw;
 use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc};
 
-fn apply_color_scheme_pref(pref: ColorSchemePref) {
+pub(crate) fn apply_color_scheme_pref(pref: ColorSchemePref) {
     let scheme = match pref {
         ColorSchemePref::System => adw::ColorScheme::Default,
         ColorSchemePref::Light => adw::ColorScheme::ForceLight,
@@ -15,7 +15,7 @@ fn apply_color_scheme_pref(pref: ColorSchemePref) {
     adw::StyleManager::default().set_color_scheme(scheme);
 }
 
-fn sync_theme_button(btn: &gtk4::Button, pref: ColorSchemePref) {
+pub(crate) fn sync_theme_button(btn: &gtk4::Button, pref: ColorSchemePref) {
     btn.set_icon_name(pref.icon_name());
     btn.set_tooltip_text(Some(pref.tooltip()));
 }
@@ -86,6 +86,7 @@ pub(crate) fn build_header_controls(
     edit_menu.append_section(None, &organise_section);
 
     let config_section = gio::Menu::new();
+    config_section.append(Some("Preferences…"), Some("win.preferences"));
     config_section.append(Some("Get Config"), Some("win.get-config"));
     edit_menu.append_section(None, &config_section);
 
@@ -299,6 +300,24 @@ pub(crate) fn build_header_controls(
     });
     // Packed after right_toggle so it sits immediately left of the pane toggle.
     header_bar.pack_end(&theme_btn);
+
+    let preferences_action = gio::SimpleAction::new("preferences", None);
+    let window_for_prefs = window.clone();
+    let color_scheme_prefs = color_scheme.clone();
+    let theme_btn_prefs = theme_btn.clone();
+    preferences_action.connect_activate(move |_, _| {
+        crate::ui::preferences::present_preferences_window(
+            &window_for_prefs,
+            crate::ui::preferences::PreferencesDeps {
+                color_scheme: color_scheme_prefs.clone(),
+                theme_btn: theme_btn_prefs.clone(),
+            },
+        );
+    });
+    window.add_action(&preferences_action);
+    if let Some(app) = window.application() {
+        app.set_accels_for_action("win.preferences", &["<Primary>comma"]);
+    }
 
     HeaderControls {
         header_bar,

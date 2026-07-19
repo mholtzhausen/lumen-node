@@ -84,7 +84,7 @@ Current UI screenshot:
 | 📐 | **4 thumbnail sizes** — 128px base with larger steps up to 240px (128, 160, 208, 240), adjustable in one click |
 | 🔍 | **Live search** — filters grid by filename and metadata in real time |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |
-| 💾 | **Session persistence** — window, pane positions, recent folders, and theme preference (`color_scheme`) in `~/.lumen-node/config.yml`; sort, search, and thumbnail size per folder in `.lumen-node.db` (`ui_state`). Optional `sort_key` / `search_text` / `thumbnail_size` in YAML are read at startup as defaults only (not written back by the app) |
+| 💾 | **Session persistence** — window, pane positions, recent folders, and theme preference (`color_scheme`) in `~/.lumen-node/config.yml`; sort, search, and thumbnail size per folder in `.lumen-node.db` (`ui_state`). Optional YAML startup defaults and editor/HUD keys are editable via **Edit → Preferences…** (partial writes; unknown keys preserved) |
 | 🌓 | **Theme toggle** — header icon cycles System → Light → Dark (libadwaita color scheme) |
 
 ### For AI artists
@@ -296,9 +296,9 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 
 ## Configuration
 
-Config lives at `~/.lumen-node/config.yml` — a plain-text `key: value` file you can edit by hand.
+Config lives at `~/.lumen-node/config.yml` — a plain-text `key: value` file you can edit by hand or via **Edit → Preferences…** (tabs: General / Appearance / Startup; `Ctrl+,`). Preference edits use partial key updates so unknown lines are preserved.
 
-On exit, the app writes **window geometry**, **three GtkPaned positions** (`left_pane_pos`, `right_pane_pos`, `meta_pane_pos`), **percentage splits** (`left_pane_width_pct`, `right_pane_width_pct`, `meta_pane_height_pct`), **sidebar visibility**, **color scheme**, **last folder**, and **recent folder** lines. Theme changes via the header toggle also write `color_scheme` immediately. It does **not** write `sort_key`, `search_text`, `thumbnail_size`, `external_editor`, `full_view_favourite_icon`, or `full_view_favourite_icon_seconds` back on save; those keys are only read when present (for defaults or tooling paths).
+On exit, the app writes **window geometry**, **three GtkPaned positions** (`left_pane_pos`, `right_pane_pos`, `meta_pane_pos`), **percentage splits** (`left_pane_width_pct`, `right_pane_width_pct`, `meta_pane_height_pct`), **sidebar visibility**, **color scheme**, **last folder**, and **recent folder** lines. Theme changes (header toggle or Preferences → Appearance) write `color_scheme` immediately. Full session `save()` still does **not** rewrite preference-only keys; those are updated by dedicated helpers from the preferences dialog (and `save_color_scheme` / `save_recent_state` elsewhere).
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -311,12 +311,12 @@ On exit, the app writes **window geometry**, **three GtkPaned positions** (`left
 | `meta_pane_height_pct` | derived from pane split | Metadata/detail split in the right pane (%) |
 | `left_sidebar_visible` | false | Folder tree visibility |
 | `right_sidebar_visible` | true | Metadata pane visibility |
-| `color_scheme` | `system` | Appearance: `system`, `light`, or `dark` (header toggle cycles these) |
+| `color_scheme` | `system` | Appearance: `system`, `light`, or `dark` (header toggle / Preferences) |
 | `recent_folder` | — | Repeated entry for recent folder history |
-| `sort_key` / `search_text` / `thumbnail_size` | — | Optional startup defaults (read only; per-folder values live in SQLite `ui_state`) |
-| `external_editor` | — | Optional path to an editor binary for “Open in External Editor” |
-| `full_view_favourite_icon` | `true` | Show the favourite star HUD in single/full view (read only) |
-| `full_view_favourite_icon_seconds` | `2` | Seconds the full-view favourite star stays visible before fading (read only) |
+| `sort_key` / `search_text` / `thumbnail_size` | — | Optional startup defaults (Preferences → Startup; per-folder values live in SQLite `ui_state`) |
+| `external_editor` | — | Optional path to an editor binary for “Open in External Editor” (Preferences → General) |
+| `full_view_favourite_icon` | `true` | Show the favourite star HUD in single/full view (Preferences → General; applies next launch) |
+| `full_view_favourite_icon_seconds` | `2` | Seconds the full-view favourite star stays visible before fading (Preferences → General) |
 
 Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites plus folder-scoped UI state in the **`ui_state`** table (`sort_key`, `search_text`, `favorites_only`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
 

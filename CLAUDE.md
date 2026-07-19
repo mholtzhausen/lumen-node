@@ -105,7 +105,7 @@ The `PKG_CONFIG_PATH` in the Makefile is required for GTK4/libadwaita linking on
 | [src/db.rs](src/db.rs) | Per-folder SQLite (`.lumen-node.db`). Caches SHA-256 hash + metadata; `ui_state` for sort/search/favourites filter/thumbnail size. Staleness check on mtime+size. |
 | [src/thumbnails.rs](src/thumbnails.rs) | Freedesktop thumbnail spec (`$XDG_CACHE_HOME/thumbnails/`). Two stores: MD5-URI named (spec-compliant) and hash-named (`lumen-node/` subdir). |
 | [src/metadata.rs](src/metadata.rs) | Format-dispatched metadata extraction: EXIF for JPEG/TIFF/PNG eXIf; PNG text chunks for AI-gen images (A1111, ComfyUI, InvokeAI). |
-| [src/config.rs](src/config.rs) | `~/.lumen-node/config.yml` — plain-text KV. Window/panes/recent folders/`color_scheme`; optional read-only keys (`external_editor`, full-view favourite HUD, startup sort/search/thumb defaults). |
+| [src/config.rs](src/config.rs) | `~/.lumen-node/config.yml` — plain-text KV. Window/panes/recent folders/`color_scheme` on exit; preference keys via partial writers / Edit → Preferences (General / Appearance / Startup). |
 | [src/updater.rs](src/updater.rs) / [src/services/](src/services/) | GitHub release check + in-app banner wiring. |
 
 ### Data flow
