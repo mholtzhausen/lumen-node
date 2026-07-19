@@ -11,9 +11,10 @@ use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::open_folder::{build_open_folder_action, OpenFolderActionDeps};
 use crate::ui::right_sidebar::RightSidebarBundle;
+use crate::ui::preview::clear_picture;
 use crate::ui::selection::{handle_selection_change_event, ClickTrace};
 use crate::ui::shell::{install_history_popover_handler, install_open_button_handler};
-use crate::ui::sidebar::populate_metadata_sidebar;
+use crate::ui::sidebar::{clear_metadata_sidebar, populate_metadata_sidebar};
 use gtk4::prelude::*;
 use gtk4::{ListScrollFlags, StringObject};
 use libadwaita as adw;
@@ -89,6 +90,8 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
     deps.selection_model
         .connect_selection_changed(move |model, _, _| {
             let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
+                clear_picture(&meta_preview_sel);
+                clear_metadata_sidebar(&meta_listbox_sel);
                 return;
             };
             let selected = model.selected();

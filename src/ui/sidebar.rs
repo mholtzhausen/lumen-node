@@ -133,10 +133,14 @@ pub fn connect_sidebar_visibility_toggles(
     });
 }
 
-pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
+pub fn clear_metadata_sidebar(listbox: &gtk4::ListBox) {
     while let Some(child) = listbox.first_child() {
         listbox.remove(&child);
     }
+}
+
+pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
+    clear_metadata_sidebar(listbox);
 
     let short_rows: &[(&str, Option<&str>)] = &[
         ("Make", meta.camera_make.as_deref()),

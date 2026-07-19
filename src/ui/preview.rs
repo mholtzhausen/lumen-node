@@ -40,6 +40,19 @@ pub struct PreviewLoadMetrics {
     pub texture_apply_ms: f64,
 }
 
+/// Cancel any in-flight load and clear the displayed paintable.
+pub fn clear_picture(picture: &Picture) {
+    let prev_cancel: Option<gio::Cancellable> = unsafe { picture.steal_data("loading-cancel") };
+    if let Some(c) = prev_cancel {
+        c.cancel();
+    }
+    unsafe {
+        let _: Option<String> = picture.steal_data("loading-path");
+        let _: Option<i32> = picture.steal_data("loading-max-dim");
+    }
+    picture.set_paintable(gdk::Paintable::NONE);
+}
+
 pub fn load_picture_async(
     picture: &Picture,
     path: &str,

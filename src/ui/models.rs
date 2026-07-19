@@ -168,10 +168,11 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
     {
         let selected_path_hint = selected_path_hint.clone();
         sort_model.connect_items_changed(move |model, _, _, _| {
-            if model.n_items() == 0 || selection_for_default.selected_item().is_some() {
+            if model.n_items() == 0 {
                 return;
             }
 
+            // Prefer restoring by absolute path after sort/filter reshuffles.
             let target_pos = selected_path_hint.borrow().as_ref().and_then(|wanted_path| {
                 (0..model.n_items()).find(|idx| {
                     model
@@ -182,7 +183,33 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
                 })
             });
 
-            selection_for_default.set_selected(target_pos.unwrap_or(0));
+            if let Some(pos) = target_pos {
+                if selection_for_default.selected() != pos {
+                    selection_for_default.set_selected(pos);
+                }
+                return;
+            }
+
+            // Hint missing or stale (folder change): index may be unchanged so
+            // selection-changed never fired — bounce to force a preview reload.
+            let selected_path = selection_for_default
+                .selected_item()
+                .and_downcast::<StringObject>()
+                .map(|obj| obj.string().to_string());
+
+            match selected_path {
+                None => {
+                    selection_for_default.set_selected(0);
+                }
+                Some(path) if selected_path_hint.borrow().as_ref() != Some(&path) => {
+                    selection_for_default.set_can_unselect(true);
+                    let pos = selection_for_default.selected();
+                    let pos = if pos < model.n_items() { pos } else { 0 };
+                    selection_for_default.set_selected(gtk4::INVALID_LIST_POSITION);
+                    selection_for_default.set_selected(pos);
+                }
+                Some(_) => {}
+            }
         });
     }
 
