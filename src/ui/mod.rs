@@ -17,6 +17,7 @@ pub mod right_sidebar;
 pub mod scan_runtime;
 pub mod selection;
 pub mod session;
+pub mod shortcuts;
 pub mod shell;
 pub mod sidebar;
 pub mod tree;

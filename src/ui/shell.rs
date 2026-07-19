@@ -107,6 +107,11 @@ pub(crate) fn build_header_controls(
 
     menu_model.append_submenu(Some("View"), &view_menu);
 
+    // ── Help menu ────────────────────────────────────────────────────────────
+    let help_menu = gio::Menu::new();
+    help_menu.append(Some("Keyboard Shortcuts"), Some("win.show-shortcuts"));
+    menu_model.append_submenu(Some("Help"), &help_menu);
+
     let menubar = gtk4::PopoverMenuBar::from_model(Some(&menu_model));
     menubar.set_halign(gtk4::Align::Start);
     menubar.set_valign(gtk4::Align::Center);
@@ -189,6 +194,16 @@ pub(crate) fn build_header_controls(
         dialog.present();
     });
     window.add_action(&about_action);
+
+    let show_shortcuts_action = gio::SimpleAction::new("show-shortcuts", None);
+    let window_for_shortcuts = window.clone();
+    show_shortcuts_action.connect_activate(move |_, _| {
+        crate::ui::shortcuts::present_shortcuts_window(&window_for_shortcuts);
+    });
+    window.add_action(&show_shortcuts_action);
+    if let Some(app) = window.application() {
+        app.set_accels_for_action("win.show-shortcuts", &["<Primary>question"]);
+    }
 
     let sort_options =
         gtk4::StringList::new(&["Name ↑", "Name ↓", "Date ↑", "Date ↓", "Size ↑", "Size ↓"]);
