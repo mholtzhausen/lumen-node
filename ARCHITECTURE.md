@@ -11,7 +11,7 @@ This document describes how the LumenNode codebase is laid out today: where UI l
 - **`src/scanner.rs`** — Background `std::thread` that walks a folder and enriches via `db`; sends **`ScanMessage`** variants defined in **`src/scan.rs`** over a bounded `async-channel`.
 - **`src/db.rs`** — Per-folder `.lumen-node.db`: `images` rows, **`ui_state`** key-value rows (`sort_key`, `search_text`, `thumbnail_size`), WAL + `synchronous=NORMAL`.
 - **`src/metadata.rs`**, **`src/thumbnails.rs`**, **`src/thumbnail_sizing.rs`** — Extraction, cache paths, and discrete thumbnail size steps.
-- **`src/config.rs`** — `~/.lumen-node/config.yml` load/save for window, panes, recent folders, etc.; **`external_editor`** and optional startup defaults (`sort_key`, `search_text`, `thumbnail_size`) are loaded but not rewritten by `config::save` (hand-editing only for those defaults).
+- **`src/config.rs`** — `~/.lumen-node/config.yml` load/save for window, panes, recent folders, **`color_scheme`** (`system` / `light` / `dark`), etc.; **`external_editor`** and optional startup defaults (`sort_key`, `search_text`, `thumbnail_size`) are loaded but not rewritten by `config::save` (hand-editing only for those defaults). Theme preference is applied through `adw::StyleManager::set_color_scheme` from the header toggle in `src/ui/shell.rs` (and on startup).
 - **`src/dialogs.rs`**, **`src/metadata_section.rs`**, **`src/metadata_view.rs`**, **`src/view_helpers.rs`**, **`src/tree_sidebar.rs`**, etc. — Shared dialogs and helpers still at crate root where not yet folded into `ui/`.
 
 ## Dependency direction (typical)

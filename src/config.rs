@@ -1,5 +1,56 @@
 use std::path::{Path, PathBuf};
 
+/// Persisted appearance preference (`color_scheme` in config.yml).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorSchemePref {
+    System,
+    Light,
+    Dark,
+}
+
+impl ColorSchemePref {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "system" => Some(Self::System),
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::System => Self::Light,
+            Self::Light => Self::Dark,
+            Self::Dark => Self::System,
+        }
+    }
+
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            Self::System => "display-brightness-symbolic",
+            Self::Light => "weather-clear-symbolic",
+            Self::Dark => "weather-clear-night-symbolic",
+        }
+    }
+
+    pub fn tooltip(self) -> &'static str {
+        match self {
+            Self::System => "Theme: System",
+            Self::Light => "Theme: Light",
+            Self::Dark => "Theme: Dark",
+        }
+    }
+}
+
 pub struct AppConfig {
     pub last_folder: Option<PathBuf>,
     pub recent_folders: Vec<PathBuf>,
@@ -20,6 +71,8 @@ pub struct AppConfig {
     /// Optional executable used by "Open in External Editor" in the context menu.
     /// When unset, the default application for the image MIME type is used.
     pub external_editor: Option<PathBuf>,
+    /// Appearance: `system` | `light` | `dark`. Default when unset: system.
+    pub color_scheme: Option<ColorSchemePref>,
 }
 
 /// Loads `~/.lumen-node/config.yml`.  Missing file → empty config.
@@ -41,6 +94,7 @@ pub fn load() -> AppConfig {
     let mut search_text = None;
     let mut thumbnail_size = None;
     let mut external_editor = None;
+    let mut color_scheme = None;
     if let Ok(content) = std::fs::read_to_string(config_path()) {
         for line in content.lines() {
             if let Some(val) = line.strip_prefix("last_folder: ") {
@@ -90,6 +144,8 @@ pub fn load() -> AppConfig {
                 if !val.is_empty() {
                     external_editor = Some(PathBuf::from(val));
                 }
+            } else if let Some(val) = line.strip_prefix("color_scheme: ") {
+                color_scheme = ColorSchemePref::parse(val);
             }
         }
     }
@@ -111,6 +167,7 @@ pub fn load() -> AppConfig {
         search_text,
         thumbnail_size,
         external_editor,
+        color_scheme,
     }
 }
 
@@ -129,6 +186,7 @@ pub fn save(
     meta_pane_height_pct: f64,
     left_sidebar_visible: bool,
     right_sidebar_visible: bool,
+    color_scheme: ColorSchemePref,
 ) {
     let path = config_path();
     if let Some(parent) = path.parent() {
@@ -143,7 +201,7 @@ pub fn save(
         .collect::<Vec<_>>()
         .join("\n");
     let content = format!(
-        "last_folder: {}\n{}\nwindow_width: {}\nwindow_height: {}\nwindow_maximized: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\n",
+        "last_folder: {}\n{}\nwindow_width: {}\nwindow_height: {}\nwindow_maximized: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\ncolor_scheme: {}\n",
         folder_str,
         recent_folder_lines,
         window_width,
@@ -157,6 +215,7 @@ pub fn save(
         meta_pane_height_pct,
         left_sidebar_visible,
         right_sidebar_visible,
+        color_scheme.as_str(),
     );
     let _ = std::fs::write(&path, content);
 }
@@ -193,6 +252,34 @@ pub fn save_recent_state(last_folder: Option<&Path>, recent_folders: &[PathBuf])
             folder_str, recent_folder_lines, suffix
         )
     };
+    let _ = std::fs::write(&path, content);
+}
+
+/// Updates only the `color_scheme` key, preserving other config lines.
+pub fn save_color_scheme(color_scheme: ColorSchemePref) {
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<String> = Vec::new();
+    let mut replaced = false;
+    for line in existing.lines() {
+        if line.starts_with("color_scheme: ") {
+            lines.push(format!("color_scheme: {}", color_scheme.as_str()));
+            replaced = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    if !replaced {
+        lines.push(format!("color_scheme: {}", color_scheme.as_str()));
+    }
+    let mut content = lines.join("\n");
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
     let _ = std::fs::write(&path, content);
 }
 

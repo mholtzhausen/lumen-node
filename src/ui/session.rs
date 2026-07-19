@@ -1,3 +1,4 @@
+use crate::config::ColorSchemePref;
 use crate::sort::sort_index_for_key;
 use crate::window_math::{pct_to_px, px_to_pct};
 use crate::{config, db};
@@ -19,6 +20,7 @@ pub(crate) struct ClosePersistenceDeps {
     pub(crate) recent_folders: Rc<RefCell<Vec<PathBuf>>>,
     pub(crate) left_toggle: gtk4::ToggleButton,
     pub(crate) right_toggle: gtk4::ToggleButton,
+    pub(crate) color_scheme: Rc<Cell<ColorSchemePref>>,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) outer_split_dirty: Rc<Cell<bool>>,
     pub(crate) inner_split_dirty: Rc<Cell<bool>>,
@@ -103,6 +105,7 @@ pub(crate) fn install_close_persistence_handler(deps: ClosePersistenceDeps) {
             meta_pct_for_save,
             deps.left_toggle.is_active(),
             deps.right_toggle.is_active(),
+            deps.color_scheme.get(),
         );
         if let Some(folder) = deps.current_folder.borrow().as_ref() {
             let _ = db::save_ui_state(

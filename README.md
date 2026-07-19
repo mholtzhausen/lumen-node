@@ -84,7 +84,8 @@ Current UI screenshot:
 | 📐 | **4 thumbnail sizes** — 128px base with larger steps up to 240px (128, 160, 208, 240), adjustable in one click |
 | 🔍 | **Live search** — filters grid by filename and metadata in real time |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |
-| 💾 | **Session persistence** — window, pane positions, and recent folders in `~/.lumen-node/config.yml`; sort, search, and thumbnail size per folder in `.lumen-node.db` (`ui_state`). Optional `sort_key` / `search_text` / `thumbnail_size` in YAML are read at startup as defaults only (not written back by the app) |
+| 💾 | **Session persistence** — window, pane positions, recent folders, and theme preference (`color_scheme`) in `~/.lumen-node/config.yml`; sort, search, and thumbnail size per folder in `.lumen-node.db` (`ui_state`). Optional `sort_key` / `search_text` / `thumbnail_size` in YAML are read at startup as defaults only (not written back by the app) |
+| 🌓 | **Theme toggle** — header icon cycles System → Light → Dark (libadwaita color scheme) |
 
 ### For AI artists
 
@@ -281,7 +282,7 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 
 Config lives at `~/.lumen-node/config.yml` — a plain-text `key: value` file you can edit by hand.
 
-On exit, the app writes **window geometry**, **three GtkPaned positions** (`left_pane_pos`, `right_pane_pos`, `meta_pane_pos`), **percentage splits** (`left_pane_width_pct`, `right_pane_width_pct`, `meta_pane_height_pct`), **sidebar visibility**, **last folder**, and **recent folder** lines. It does **not** write `sort_key`, `search_text`, `thumbnail_size`, or `external_editor` back on save; those keys are only read when present (for defaults or tooling paths).
+On exit, the app writes **window geometry**, **three GtkPaned positions** (`left_pane_pos`, `right_pane_pos`, `meta_pane_pos`), **percentage splits** (`left_pane_width_pct`, `right_pane_width_pct`, `meta_pane_height_pct`), **sidebar visibility**, **color scheme**, **last folder**, and **recent folder** lines. Theme changes via the header toggle also write `color_scheme` immediately. It does **not** write `sort_key`, `search_text`, `thumbnail_size`, or `external_editor` back on save; those keys are only read when present (for defaults or tooling paths).
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -294,6 +295,7 @@ On exit, the app writes **window geometry**, **three GtkPaned positions** (`left
 | `meta_pane_height_pct` | derived from pane split | Metadata/detail split in the right pane (%) |
 | `left_sidebar_visible` | false | Folder tree visibility |
 | `right_sidebar_visible` | true | Metadata pane visibility |
+| `color_scheme` | `system` | Appearance: `system`, `light`, or `dark` (header toggle cycles these) |
 | `recent_folder` | — | Repeated entry for recent folder history |
 | `sort_key` / `search_text` / `thumbnail_size` | — | Optional startup defaults (read only; per-folder values live in SQLite `ui_state`) |
 | `external_editor` | — | Optional path to an editor binary for “Open in External Editor” |

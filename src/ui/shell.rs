@@ -1,10 +1,24 @@
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ColorSchemePref};
 use crate::window_math::monitor_bounds_for_window;
 use adw::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{gio, Orientation, Paned, ProgressBar};
 use libadwaita as adw;
 use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc};
+
+fn apply_color_scheme_pref(pref: ColorSchemePref) {
+    let scheme = match pref {
+        ColorSchemePref::System => adw::ColorScheme::Default,
+        ColorSchemePref::Light => adw::ColorScheme::ForceLight,
+        ColorSchemePref::Dark => adw::ColorScheme::ForceDark,
+    };
+    adw::StyleManager::default().set_color_scheme(scheme);
+}
+
+fn sync_theme_button(btn: &gtk4::Button, pref: ColorSchemePref) {
+    btn.set_icon_name(pref.icon_name());
+    btn.set_tooltip_text(Some(pref.tooltip()));
+}
 
 pub(crate) struct PanedLayout {
     pub(crate) inner_paned: Paned,
@@ -30,6 +44,7 @@ pub(crate) struct HeaderControls {
     pub(crate) history_popover: gtk4::Popover,
     pub(crate) initial_left_sidebar_visible: bool,
     pub(crate) initial_right_sidebar_visible: bool,
+    pub(crate) color_scheme: Rc<Cell<ColorSchemePref>>,
 }
 
 pub(crate) fn build_header_controls(
@@ -253,6 +268,23 @@ pub(crate) fn build_header_controls(
     right_toggle.set_tooltip_text(Some("Toggle right panel"));
     header_bar.pack_end(&right_toggle);
 
+    let initial_color_scheme = app_config.color_scheme.unwrap_or(ColorSchemePref::System);
+    apply_color_scheme_pref(initial_color_scheme);
+    let color_scheme = Rc::new(Cell::new(initial_color_scheme));
+    let theme_btn = gtk4::Button::from_icon_name(initial_color_scheme.icon_name());
+    theme_btn.add_css_class("flat");
+    sync_theme_button(&theme_btn, initial_color_scheme);
+    let color_scheme_click = color_scheme.clone();
+    theme_btn.connect_clicked(move |btn| {
+        let next = color_scheme_click.get().next();
+        color_scheme_click.set(next);
+        apply_color_scheme_pref(next);
+        sync_theme_button(btn, next);
+        crate::config::save_color_scheme(next);
+    });
+    // Packed after right_toggle so it sits immediately left of the pane toggle.
+    header_bar.pack_end(&theme_btn);
+
     HeaderControls {
         header_bar,
         controls_row,
@@ -268,6 +300,7 @@ pub(crate) fn build_header_controls(
         history_popover,
         initial_left_sidebar_visible,
         initial_right_sidebar_visible,
+        color_scheme,
     }
 }
 

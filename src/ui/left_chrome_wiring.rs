@@ -1,9 +1,10 @@
+use crate::config::ColorSchemePref;
 use crate::ui::shell::HeaderControls;
 use crate::ui::tree::TreeWidgets;
 use gtk4::gio;
 use gtk4::ListView;
 use libadwaita as adw;
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 /// Cloned GTK handles for the header toolbar plus left tree panel, shared across installers.
 #[derive(Clone)]
@@ -21,6 +22,7 @@ pub(crate) struct LeftChromeWiring {
     pub(crate) history_list: gtk4::Box,
     pub(crate) history_popover: gtk4::Popover,
     pub(crate) initial_right_sidebar_visible: bool,
+    pub(crate) color_scheme: Rc<Cell<ColorSchemePref>>,
     pub(crate) left_sidebar: gtk4::Box,
     pub(crate) tree_root: gio::ListStore,
     pub(crate) tree_model: gtk4::TreeListModel,
@@ -44,6 +46,7 @@ impl LeftChromeWiring {
             history_list: header.history_list.clone(),
             history_popover: header.history_popover.clone(),
             initial_right_sidebar_visible: header.initial_right_sidebar_visible,
+            color_scheme: header.color_scheme.clone(),
             left_sidebar: tree.left_sidebar.clone(),
             tree_root: tree.tree_root.clone(),
             tree_model: tree.tree_model.clone(),

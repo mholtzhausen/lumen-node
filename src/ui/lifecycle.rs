@@ -105,6 +105,7 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         recent_folders: deps.recent_folders.clone(),
         left_toggle: deps.chrome.left_toggle.clone(),
         right_toggle: deps.chrome.right_toggle.clone(),
+        color_scheme: deps.chrome.color_scheme.clone(),
         window: deps.window.clone(),
         outer_split_dirty: deps.outer_split_dirty.clone(),
         inner_split_dirty: deps.inner_split_dirty.clone(),
