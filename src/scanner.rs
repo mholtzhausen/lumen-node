@@ -97,14 +97,18 @@ pub fn scan_directory(
             let path_str = path.to_string_lossy().into_owned();
             let maybe_row = db::ensure_indexed_with_outcome(&conn, path);
 
-            let (hash, meta, favourite, indexed_from_cache) = match maybe_row {
-                Some((row, outcome)) => (
-                    row.hash,
-                    row.meta,
-                    row.favourite != 0,
-                    matches!(outcome, db::IndexOutcome::Cached),
-                ),
-                None => (String::new(), Default::default(), false, false),
+            let (hash, meta, favourite, tags, indexed_from_cache) = match maybe_row {
+                Some((row, outcome)) => {
+                    let tags = db::list_tags_for_path(&conn, path).unwrap_or_default();
+                    (
+                        row.hash,
+                        row.meta,
+                        row.favourite != 0,
+                        tags,
+                        matches!(outcome, db::IndexOutcome::Cached),
+                    )
+                }
+                None => (String::new(), Default::default(), false, Vec::new(), false),
             };
 
             if sender
@@ -113,6 +117,7 @@ pub fn scan_directory(
                     hash,
                     meta,
                     favourite,
+                    tags,
                     indexed_from_cache,
                     generation,
                 })

@@ -82,7 +82,8 @@ Current UI screenshot:
 | ⚡ | **Progressive loading** — folder opens instantly, thumbnails fill in behind |
 | 🖼️ | **Grid + single-view + compare** — grid for browsing, click for focus, Escape to return; pin a reference for side-by-side compare (lock-left); empty grid shows guidance (open folder, no images, no matches) |
 | 📐 | **4 thumbnail sizes** — 128px base with larger steps up to 240px (128, 160, 208, 240), adjustable in one click |
-| 🔍 | **Live search** — filters grid by filename and metadata in real time |
+| 🔍 | **Live search** — filters grid by filename, tags, and metadata in real time |
+| 🏷️ | **Free-form tags** — assign tags from the context menu; filter with the header tag popover (AND); persisted per folder |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |
 | 💾 | **Session persistence** — window, pane positions, recent folders, and theme preference (`color_scheme`) in `~/.lumen-node/config.yml`; sort, search, and thumbnail size per folder in `.lumen-node.db` (`ui_state`). Optional YAML startup defaults and editor/HUD keys are editable via **Edit → Preferences…** (partial writes; unknown keys preserved) |
 | 🌓 | **Theme toggle** — header icon cycles System → Light → Dark (libadwaita color scheme) |
@@ -328,7 +329,7 @@ On exit, the app writes **window geometry**, **three GtkPaned positions** (`left
 | `full_view_favourite_icon` | `true` | Show the favourite star HUD in single/full view (Preferences → General; applies next launch) |
 | `full_view_favourite_icon_seconds` | `2` | Seconds the full-view favourite star stays visible before fading (Preferences → General) |
 
-Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites plus folder-scoped UI state in the **`ui_state`** table (`sort_key`, `search_text`, `favorites_only`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
+Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites, free-form tags (`image_tags`), plus folder-scoped UI state in the **`ui_state`** table (`sort_key`, `search_text`, `favorites_only`, `active_tags`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
 
 ---
 
@@ -453,9 +454,16 @@ CREATE TABLE images (
     workflow_json    TEXT
 );
 CREATE INDEX idx_images_hash ON images(hash);
+
+CREATE TABLE image_tags (
+    path TEXT NOT NULL,
+    tag  TEXT NOT NULL,
+    PRIMARY KEY (path, tag)
+);
+CREATE INDEX idx_image_tags_tag ON image_tags(tag);
 ```
 
-A companion **`ui_state`** table stores string key-value rows for the current folder’s sort mode, search text, and thumbnail size (`db::save_ui_state` / `load_ui_state`).
+A companion **`ui_state`** table stores string key-value rows for the current folder’s sort mode, search text, favourites filter, active tag filter (`active_tags` as a JSON array), and thumbnail size (`db::save_ui_state` / `load_ui_state`).
 
 `ensure_indexed_with_outcome()` checks `mtime + size` for staleness. A match returns the cached row in microseconds. A mismatch triggers the full slow path: SHA-256 hash → metadata extraction → thumbnail generation → DB write.
 
@@ -537,7 +545,7 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 - [x] **Trash / delete** — move to trash from context menu and `Delete`; permanent delete via `Shift+Delete` with confirmation
 - [x] **External open** — file manager and external editor (optional `external_editor` config); per-format custom apps remain a possible enhancement
 - [x] **Side-by-side compare** — pin reference image (left), navigate selection on the right (lock-left); context menu Pin / Exit compare
-- [ ] **Free-form tags** — label images beyond favourite/unfavourite
+- [x] **Free-form tags** — junction table `image_tags`, context menu add/remove, header multi-select filter (AND), search inclusion, `ui_state.active_tags`
 - [x] **Version checker** — background check + in-app banner (`src/updater.rs` → `mholtzhausen/lumen-node` releases; `services::update_checker`)
 
 ---

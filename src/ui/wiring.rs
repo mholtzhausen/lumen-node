@@ -54,6 +54,8 @@ pub(crate) struct ContextMenuWiringDeps {
     pub(crate) right_toggle: gtk4::ToggleButton,
     pub(crate) pre_fullview_left: Rc<Cell<bool>>,
     pub(crate) pre_fullview_right: Rc<Cell<bool>>,
+    pub(crate) tags_filter_btn: gtk4::MenuButton,
+    pub(crate) tags_filter_list: gtk4::Box,
 }
 
 pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn Fn()> {
@@ -134,6 +136,8 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
         },
         &deps.filter,
         on_favourite_changed,
+        &deps.tags_filter_btn,
+        &deps.tags_filter_list,
     )
 }
 
@@ -224,9 +228,12 @@ pub(crate) fn install_open_folder_wiring(deps: OpenFolderWiringDeps) -> Rc<dyn F
         sort_key: deps.app_state.sort_key.clone(),
         search_text: deps.app_state.search_text.clone(),
         favorites_only: deps.app_state.favorites_only.clone(),
+        active_tags: deps.app_state.active_tags.clone(),
         thumbnail_size: deps.app_state.thumbnail_size.clone(),
         sort_dropdown: deps.chrome.sort_dropdown,
         favourites_filter_btn: deps.chrome.favourites_filter_btn,
+        tags_filter_btn: deps.chrome.tags_filter_btn,
+        tags_filter_list: deps.chrome.tags_filter_list,
         search_entry: deps.chrome.search_entry,
         filter: deps.filter,
         sorter: deps.sorter,
@@ -284,10 +291,13 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.chrome.clear_btn,
         &deps.app_state.search_text,
         &deps.app_state.favorites_only,
+        &deps.app_state.active_tags,
         &deps.app_state.sort_key,
         &deps.filter,
         &deps.sorter,
         &deps.chrome.favourites_filter_btn,
+        &deps.chrome.tags_filter_btn,
+        &deps.chrome.tags_filter_list,
         &deps.chrome.search_entry,
         &deps.chrome.sort_dropdown,
         &deps.app_state.thumbnail_size,

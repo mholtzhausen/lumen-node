@@ -4,11 +4,13 @@ use crate::recent_folders::push_recent_folder_entry;
 use crate::sort::sort_index_for_key;
 use crate::thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use crate::tree_sidebar::{reset_tree_root, sync_tree_to_path};
+use crate::ui::controls::refresh_tag_filter_from_folder;
 use crate::ScanProgressState;
 use gtk4::gio;
 use gtk4::prelude::*;
 use std::{
     cell::{Cell, RefCell},
+    collections::HashSet,
     path::PathBuf,
     rc::Rc,
 };
@@ -23,9 +25,12 @@ pub(crate) struct OpenFolderActionDeps {
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
     pub(crate) favorites_only: Rc<Cell<bool>>,
+    pub(crate) active_tags: Rc<RefCell<HashSet<String>>>,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) sort_dropdown: gtk4::DropDown,
     pub(crate) favourites_filter_btn: gtk4::ToggleButton,
+    pub(crate) tags_filter_btn: gtk4::MenuButton,
+    pub(crate) tags_filter_list: gtk4::Box,
     pub(crate) search_entry: gtk4::SearchEntry,
     pub(crate) filter: gtk4::CustomFilter,
     pub(crate) sorter: gtk4::CustomSorter,
@@ -45,6 +50,7 @@ pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(
             *deps.sort_key.borrow_mut() = saved_ui_state.sort_key;
             *deps.search_text.borrow_mut() = saved_ui_state.search_text.clone();
             deps.favorites_only.set(saved_ui_state.favorites_only);
+            *deps.active_tags.borrow_mut() = saved_ui_state.active_tags.iter().cloned().collect();
             *deps.thumbnail_size.borrow_mut() =
                 normalize_thumbnail_size(saved_ui_state.thumbnail_size);
 
@@ -66,10 +72,12 @@ pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(
                 btn.set_active(thumbnail_size_options()[i] == *deps.thumbnail_size.borrow());
             }
         } else {
+            deps.active_tags.borrow_mut().clear();
             let seeded_state = db::UiState {
                 sort_key: deps.sort_key.borrow().clone(),
                 search_text: deps.search_text.borrow().clone(),
                 favorites_only: deps.favorites_only.get(),
+                active_tags: Vec::new(),
                 thumbnail_size: *deps.thumbnail_size.borrow(),
             };
             let _ = db::save_ui_state(path.as_path(), &seeded_state);
@@ -82,6 +90,13 @@ pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(
             push_recent_folder_entry(&mut history, path.as_path(), deps.recent_folders_limit);
             config::save_recent_state(Some(path.as_path()), &history);
         }
+        refresh_tag_filter_from_folder(
+            &deps.tags_filter_list,
+            &deps.tags_filter_btn,
+            &deps.active_tags,
+            &deps.filter,
+            &deps.current_folder,
+        );
         reset_tree_root(&deps.tree_root, path.as_path());
         (deps.start_scan_for_folder)(path.clone());
         if sync_tree {

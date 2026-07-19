@@ -1,11 +1,18 @@
 use crate::config::ColorSchemePref;
 use crate::sort::sort_index_for_key;
+use crate::ui::controls::active_tags_vec;
 use crate::window_math::{pct_to_px, px_to_pct};
 use crate::{config, db};
 use gtk4::prelude::*;
 use gtk4::{glib, CustomFilter};
 use libadwaita as adw;
-use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashSet,
+    path::PathBuf,
+    rc::Rc,
+    time::Duration,
+};
 
 pub(crate) struct ClosePersistenceDeps {
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
@@ -16,6 +23,7 @@ pub(crate) struct ClosePersistenceDeps {
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
     pub(crate) favorites_only: Rc<Cell<bool>>,
+    pub(crate) active_tags: Rc<RefCell<HashSet<String>>>,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) recent_folders: Rc<RefCell<Vec<PathBuf>>>,
     pub(crate) left_toggle: gtk4::ToggleButton,
@@ -114,6 +122,7 @@ pub(crate) fn install_close_persistence_handler(deps: ClosePersistenceDeps) {
                     sort_key: deps.sort_key.borrow().clone(),
                     search_text: deps.search_text.borrow().clone(),
                     favorites_only: deps.favorites_only.get(),
+                    active_tags: active_tags_vec(&deps.active_tags),
                     thumbnail_size: *deps.thumbnail_size.borrow(),
                 },
             );

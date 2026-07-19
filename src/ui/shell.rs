@@ -35,6 +35,8 @@ pub(crate) struct HeaderControls {
     pub(crate) sort_dropdown: gtk4::DropDown,
     pub(crate) size_buttons: Rc<Vec<gtk4::ToggleButton>>,
     pub(crate) favourites_filter_btn: gtk4::ToggleButton,
+    pub(crate) tags_filter_btn: gtk4::MenuButton,
+    pub(crate) tags_filter_list: gtk4::Box,
     pub(crate) search_entry: gtk4::SearchEntry,
     pub(crate) clear_btn: gtk4::Button,
     pub(crate) left_toggle: gtk4::ToggleButton,
@@ -227,7 +229,7 @@ pub(crate) fn build_header_controls(
     let size_buttons = Rc::new(size_buttons_vec);
 
     let search_entry = gtk4::SearchEntry::new();
-    search_entry.set_placeholder_text(Some("Search filename or prompt…"));
+    search_entry.set_placeholder_text(Some("Search filename, prompt, or tag…"));
     search_entry.set_width_request(220);
     search_entry.set_hexpand(true);
 
@@ -235,6 +237,24 @@ pub(crate) fn build_header_controls(
     favourites_filter_btn.set_icon_name("starred-symbolic");
     favourites_filter_btn.set_tooltip_text(Some("Show favourites only"));
     favourites_filter_btn.add_css_class("flat");
+
+    let tags_filter_btn = gtk4::MenuButton::new();
+    tags_filter_btn.set_icon_name("tag-symbolic");
+    tags_filter_btn.set_tooltip_text(Some("Filter by tags"));
+    tags_filter_btn.add_css_class("flat");
+    let tags_filter_popover = gtk4::Popover::new();
+    let tags_filter_list = gtk4::Box::new(Orientation::Vertical, 4);
+    tags_filter_list.set_margin_top(8);
+    tags_filter_list.set_margin_bottom(8);
+    tags_filter_list.set_margin_start(8);
+    tags_filter_list.set_margin_end(8);
+    let tags_scroll = gtk4::ScrolledWindow::new();
+    tags_scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+    tags_scroll.set_max_content_height(240);
+    tags_scroll.set_propagate_natural_height(true);
+    tags_scroll.set_child(Some(&tags_filter_list));
+    tags_filter_popover.set_child(Some(&tags_scroll));
+    tags_filter_btn.set_popover(Some(&tags_filter_popover));
 
     let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
     clear_btn.set_tooltip_text(Some("Clear filters"));
@@ -273,6 +293,7 @@ pub(crate) fn build_header_controls(
     controls_row.append(&sort_dropdown);
     controls_row.append(&size_selector);
     controls_row.append(&favourites_filter_btn);
+    controls_row.append(&tags_filter_btn);
     controls_row.append(&search_entry);
     controls_row.append(&clear_btn);
     header_bar.pack_start(&menubar);
@@ -325,6 +346,8 @@ pub(crate) fn build_header_controls(
         sort_dropdown,
         size_buttons,
         favourites_filter_btn,
+        tags_filter_btn,
+        tags_filter_list,
         search_entry,
         clear_btn,
         left_toggle,
@@ -398,7 +421,8 @@ pub(crate) fn create_window_with_defaults(
         .thumbnail-favourite-active {
             color: @accent_color;
         }
-        .favorites-filter-active {
+        .favorites-filter-active,
+        .tags-filter-active {
             color: @accent_color;
         }
         gridview > child {

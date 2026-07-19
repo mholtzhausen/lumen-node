@@ -20,11 +20,13 @@ pub(crate) struct ModelBundle {
 }
 
 pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
-    // Filter model: wraps list_store, applies search text.
+    // Filter model: wraps list_store, applies favourites / tags / search.
     let meta_cache_filter = deps.app_state.meta_cache.clone();
     let favourite_cache_filter = deps.app_state.favourite_cache.clone();
+    let tags_cache_filter = deps.app_state.tags_cache.clone();
     let search_text_filter = deps.app_state.search_text.clone();
     let favorites_only_filter = deps.app_state.favorites_only.clone();
+    let active_tags_filter = deps.app_state.active_tags.clone();
     let filter = CustomFilter::new(move |obj| {
         let path_str = obj
             .downcast_ref::<StringObject>()
@@ -39,9 +41,27 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
         } else {
             true
         };
+        if !matches_favorite {
+            return false;
+        }
+        {
+            let active = active_tags_filter.borrow();
+            if !active.is_empty() {
+                let tags = tags_cache_filter.borrow();
+                let image_tags = tags.get(&path_str);
+                let Some(image_tags) = image_tags else {
+                    return false;
+                };
+                for required in active.iter() {
+                    if !image_tags.iter().any(|t| t == required) {
+                        return false;
+                    }
+                }
+            }
+        }
         let query = search_text_filter.borrow().clone();
         if query.is_empty() {
-            return matches_favorite;
+            return true;
         }
         // Match against filename.
         let filename = Path::new(&path_str)
@@ -49,7 +69,15 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
             .map(|n| n.to_string_lossy().to_lowercase())
             .unwrap_or_default();
         if filename.contains(&query) {
-            return matches_favorite;
+            return true;
+        }
+        // Match against tags.
+        if let Some(tags) = tags_cache_filter.borrow().get(&path_str) {
+            for tag in tags {
+                if tag.to_lowercase().contains(&query) {
+                    return true;
+                }
+            }
         }
         // Match against cached metadata fields.
         let cache = meta_cache_filter.borrow();
@@ -66,7 +94,7 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
             ];
             for field in fields.iter().flatten() {
                 if field.to_lowercase().contains(&query) {
-                    return matches_favorite;
+                    return true;
                 }
             }
         }

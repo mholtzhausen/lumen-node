@@ -1,16 +1,18 @@
 use crate::db;
-use crate::dialogs::open_trash_dialog;
+use crate::dialogs::{open_add_tag_dialog, open_trash_dialog};
 use crate::metadata::ImageMetadata;
 use crate::metadata_section::{apply_metadata_section_state, metadata_has_content};
 use crate::metadata_view::{
     extract_seed_from_parameters, format_generation_command, format_metadata_text,
     has_generation_command_content,
 };
+use crate::ui::controls::refresh_tag_filter_from_folder;
 use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::grid::{enter_compare_view_mode, refresh_realized_grid_favourite_icons};
 use crate::ui::preview::{clear_picture, load_picture_async};
 use crate::thumbnails;
 use crate::view_helpers::{attach_context_menu_with_prepare, selected_image_path};
+use gtk4::glib;
 use gtk4::glib::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{gdk, gio, GridView, Picture, SingleSelection, StringObject};
@@ -37,9 +39,12 @@ struct CtxMenuActionHandles {
     open_in_file_manager: gio::SimpleAction,
     open_in_external_editor: gio::SimpleAction,
     toggle_favourite: gio::SimpleAction,
+    add_tag: gio::SimpleAction,
+    remove_tag: gio::SimpleAction,
     move_to_trash: gio::SimpleAction,
     pin_for_compare: gio::SimpleAction,
     exit_compare: gio::SimpleAction,
+    remove_tags_menu: gio::Menu,
 }
 
 fn register_context_menu_accels(window: &adw::ApplicationWindow) {
@@ -153,6 +158,7 @@ fn sync_context_menu_action_states(
     h.open_in_file_manager.set_enabled(has_sel && parent_ok);
     h.open_in_external_editor.set_enabled(has_sel && file_on_disk);
     h.toggle_favourite.set_enabled(has_sel && indexed);
+    h.add_tag.set_enabled(has_sel && indexed);
     h.move_to_trash.set_enabled(has_sel && file_on_disk);
     h.pin_for_compare.set_enabled(has_sel && file_on_disk);
     h.exit_compare
@@ -167,6 +173,32 @@ fn sync_context_menu_action_states(
         _ => false,
     };
     h.toggle_favourite.set_state(&fav_state.to_variant());
+
+    // Rebuild "Remove tag" submenu from the selected image's tags.
+    while h.remove_tags_menu.n_items() > 0 {
+        h.remove_tags_menu.remove(0);
+    }
+    let tags = match (path_opt.as_ref(), key.as_ref()) {
+        (Some(_), Some(path_key)) => {
+            // Prefer cache; fall back to DB if needed.
+            // (Caller may not have tags_cache in scope — use DB when indexed.)
+            current_folder
+                .borrow()
+                .as_ref()
+                .and_then(|folder| db::open(folder).ok())
+                .and_then(|conn| {
+                    db::list_tags_for_path(&conn, std::path::Path::new(path_key)).ok()
+                })
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    };
+    h.remove_tag.set_enabled(has_sel && indexed && !tags.is_empty());
+    for tag in &tags {
+        let item = gio::MenuItem::new(Some(tag), Some("ctx.remove-tag"));
+        item.set_attribute_value("target", Some(&tag.to_variant()));
+        h.remove_tags_menu.append_item(&item);
+    }
 }
 
 pub fn install_context_menu(
@@ -199,6 +231,8 @@ pub fn install_context_menu(
     mutation_ctx: &ListMutationContext,
     filter: &gtk4::CustomFilter,
     on_favourite_changed: Rc<dyn Fn(bool)>,
+    tags_filter_btn: &gtk4::MenuButton,
+    tags_filter_list: &gtk4::Box,
 ) -> Rc<dyn Fn()> {
     let action_group = gio::SimpleActionGroup::new();
     let sync_context_menu_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
@@ -218,6 +252,10 @@ pub fn install_context_menu(
     let open_in_external_editor_action = gio::SimpleAction::new("open-in-external-editor", None);
     let toggle_favourite_action =
         gio::SimpleAction::new_stateful("toggle-favourite", None, &false.to_variant());
+    let add_tag_action = gio::SimpleAction::new("add-tag", None);
+    let remove_tag_action =
+        gio::SimpleAction::new("remove-tag", Some(glib::VariantTy::STRING));
+    let remove_tags_menu = gio::Menu::new();
     let move_to_trash_action = gio::SimpleAction::new("move-to-trash", None);
 
     let selection_for_actions = selection_model.clone();
@@ -568,6 +606,108 @@ pub fn install_context_menu(
         }
     });
 
+    let selection_for_add_tag = selection_model.clone();
+    let window_for_add_tag = window.clone();
+    let toast_for_add_tag = toast_overlay.clone();
+    let mutation_for_add_tag = mutation_ctx.clone();
+    let filter_for_add_tag = filter.clone();
+    let tags_filter_btn_for_add = tags_filter_btn.clone();
+    let tags_filter_list_for_add = tags_filter_list.clone();
+    let sync_slot_for_add = sync_context_menu_slot.clone();
+    add_tag_action.connect_activate(move |_, _| {
+        let Some(path) = selected_image_path(&selection_for_add_tag) else {
+            return;
+        };
+        let on_tags_changed: Rc<dyn Fn()> = {
+            let filter = filter_for_add_tag.clone();
+            let tags_filter_btn = tags_filter_btn_for_add.clone();
+            let tags_filter_list = tags_filter_list_for_add.clone();
+            let app_state = mutation_for_add_tag.app_state.clone();
+            let sync_slot = sync_slot_for_add.clone();
+            Rc::new(move || {
+                filter.changed(gtk4::FilterChange::Different);
+                refresh_tag_filter_from_folder(
+                    &tags_filter_list,
+                    &tags_filter_btn,
+                    &app_state.active_tags,
+                    &filter,
+                    &app_state.current_folder,
+                );
+                if let Some(sync) = sync_slot.borrow().as_ref() {
+                    sync();
+                }
+            })
+        };
+        open_add_tag_dialog(
+            &window_for_add_tag,
+            &toast_for_add_tag,
+            &mutation_for_add_tag,
+            path,
+            on_tags_changed,
+        );
+    });
+
+    let selection_for_remove_tag = selection_model.clone();
+    let current_folder_for_remove_tag = current_folder.clone();
+    let toast_for_remove_tag = toast_overlay.clone();
+    let mutation_for_remove_tag = mutation_ctx.clone();
+    let filter_for_remove_tag = filter.clone();
+    let tags_filter_btn_for_remove = tags_filter_btn.clone();
+    let tags_filter_list_for_remove = tags_filter_list.clone();
+    let sync_slot_for_remove = sync_context_menu_slot.clone();
+    remove_tag_action.connect_activate(move |_, param| {
+        let Some(tag) = param.and_then(|v| v.str().map(|s| s.to_string())) else {
+            return;
+        };
+        let Some(path) = selected_image_path(&selection_for_remove_tag) else {
+            return;
+        };
+        let Some(folder) = current_folder_for_remove_tag.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Ok(conn) = db::open(&folder) else {
+            toast_for_remove_tag.add_toast(adw::Toast::new("Could not open folder database"));
+            return;
+        };
+        match db::remove_tag(&conn, &path, &tag) {
+            Ok(true) => {
+                let path_key = path.to_string_lossy().to_string();
+                let tags = db::list_tags_for_path(&conn, &path).unwrap_or_default();
+                if tags.is_empty() {
+                    mutation_for_remove_tag
+                        .app_state
+                        .tags_cache
+                        .borrow_mut()
+                        .remove(&path_key);
+                } else {
+                    mutation_for_remove_tag
+                        .app_state
+                        .tags_cache
+                        .borrow_mut()
+                        .insert(path_key, tags);
+                }
+                filter_for_remove_tag.changed(gtk4::FilterChange::Different);
+                refresh_tag_filter_from_folder(
+                    &tags_filter_list_for_remove,
+                    &tags_filter_btn_for_remove,
+                    &mutation_for_remove_tag.app_state.active_tags,
+                    &filter_for_remove_tag,
+                    &mutation_for_remove_tag.app_state.current_folder,
+                );
+                if let Some(sync) = sync_slot_for_remove.borrow().as_ref() {
+                    sync();
+                }
+                toast_for_remove_tag.add_toast(adw::Toast::new(&format!("Removed tag “{tag}”")));
+            }
+            Ok(false) => {
+                toast_for_remove_tag.add_toast(adw::Toast::new("Tag not found"));
+            }
+            Err(_) => {
+                toast_for_remove_tag.add_toast(adw::Toast::new("Could not remove tag"));
+            }
+        }
+    });
+
     let selection_for_actions = selection_model.clone();
     let window_for_trash = window.clone();
     let toast_for_trash = toast_overlay.clone();
@@ -669,6 +809,8 @@ pub fn install_context_menu(
     action_group.add_action(&open_in_file_manager_action);
     action_group.add_action(&open_in_external_editor_action);
     action_group.add_action(&toggle_favourite_action);
+    action_group.add_action(&add_tag_action);
+    action_group.add_action(&remove_tag_action);
     action_group.add_action(&move_to_trash_action);
     action_group.add_action(&pin_for_compare_action);
     action_group.add_action(&exit_compare_action);
@@ -708,6 +850,8 @@ pub fn install_context_menu(
 
     let organise_section = gio::Menu::new();
     organise_section.append(Some("Favourite"), Some("ctx.toggle-favourite"));
+    organise_section.append(Some("Add tag…"), Some("ctx.add-tag"));
+    organise_section.append_submenu(Some("Remove tag"), &remove_tags_menu);
     organise_section.append(Some("Pin for compare"), Some("ctx.pin-for-compare"));
     organise_section.append(Some("Exit compare"), Some("ctx.exit-compare"));
     organise_section.append(Some("Move to Trash"), Some("ctx.move-to-trash"));
@@ -741,9 +885,12 @@ pub fn install_context_menu(
         open_in_file_manager: open_in_file_manager_action.clone(),
         open_in_external_editor: open_in_external_editor_action.clone(),
         toggle_favourite: toggle_favourite_action.clone(),
+        add_tag: add_tag_action.clone(),
+        remove_tag: remove_tag_action.clone(),
         move_to_trash: move_to_trash_action.clone(),
         pin_for_compare: pin_for_compare_action.clone(),
         exit_compare: exit_compare_action.clone(),
+        remove_tags_menu: remove_tags_menu.clone(),
     };
     let sync_fn = Rc::new({
         let selection_for_sync = selection_model.clone();

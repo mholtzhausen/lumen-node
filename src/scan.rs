@@ -14,6 +14,7 @@ pub enum ScanMessage {
         hash: String,
         meta: ImageMetadata,
         favourite: bool,
+        tags: Vec<String>,
         indexed_from_cache: bool,
         generation: u64,
     },

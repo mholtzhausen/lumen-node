@@ -110,8 +110,23 @@ pub fn open_rename_dialog(
                 Ok(()) => {
                     if let Some(folder) = mutation_ctx.app_state.current_folder.borrow().as_ref() {
                         if let Ok(conn) = db::open(folder) {
+                            let _ = db::move_tags(&conn, &source_path, &target);
                             let _ = db::remove_image_row(&conn, &source_path);
                             let _ = db::refresh_indexed(&conn, &target);
+                            let tags =
+                                db::list_tags_for_path(&conn, &target).unwrap_or_default();
+                            let old_key = source_path.to_string_lossy().to_string();
+                            let new_key = target.to_string_lossy().to_string();
+                            mutation_ctx.app_state.tags_cache.borrow_mut().remove(&old_key);
+                            if tags.is_empty() {
+                                mutation_ctx.app_state.tags_cache.borrow_mut().remove(&new_key);
+                            } else {
+                                mutation_ctx
+                                    .app_state
+                                    .tags_cache
+                                    .borrow_mut()
+                                    .insert(new_key, tags);
+                            }
                         }
                     }
                     if !mutation_ctx.replace_path(&source_path, &target, true) {
@@ -292,4 +307,105 @@ pub fn open_trash_dialog(
     });
 
     dialog.present();
+}
+
+/// Simple dialog to assign a free-form tag to the selected image.
+pub fn open_add_tag_dialog(
+    window: &adw::ApplicationWindow,
+    toast_overlay: &adw::ToastOverlay,
+    mutation_ctx: &ListMutationContext,
+    source_path: std::path::PathBuf,
+    on_tags_changed: Rc<dyn Fn()>,
+) {
+    let dialog = gtk4::Window::builder()
+        .transient_for(window)
+        .modal(true)
+        .title("Add tag")
+        .default_width(360)
+        .build();
+
+    let content = gtk4::Box::new(Orientation::Vertical, 8);
+    content.set_margin_top(12);
+    content.set_margin_bottom(12);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+    dialog.set_child(Some(&content));
+
+    let prompt = Label::new(Some("Enter a tag name:"));
+    prompt.set_halign(gtk4::Align::Start);
+    content.append(&prompt);
+
+    let entry = gtk4::Entry::new();
+    entry.set_hexpand(true);
+    content.append(&entry);
+
+    let button_row = gtk4::Box::new(Orientation::Horizontal, 6);
+    button_row.set_halign(gtk4::Align::End);
+    let cancel_btn = gtk4::Button::with_label("Cancel");
+    let add_btn = gtk4::Button::with_label("Add");
+    add_btn.add_css_class("suggested-action");
+    add_btn.set_sensitive(false);
+    button_row.append(&cancel_btn);
+    button_row.append(&add_btn);
+    content.append(&button_row);
+
+    let add_btn_for_entry = add_btn.clone();
+    entry.connect_changed(move |e| {
+        add_btn_for_entry.set_sensitive(db::normalize_tag(e.text().as_str()).is_some());
+    });
+
+    let dialog_for_cancel = dialog.clone();
+    cancel_btn.connect_clicked(move |_| {
+        dialog_for_cancel.close();
+    });
+
+    let dialog_for_add = dialog.clone();
+    let add_btn_activate = add_btn.clone();
+    entry.connect_activate(move |_| {
+        if add_btn_activate.is_sensitive() {
+            add_btn_activate.emit_clicked();
+        }
+    });
+
+    let mutation_ctx = mutation_ctx.clone();
+    let toast_overlay = toast_overlay.clone();
+    let entry_for_add = entry.clone();
+    add_btn.connect_clicked(move |_| {
+        let Some(tag) = db::normalize_tag(entry_for_add.text().as_str()) else {
+            return;
+        };
+        let Some(folder) = mutation_ctx.app_state.current_folder.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Ok(conn) = db::open(&folder) else {
+            toast_overlay.add_toast(adw::Toast::new("Could not open folder database"));
+            dialog_for_add.close();
+            return;
+        };
+        match db::add_tag(&conn, &source_path, &tag) {
+            Ok(true) => {
+                let path_key = source_path.to_string_lossy().to_string();
+                let tags = db::list_tags_for_path(&conn, &source_path).unwrap_or_default();
+                mutation_ctx
+                    .app_state
+                    .tags_cache
+                    .borrow_mut()
+                    .insert(path_key, tags);
+                on_tags_changed();
+                toast_overlay.add_toast(adw::Toast::new(&format!("Tagged “{tag}”")));
+            }
+            Ok(false) => {
+                toast_overlay.add_toast(adw::Toast::new(
+                    "Image must be indexed before tagging",
+                ));
+            }
+            Err(_) => {
+                toast_overlay.add_toast(adw::Toast::new("Could not add tag"));
+            }
+        }
+        dialog_for_add.close();
+    });
+
+    dialog.present();
+    entry.grab_focus();
 }

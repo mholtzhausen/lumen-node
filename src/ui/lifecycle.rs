@@ -46,6 +46,7 @@ pub(crate) struct LifecycleDeps {
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
     pub(crate) favorites_only: Rc<Cell<bool>>,
+    pub(crate) active_tags: Rc<RefCell<std::collections::HashSet<String>>>,
     pub(crate) recent_folders: Rc<RefCell<Vec<PathBuf>>>,
     pub(crate) outer_split_dirty: Rc<Cell<bool>>,
     pub(crate) inner_split_dirty: Rc<Cell<bool>>,
@@ -104,6 +105,7 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         sort_key: deps.sort_key.clone(),
         search_text: deps.search_text.clone(),
         favorites_only: deps.favorites_only.clone(),
+        active_tags: deps.active_tags.clone(),
         thumbnail_size: deps.thumbnail_size.clone(),
         recent_folders: deps.recent_folders.clone(),
         left_toggle: deps.chrome.left_toggle.clone(),
@@ -246,6 +248,7 @@ fn install_folder_delta_watcher(
             app_state.hash_cache.borrow_mut().remove(path);
             app_state.meta_cache.borrow_mut().remove(path);
             app_state.favourite_cache.borrow_mut().remove(path);
+            app_state.tags_cache.borrow_mut().remove(path);
         }
         for path in &added {
             if !mutation_ctx.insert_path(PathBuf::from(path).as_path(), false) {
@@ -261,6 +264,7 @@ fn install_folder_delta_watcher(
             app_state.hash_cache.borrow_mut().remove(path);
             app_state.meta_cache.borrow_mut().remove(path);
             app_state.favourite_cache.borrow_mut().remove(path);
+            app_state.tags_cache.borrow_mut().remove(path);
             schedule_path_index_refresh(&app_state, folder.clone(), path.clone(), true);
         }
         if had_failure {
@@ -323,16 +327,18 @@ fn schedule_path_index_refresh(
         let Ok(conn) = db::open(&folder) else {
             return None;
         };
-        if force_refresh {
+        let indexed = if force_refresh {
             db::refresh_indexed(&conn, &path_buf)
                 .map(|row| (row.hash, row.meta, row.favourite != 0))
         } else {
             db::ensure_indexed_with_outcome(&conn, &path_buf)
                 .map(|(row, _)| (row.hash, row.meta, row.favourite != 0))
-        }
+        }?;
+        let tags = db::list_tags_for_path(&conn, &path_buf).unwrap_or_default();
+        Some((indexed.0, indexed.1, indexed.2, tags))
     });
     glib::MainContext::default().spawn_local(async move {
-        let Ok(Some((hash, meta, favourite))) = task.await else {
+        let Ok(Some((hash, meta, favourite, tags))) = task.await else {
             return;
         };
         if app_state.current_folder.borrow().as_ref().is_none() {
@@ -340,7 +346,8 @@ fn schedule_path_index_refresh(
         }
         app_state.hash_cache.borrow_mut().insert(path.clone(), hash);
         app_state.meta_cache.borrow_mut().insert(path.clone(), meta);
-        app_state.favourite_cache.borrow_mut().insert(path, favourite);
+        app_state.favourite_cache.borrow_mut().insert(path.clone(), favourite);
+        app_state.tags_cache.borrow_mut().insert(path, tags);
         refresh_realized_grid_favourite_icons(&app_state);
     });
 }

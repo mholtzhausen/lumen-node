@@ -6,7 +6,142 @@ use gtk4::prelude::*;
 use gtk4::gio::ListStore;
 use gtk4::{CustomFilter, CustomSorter, SingleSelection};
 use libadwaita as adw;
-use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashSet,
+    path::PathBuf,
+    rc::Rc,
+};
+
+/// Snapshot active tag filter as a sorted Vec for persistence / UiState.
+pub(crate) fn active_tags_vec(active_tags: &Rc<RefCell<HashSet<String>>>) -> Vec<String> {
+    let mut tags: Vec<String> = active_tags.borrow().iter().cloned().collect();
+    tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    tags
+}
+
+pub(crate) fn sync_tags_filter_button_style(
+    tags_filter_btn: &gtk4::MenuButton,
+    active_tags: &Rc<RefCell<HashSet<String>>>,
+) {
+    if active_tags.borrow().is_empty() {
+        tags_filter_btn.remove_css_class("tags-filter-active");
+    } else {
+        tags_filter_btn.add_css_class("tags-filter-active");
+    }
+}
+
+/// Rebuilds the tag-filter popover checkboxes from folder tags + active set.
+pub(crate) fn rebuild_tag_filter_list(
+    tags_filter_list: &gtk4::Box,
+    tags_filter_btn: &gtk4::MenuButton,
+    active_tags: &Rc<RefCell<HashSet<String>>>,
+    filter: &CustomFilter,
+    current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    known_tags: &[String],
+) {
+    while let Some(child) = tags_filter_list.first_child() {
+        tags_filter_list.remove(&child);
+    }
+
+    let heading = gtk4::Label::new(Some("Filter by tags (AND)"));
+    heading.add_css_class("caption-heading");
+    heading.set_halign(gtk4::Align::Start);
+    tags_filter_list.append(&heading);
+
+    if known_tags.is_empty() {
+        let empty = gtk4::Label::new(Some("No tags in this folder yet."));
+        empty.add_css_class("caption");
+        empty.set_halign(gtk4::Align::Start);
+        tags_filter_list.append(&empty);
+        sync_tags_filter_button_style(tags_filter_btn, active_tags);
+        return;
+    }
+
+    let active_snapshot = active_tags.borrow().clone();
+    for tag in known_tags {
+        let check = gtk4::CheckButton::with_label(tag);
+        check.set_active(active_snapshot.contains(tag));
+        let tag_owned = tag.clone();
+        let active_tags_cb = active_tags.clone();
+        let filter_cb = filter.clone();
+        let folder_cb = current_folder.clone();
+        let btn_cb = tags_filter_btn.clone();
+        check.connect_toggled(move |btn| {
+            {
+                let mut active = active_tags_cb.borrow_mut();
+                if btn.is_active() {
+                    active.insert(tag_owned.clone());
+                } else {
+                    active.remove(&tag_owned);
+                }
+            }
+            if let Some(folder) = folder_cb.borrow().as_ref() {
+                let _ = db::set_ui_state_value(
+                    folder.as_path(),
+                    "active_tags",
+                    &db::encode_active_tags(&active_tags_vec(&active_tags_cb)),
+                );
+            }
+            sync_tags_filter_button_style(&btn_cb, &active_tags_cb);
+            filter_cb.changed(gtk4::FilterChange::Different);
+        });
+        tags_filter_list.append(&check);
+    }
+
+    if !active_snapshot.is_empty() {
+        let clear = gtk4::Button::with_label("Clear tag filter");
+        clear.add_css_class("flat");
+        let active_tags_clear = active_tags.clone();
+        let filter_clear = filter.clone();
+        let folder_clear = current_folder.clone();
+        let btn_clear = tags_filter_btn.clone();
+        let list_clear = tags_filter_list.clone();
+        let known_clear: Vec<String> = known_tags.to_vec();
+        clear.connect_clicked(move |_| {
+            active_tags_clear.borrow_mut().clear();
+            if let Some(folder) = folder_clear.borrow().as_ref() {
+                let _ = db::set_ui_state_value(folder.as_path(), "active_tags", "[]");
+            }
+            rebuild_tag_filter_list(
+                &list_clear,
+                &btn_clear,
+                &active_tags_clear,
+                &filter_clear,
+                &folder_clear,
+                &known_clear,
+            );
+            filter_clear.changed(gtk4::FilterChange::Different);
+        });
+        tags_filter_list.append(&clear);
+    }
+
+    sync_tags_filter_button_style(tags_filter_btn, active_tags);
+}
+
+/// Refresh tag filter UI from the current folder DB (known tags).
+pub(crate) fn refresh_tag_filter_from_folder(
+    tags_filter_list: &gtk4::Box,
+    tags_filter_btn: &gtk4::MenuButton,
+    active_tags: &Rc<RefCell<HashSet<String>>>,
+    filter: &CustomFilter,
+    current_folder: &Rc<RefCell<Option<PathBuf>>>,
+) {
+    let known = current_folder
+        .borrow()
+        .as_ref()
+        .and_then(|folder| db::open(folder).ok())
+        .and_then(|conn| db::list_all_tags_in_folder(&conn).ok())
+        .unwrap_or_default();
+    rebuild_tag_filter_list(
+        tags_filter_list,
+        tags_filter_btn,
+        active_tags,
+        filter,
+        current_folder,
+        &known,
+    );
+}
 
 pub(crate) fn install_sort_dropdown_handler(
     sort_dropdown: &gtk4::DropDown,
@@ -68,10 +203,13 @@ pub(crate) fn install_search_entry_handler(
 pub(crate) fn apply_clear_filters(
     search_text: &Rc<RefCell<String>>,
     favorites_only: &Rc<Cell<bool>>,
+    active_tags: &Rc<RefCell<HashSet<String>>>,
     sort_key: &Rc<RefCell<String>>,
     filter: &CustomFilter,
     sorter: &CustomSorter,
     favourites_filter_btn: &gtk4::ToggleButton,
+    tags_filter_btn: &gtk4::MenuButton,
+    tags_filter_list: &gtk4::Box,
     search_entry: &gtk4::SearchEntry,
     sort_dropdown: &gtk4::DropDown,
     thumbnail_size: &Rc<RefCell<i32>>,
@@ -79,6 +217,7 @@ pub(crate) fn apply_clear_filters(
 ) {
     *search_text.borrow_mut() = String::new();
     favorites_only.set(false);
+    active_tags.borrow_mut().clear();
     *sort_key.borrow_mut() = SORT_KEY_NAME_ASC.to_string();
     favourites_filter_btn.remove_css_class("favorites-filter-active");
     favourites_filter_btn.set_active(false);
@@ -91,12 +230,41 @@ pub(crate) fn apply_clear_filters(
                 sort_key: sort_key.borrow().clone(),
                 search_text: search_text.borrow().clone(),
                 favorites_only: favorites_only.get(),
+                active_tags: Vec::new(),
                 thumbnail_size: *thumbnail_size.borrow(),
             },
         );
     }
+    refresh_tag_filter_from_folder(
+        tags_filter_list,
+        tags_filter_btn,
+        active_tags,
+        filter,
+        current_folder,
+    );
     filter.changed(gtk4::FilterChange::LessStrict);
     sorter.changed(gtk4::SorterChange::Different);
+}
+
+pub(crate) fn deactivate_tag_filter(
+    active_tags: &Rc<RefCell<HashSet<String>>>,
+    filter: &CustomFilter,
+    tags_filter_btn: &gtk4::MenuButton,
+    tags_filter_list: &gtk4::Box,
+    current_folder: &Rc<RefCell<Option<PathBuf>>>,
+) {
+    active_tags.borrow_mut().clear();
+    if let Some(folder) = current_folder.borrow().as_ref() {
+        let _ = db::set_ui_state_value(folder.as_path(), "active_tags", "[]");
+    }
+    refresh_tag_filter_from_folder(
+        tags_filter_list,
+        tags_filter_btn,
+        active_tags,
+        filter,
+        current_folder,
+    );
+    filter.changed(gtk4::FilterChange::Different);
 }
 
 pub(crate) fn deactivate_favorites_filter(
@@ -118,10 +286,13 @@ pub(crate) fn install_clear_button_handler(
     clear_btn: &gtk4::Button,
     search_text: &Rc<RefCell<String>>,
     favorites_only: &Rc<Cell<bool>>,
+    active_tags: &Rc<RefCell<HashSet<String>>>,
     sort_key: &Rc<RefCell<String>>,
     filter: &CustomFilter,
     sorter: &CustomSorter,
     favourites_filter_btn: &gtk4::ToggleButton,
+    tags_filter_btn: &gtk4::MenuButton,
+    tags_filter_list: &gtk4::Box,
     search_entry: &gtk4::SearchEntry,
     sort_dropdown: &gtk4::DropDown,
     thumbnail_size: &Rc<RefCell<i32>>,
@@ -129,10 +300,13 @@ pub(crate) fn install_clear_button_handler(
 ) {
     let search_text_clear = search_text.clone();
     let favorites_only_clear = favorites_only.clone();
+    let active_tags_clear = active_tags.clone();
     let sort_key_clear = sort_key.clone();
     let filter_clear = filter.clone();
     let sorter_clear = sorter.clone();
     let favourites_filter_btn_clear = favourites_filter_btn.clone();
+    let tags_filter_btn_clear = tags_filter_btn.clone();
+    let tags_filter_list_clear = tags_filter_list.clone();
     let search_entry_clear = search_entry.clone();
     let sort_dropdown_clear = sort_dropdown.clone();
     let thumbnail_size_clear = thumbnail_size.clone();
@@ -141,10 +315,13 @@ pub(crate) fn install_clear_button_handler(
         apply_clear_filters(
             &search_text_clear,
             &favorites_only_clear,
+            &active_tags_clear,
             &sort_key_clear,
             &filter_clear,
             &sorter_clear,
             &favourites_filter_btn_clear,
+            &tags_filter_btn_clear,
+            &tags_filter_list_clear,
             &search_entry_clear,
             &sort_dropdown_clear,
             &thumbnail_size_clear,

@@ -146,6 +146,7 @@ pub(crate) fn build_tree_widgets(
 pub(crate) struct TreeFolderSelectionDeps {
     pub(crate) app_state: AppState,
     pub(crate) chrome: LeftChromeWiring,
+    pub(crate) filter: gtk4::CustomFilter,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) recent_folders_limit: usize,
 }
@@ -157,10 +158,14 @@ struct BrowseFolderCtx {
     sort_key: Rc<RefCell<String>>,
     search_text: Rc<RefCell<String>>,
     favorites_only: Rc<Cell<bool>>,
+    active_tags: Rc<RefCell<std::collections::HashSet<String>>>,
     thumbnail_size: Rc<RefCell<i32>>,
     sort_dropdown: gtk4::DropDown,
     favourites_filter_btn: gtk4::ToggleButton,
+    tags_filter_btn: gtk4::MenuButton,
+    tags_filter_list: gtk4::Box,
     search_entry: gtk4::SearchEntry,
+    filter: gtk4::CustomFilter,
     size_buttons: Rc<Vec<gtk4::ToggleButton>>,
     progress_state: Rc<RefCell<crate::ScanProgressState>>,
     start_scan: Rc<dyn Fn(PathBuf)>,
@@ -176,6 +181,7 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
         *ctx.sort_key.borrow_mut() = saved_ui_state.sort_key;
         *ctx.search_text.borrow_mut() = saved_ui_state.search_text.clone();
         ctx.favorites_only.set(saved_ui_state.favorites_only);
+        *ctx.active_tags.borrow_mut() = saved_ui_state.active_tags.iter().cloned().collect();
         *ctx.thumbnail_size.borrow_mut() = normalize_thumbnail_size(saved_ui_state.thumbnail_size);
 
         if ctx.sort_dropdown.selected() != selected_sort {
@@ -195,10 +201,12 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
             btn.set_active(thumbnail_size_options()[i] == *ctx.thumbnail_size.borrow());
         }
     } else {
+        ctx.active_tags.borrow_mut().clear();
         let seeded_state = db::UiState {
             sort_key: ctx.sort_key.borrow().clone(),
             search_text: ctx.search_text.borrow().clone(),
             favorites_only: ctx.favorites_only.get(),
+            active_tags: Vec::new(),
             thumbnail_size: *ctx.thumbnail_size.borrow(),
         };
         let _ = db::save_ui_state(path, &seeded_state);
@@ -217,6 +225,13 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
         };
         crate::config::save_recent_state(last_folder, &history);
     }
+    crate::ui::controls::refresh_tag_filter_from_folder(
+        &ctx.tags_filter_list,
+        &ctx.tags_filter_btn,
+        &ctx.active_tags,
+        &ctx.filter,
+        &ctx.current_folder,
+    );
     (ctx.start_scan)(path.to_path_buf());
 }
 
@@ -229,10 +244,14 @@ pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
         sort_key: deps.app_state.sort_key.clone(),
         search_text: deps.app_state.search_text.clone(),
         favorites_only: deps.app_state.favorites_only.clone(),
+        active_tags: deps.app_state.active_tags.clone(),
         thumbnail_size: deps.app_state.thumbnail_size.clone(),
         sort_dropdown: deps.chrome.sort_dropdown.clone(),
         favourites_filter_btn: deps.chrome.favourites_filter_btn.clone(),
+        tags_filter_btn: deps.chrome.tags_filter_btn.clone(),
+        tags_filter_list: deps.chrome.tags_filter_list.clone(),
         search_entry: deps.chrome.search_entry.clone(),
+        filter: deps.filter.clone(),
         size_buttons: deps.chrome.size_buttons.clone(),
         progress_state: deps.app_state.progress_state.clone(),
         start_scan: deps.start_scan_for_folder.clone(),

@@ -49,6 +49,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
         let hash_cache_recv = deps.app_state.hash_cache.clone();
         let meta_cache_recv = deps.app_state.meta_cache.clone();
         let favourite_cache_recv = deps.app_state.favourite_cache.clone();
+        let tags_cache_recv = deps.app_state.tags_cache.clone();
         let sort_fields_cache_recv = deps.app_state.sort_fields_cache.clone();
         let active_scan_generation_recv = deps.app_state.active_scan_generation.clone();
         let scan_in_progress_recv = deps.app_state.scan_in_progress.clone();
@@ -74,6 +75,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
             let hash_cache_recv = hash_cache_recv.clone();
             let meta_cache_recv = meta_cache_recv.clone();
             let favourite_cache_recv = favourite_cache_recv.clone();
+            let tags_cache_recv = tags_cache_recv.clone();
             let sort_fields_cache_recv = sort_fields_cache_recv.clone();
             let active_scan_generation_recv = active_scan_generation_recv.clone();
             let scan_in_progress_recv = scan_in_progress_recv.clone();
@@ -160,6 +162,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                             hash,
                             meta,
                             favourite,
+                            tags,
                             indexed_from_cache,
                             generation,
                         } => {
@@ -171,7 +174,10 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                                 hash_cache_recv.borrow_mut().insert(path.clone(), hash);
                             }
                             meta_cache_recv.borrow_mut().insert(path.clone(), meta);
-                            favourite_cache_recv.borrow_mut().insert(path, favourite);
+                            favourite_cache_recv
+                                .borrow_mut()
+                                .insert(path.clone(), favourite);
+                            tags_cache_recv.borrow_mut().insert(path, tags);
                             filter_changed = true;
                             let mut progress = progress_state_recv.borrow_mut();
                             if progress.generation == generation {

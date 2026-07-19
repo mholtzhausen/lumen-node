@@ -38,6 +38,8 @@ pub struct UiState {
     pub sort_key: String,
     pub search_text: String,
     pub favorites_only: bool,
+    /// Active tag filter (AND). Persisted as JSON array under `active_tags`.
+    pub active_tags: Vec<String>,
     pub thumbnail_size: i32,
 }
 
@@ -47,6 +49,7 @@ impl Default for UiState {
             sort_key: "name_asc".to_string(),
             search_text: String::new(),
             favorites_only: false,
+            active_tags: Vec::new(),
             thumbnail_size: crate::thumbnails::THUMB_NORMAL_SIZE,
         }
     }
@@ -55,7 +58,41 @@ impl Default for UiState {
 const UI_STATE_SORT_KEY: &str = "sort_key";
 const UI_STATE_SEARCH_TEXT: &str = "search_text";
 const UI_STATE_FAVORITES_ONLY: &str = "favorites_only";
+const UI_STATE_ACTIVE_TAGS: &str = "active_tags";
 const UI_STATE_THUMBNAIL_SIZE: &str = "thumbnail_size";
+
+/// Normalizes a free-form tag: trim whitespace. Empty after trim is rejected.
+pub fn normalize_tag(tag: &str) -> Option<String> {
+    let trimmed = tag.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Serializes active tags for `ui_state` (JSON array).
+pub fn encode_active_tags(tags: &[String]) -> String {
+    serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Parses `active_tags` from `ui_state` (JSON array, or comma-separated fallback).
+pub fn decode_active_tags(value: &str) -> Vec<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if let Ok(parsed) = serde_json::from_str::<Vec<String>>(trimmed) {
+        return parsed
+            .into_iter()
+            .filter_map(|t| normalize_tag(&t))
+            .collect();
+    }
+    trimmed
+        .split(',')
+        .filter_map(normalize_tag)
+        .collect()
+}
 
 // ---------------------------------------------------------------------------
 // Database path & connection
@@ -112,7 +149,13 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
             key             TEXT PRIMARY KEY,
             value           TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_images_hash ON images(hash);",
+        CREATE TABLE IF NOT EXISTS image_tags (
+            path            TEXT NOT NULL,
+            tag             TEXT NOT NULL,
+            PRIMARY KEY (path, tag)
+        );
+        CREATE INDEX IF NOT EXISTS idx_images_hash ON images(hash);
+        CREATE INDEX IF NOT EXISTS idx_image_tags_tag ON image_tags(tag);",
     )?;
 
     // Migration path for databases created before the `favourite` column existed.
@@ -157,6 +200,9 @@ pub fn load_ui_state(folder: &Path) -> Option<UiState> {
                 let normalized = value.trim().to_ascii_lowercase();
                 state.favorites_only = normalized == "1" || normalized == "true";
             }
+            UI_STATE_ACTIVE_TAGS => {
+                state.active_tags = decode_active_tags(&value);
+            }
             UI_STATE_THUMBNAIL_SIZE => {
                 if let Ok(parsed) = value.trim().parse::<i32>() {
                     state.thumbnail_size = parsed;
@@ -192,6 +238,14 @@ pub fn save_ui_state(folder: &Path, state: &UiState) -> rusqlite::Result<()> {
         params![
             UI_STATE_FAVORITES_ONLY,
             if state.favorites_only { "1" } else { "0" }
+        ],
+    )?;
+    tx.execute(
+        "INSERT INTO ui_state(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![
+            UI_STATE_ACTIVE_TAGS,
+            encode_active_tags(&state.active_tags)
         ],
     )?;
     tx.execute(
@@ -370,6 +424,7 @@ pub fn prune_missing(conn: &Connection) -> rusqlite::Result<()> {
         .collect();
     for p in &paths {
         if !Path::new(p).exists() {
+            conn.execute("DELETE FROM image_tags WHERE path = ?1", params![p])?;
             conn.execute("DELETE FROM images WHERE path = ?1", params![p])?;
         }
     }
@@ -450,11 +505,93 @@ pub fn set_favourite(conn: &Connection, path: &Path, favourite: bool) -> rusqlit
 /// Deletes one indexed image row by absolute file path.
 pub fn remove_image_row(conn: &Connection, path: &Path) -> rusqlite::Result<bool> {
     let path_str = path.to_string_lossy();
+    conn.execute(
+        "DELETE FROM image_tags WHERE path = ?1",
+        params![path_str.as_ref()],
+    )?;
     let affected = conn.execute(
         "DELETE FROM images WHERE path = ?1",
         params![path_str.as_ref()],
     )?;
     Ok(affected > 0)
+}
+
+// ---------------------------------------------------------------------------
+// Tags
+// ---------------------------------------------------------------------------
+
+/// Lists tags for one image path (sorted).
+pub fn list_tags_for_path(conn: &Connection, path: &Path) -> rusqlite::Result<Vec<String>> {
+    let path_str = path.to_string_lossy();
+    let mut stmt = conn.prepare(
+        "SELECT tag FROM image_tags WHERE path = ?1 ORDER BY tag COLLATE NOCASE",
+    )?;
+    let rows = stmt.query_map(params![path_str.as_ref()], |row| row.get::<_, String>(0))?;
+    let mut tags = Vec::new();
+    for row in rows {
+        tags.push(row?);
+    }
+    Ok(tags)
+}
+
+/// Lists distinct tags used in this folder DB (sorted).
+pub fn list_all_tags_in_folder(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT tag FROM image_tags ORDER BY tag COLLATE NOCASE")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut tags = Vec::new();
+    for row in rows {
+        tags.push(row?);
+    }
+    Ok(tags)
+}
+
+/// Adds a tag to an image. Returns `false` if the tag is empty after normalize
+/// or no `images` row exists for `path`. Idempotent when the tag already exists.
+pub fn add_tag(conn: &Connection, path: &Path, tag: &str) -> rusqlite::Result<bool> {
+    let Some(tag) = normalize_tag(tag) else {
+        return Ok(false);
+    };
+    if !image_row_exists(conn, path) {
+        return Ok(false);
+    }
+    let path_str = path.to_string_lossy();
+    conn.execute(
+        "INSERT OR IGNORE INTO image_tags(path, tag) VALUES(?1, ?2)",
+        params![path_str.as_ref(), tag],
+    )?;
+    Ok(true)
+}
+
+/// Removes a tag from an image. Returns `true` if a row was deleted.
+pub fn remove_tag(conn: &Connection, path: &Path, tag: &str) -> rusqlite::Result<bool> {
+    let Some(tag) = normalize_tag(tag) else {
+        return Ok(false);
+    };
+    let path_str = path.to_string_lossy();
+    let n = conn.execute(
+        "DELETE FROM image_tags WHERE path = ?1 AND tag = ?2",
+        params![path_str.as_ref(), tag],
+    )?;
+    Ok(n > 0)
+}
+
+/// Moves all tags from `old_path` to `new_path` (e.g. after rename).
+pub fn move_tags(conn: &Connection, old_path: &Path, new_path: &Path) -> rusqlite::Result<()> {
+    let old = old_path.to_string_lossy();
+    let new = new_path.to_string_lossy();
+    if old.as_ref() == new.as_ref() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE OR IGNORE image_tags SET path = ?1 WHERE path = ?2",
+        params![new.as_ref(), old.as_ref()],
+    )?;
+    conn.execute(
+        "DELETE FROM image_tags WHERE path = ?1",
+        params![old.as_ref()],
+    )?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +691,11 @@ mod tests {
         // ui_state table should exist
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM ui_state", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        // image_tags table should exist
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM image_tags", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -705,12 +847,71 @@ mod tests {
     }
 
     #[test]
+    fn test_tag_roundtrip() {
+        let dir = temp_dir();
+        let conn = open(&dir).unwrap();
+        let path = write_temp_file(&dir, "tagged.jpg", b"data");
+        let hash = hash_file(&path).unwrap();
+        let mtime = file_mtime(&path).unwrap();
+        let size = file_size(&path).unwrap();
+
+        // Not indexed — add_tag returns false
+        assert!(!add_tag(&conn, &path, "keep").unwrap());
+        assert!(list_tags_for_path(&conn, &path).unwrap().is_empty());
+
+        upsert(
+            &conn,
+            &ImageRow {
+                path: path.to_string_lossy().into_owned(),
+                filename: "tagged.jpg".to_string(),
+                hash,
+                mtime,
+                size,
+                favourite: 0,
+                meta: ImageMetadata::default(),
+            },
+        )
+        .unwrap();
+
+        assert!(add_tag(&conn, &path, "  keep ").unwrap());
+        assert!(add_tag(&conn, &path, "style").unwrap());
+        // Idempotent
+        assert!(add_tag(&conn, &path, "keep").unwrap());
+        // Empty rejected
+        assert!(!add_tag(&conn, &path, "   ").unwrap());
+
+        let tags = list_tags_for_path(&conn, &path).unwrap();
+        assert_eq!(tags, vec!["keep".to_string(), "style".to_string()]);
+        assert_eq!(
+            list_all_tags_in_folder(&conn).unwrap(),
+            vec!["keep".to_string(), "style".to_string()]
+        );
+
+        assert!(remove_tag(&conn, &path, "keep").unwrap());
+        assert_eq!(
+            list_tags_for_path(&conn, &path).unwrap(),
+            vec!["style".to_string()]
+        );
+        assert!(!remove_tag(&conn, &path, "missing").unwrap());
+
+        let renamed = dir.join("renamed.jpg");
+        std::fs::rename(&path, &renamed).unwrap();
+        move_tags(&conn, &path, &renamed).unwrap();
+        assert!(list_tags_for_path(&conn, &path).unwrap().is_empty());
+        assert_eq!(
+            list_tags_for_path(&conn, &renamed).unwrap(),
+            vec!["style".to_string()]
+        );
+    }
+
+    #[test]
     fn test_ui_state_roundtrip() {
         let dir = temp_dir();
         let state = UiState {
             sort_key: "date_desc".to_string(),
             search_text: "sunset".to_string(),
             favorites_only: true,
+            active_tags: vec!["keep".to_string(), "archive".to_string()],
             thumbnail_size: 256,
         };
         save_ui_state(&dir, &state).unwrap();
@@ -719,6 +920,23 @@ mod tests {
         assert_eq!(loaded.sort_key, "date_desc");
         assert_eq!(loaded.search_text, "sunset");
         assert!(loaded.favorites_only);
+        assert_eq!(
+            loaded.active_tags,
+            vec!["keep".to_string(), "archive".to_string()]
+        );
         assert_eq!(loaded.thumbnail_size, 256);
+    }
+
+    #[test]
+    fn test_decode_active_tags_formats() {
+        assert_eq!(
+            decode_active_tags(r#"["a","b"]"#),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(
+            decode_active_tags("keep, archive"),
+            vec!["keep".to_string(), "archive".to_string()]
+        );
+        assert!(decode_active_tags("").is_empty());
     }
 }

@@ -370,13 +370,6 @@ fn build_ui(app: &adw::Application) {
         progress_bar: progress_bar.clone(),
     });
 
-    install_tree_folder_selection(TreeFolderSelectionDeps {
-        app_state: app_state.clone(),
-        chrome: chrome.clone(),
-        start_scan_for_folder: start_scan_for_folder.clone(),
-        recent_folders_limit: RECENT_FOLDERS_LIMIT,
-    });
-
     let model_bundle = build_model_bundle(ModelAssemblyDeps {
         app_state: app_state.clone(),
     });
@@ -385,6 +378,14 @@ fn build_ui(app: &adw::Application) {
     let _filter_model = model_bundle.filter_model;
     let sort_model = model_bundle.sort_model;
     let selection_model = model_bundle.selection_model;
+
+    install_tree_folder_selection(TreeFolderSelectionDeps {
+        app_state: app_state.clone(),
+        chrome: chrome.clone(),
+        filter: filter.clone(),
+        start_scan_for_folder: start_scan_for_folder.clone(),
+        recent_folders_limit: RECENT_FOLDERS_LIMIT,
+    });
 
     let center = build_center_content(CenterContentDeps {
         app_state: app_state.clone(),
@@ -413,11 +414,31 @@ fn build_ui(app: &adw::Application) {
         action_btn: center.empty_state_action_btn.clone(),
         window: window.clone(),
         favourites_filter_btn: chrome.favourites_filter_btn.clone(),
+        tags_filter_btn: chrome.tags_filter_btn.clone(),
+        tags_filter_list: chrome.tags_filter_list.clone(),
         search_entry: chrome.search_entry.clone(),
         sort_dropdown: chrome.sort_dropdown.clone(),
         filter: filter.clone(),
         sorter: sorter.clone(),
     });
+    let on_scan_complete: Rc<dyn Fn()> = {
+        let refresh_empty_state = refresh_empty_state.clone();
+        let tags_filter_list = chrome.tags_filter_list.clone();
+        let tags_filter_btn = chrome.tags_filter_btn.clone();
+        let active_tags = app_state.active_tags.clone();
+        let filter = filter.clone();
+        let current_folder = app_state.current_folder.clone();
+        Rc::new(move || {
+            ui::controls::refresh_tag_filter_from_folder(
+                &tags_filter_list,
+                &tags_filter_btn,
+                &active_tags,
+                &filter,
+                &current_folder,
+            );
+            refresh_empty_state();
+        })
+    };
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---
 
@@ -467,6 +488,8 @@ fn build_ui(app: &adw::Application) {
         right_toggle: chrome.right_toggle.clone(),
         pre_fullview_left: pre_fullview_left.clone(),
         pre_fullview_right: pre_fullview_right.clone(),
+        tags_filter_btn: chrome.tags_filter_btn.clone(),
+        tags_filter_list: chrome.tags_filter_list.clone(),
     });
 
     install_scan_runtime(ScanRuntimeDeps {
@@ -478,7 +501,7 @@ fn build_ui(app: &adw::Application) {
         progress_bar: progress_bar.clone(),
         filter: filter.clone(),
         sync_context_menu: Some(sync_ctx_menu),
-        on_scan_complete: Some(refresh_empty_state.clone()),
+        on_scan_complete: Some(on_scan_complete.clone()),
     });
 
     install_navigation_handlers(NavigationDeps {
@@ -609,6 +632,7 @@ fn build_ui(app: &adw::Application) {
         sort_key: sort_key.clone(),
         search_text: search_text.clone(),
         favorites_only: app_state.favorites_only.clone(),
+        active_tags: app_state.active_tags.clone(),
         recent_folders: recent_folders.clone(),
         outer_split_dirty: outer_split_dirty.clone(),
         inner_split_dirty: inner_split_dirty.clone(),

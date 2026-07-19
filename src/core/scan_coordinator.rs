@@ -28,6 +28,7 @@ pub(crate) fn build_start_scan_for_folder(deps: ScanCoordinatorDeps) -> Rc<dyn F
         deps.app_state.hash_cache.borrow_mut().clear();
         deps.app_state.meta_cache.borrow_mut().clear();
         deps.app_state.favourite_cache.borrow_mut().clear();
+        deps.app_state.tags_cache.borrow_mut().clear();
         deps.app_state.sort_fields_cache.borrow_mut().clear();
         *deps.app_state.pinned_compare_path.borrow_mut() = None;
         {
