@@ -248,7 +248,7 @@ tEXt chunk key: "prompt"    ← node graph JSON (API format)
 tEXt chunk key: "workflow"  ← UI workflow JSON
 ```
 
-For `"prompt"` JSON, LumenNode finds all `CLIPTextEncode` nodes and identifies positive/negative by text length. For `"workflow"` JSON, it generates a human-readable node summary.
+For `"prompt"` JSON, LumenNode finds all `CLIPTextEncode` nodes and assigns positive/negative using node id, title, and `_meta.title` signals (with text length as a tiebreaker). For `"workflow"` JSON, it generates a human-readable node summary.
 
 ### InvokeAI
 
@@ -458,7 +458,7 @@ Metadata extraction is dispatched by file extension:
 - **JPEG / TIFF**: `kamadak-exif` reads EXIF tags (Make, Model, ExposureTime, ISOSpeedRatings)
 - **PNG**: `png` crate reads **eXIf** when present for camera EXIF, then text chunks **`tEXt`**, **`zTXt`**, and **`iTXt`** with key-based dispatch:
   - `"parameters"` → Auto1111 parser (regex for `Seed: NNN`, splits on `Negative prompt:`)
-  - `"prompt"` → ComfyUI JSON parser (finds `CLIPTextEncode` nodes, sorts by text length)
+  - `"prompt"` → ComfyUI JSON parser (finds `CLIPTextEncode` nodes, scores by title/id signals)
   - `"workflow"` → ComfyUI workflow summariser (human-readable node list)
   - `"invokeai_metadata"` → InvokeAI JSON parser (direct field extraction)
   - anything else → stored as `raw_parameters`

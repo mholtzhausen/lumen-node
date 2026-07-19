@@ -16,7 +16,6 @@
 //! - `"invokeai_metadata"` → InvokeAI JSON → positive/negative prompts + settings
 //! - other keywords         → captured verbatim as fallback metadata
 
-use std::cmp::Reverse;
 use std::io::BufReader;
 use std::path::Path;
 
@@ -222,8 +221,8 @@ fn apply_text_chunk(meta: &mut ImageMetadata, keyword: &str, text: &str) {
 ///
 /// The JSON structure is `{ "node_id": { "class_type": "...", "inputs": {...} } }`.
 /// We find all `CLIPTextEncode` nodes and extract `inputs.text`.
-/// The longest text is taken to be the positive prompt (conventional in most
-/// ComfyUI workflows), the second longest as the negative.
+/// Node id / title / `_meta.title` signals (e.g. `"negative"`) rank prompts;
+/// text length breaks ties when roles stay ambiguous.
 fn extract_comfyui_prompts(prompt_str: &str) -> (Option<String>, Option<String>) {
     let Ok(val) = serde_json::from_str::<serde_json::Value>(prompt_str) else {
         return (None, None);
@@ -232,22 +231,56 @@ fn extract_comfyui_prompts(prompt_str: &str) -> (Option<String>, Option<String>)
         return (None, None);
     };
 
-    let mut clips: Vec<String> = nodes
-        .values()
-        .filter(|n| n.get("class_type").and_then(|v| v.as_str()) == Some("CLIPTextEncode"))
-        .filter_map(|n| {
-            n.get("inputs")
+    let mut clips: Vec<(i32, String)> = nodes
+        .iter()
+        .filter(|(_, n)| {
+            n.get("class_type").and_then(|v| v.as_str()) == Some("CLIPTextEncode")
+        })
+        .filter_map(|(node_id, n)| {
+            let text = n
+                .get("inputs")
                 .and_then(|i| i.get("text"))
-                .and_then(|t| t.as_str())
-                .map(String::from)
+                .and_then(|t| t.as_str())?;
+            Some((score_comfyui_clip_positive_likelihood(node_id, n, text), text.to_owned()))
         })
         .collect();
 
-    // Longest-first: positive prompts are virtually always more verbose.
-    clips.sort_by_key(|s| Reverse(s.len()));
-    let positive = clips.first().cloned();
-    let negative = clips.get(1).cloned();
+    clips.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.len().cmp(&a.1.len())));
+    let positive = clips.first().map(|(_, text)| text.clone());
+    let negative = clips.get(1).map(|(_, text)| text.clone());
     (positive, negative)
+}
+
+/// Scores how likely a `CLIPTextEncode` node's text is the positive prompt.
+/// Mirrors the path/key heuristics used by [`extract_primary_prompt_from_workflow`].
+fn score_comfyui_clip_positive_likelihood(
+    node_id: &str,
+    node: &serde_json::Value,
+    text: &str,
+) -> i32 {
+    let mut score = text.len().min(800) as i32;
+    // CLIP text node + inputs.text — same boosts as workflow walk.
+    score += 600 + 500;
+
+    let node_id_lc = node_id.to_ascii_lowercase();
+    let title = node
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let meta_title = node
+        .get("_meta")
+        .and_then(|m| m.get("title"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let context = format!("{node_id_lc}.{title}.{meta_title}");
+    if context.contains("negative") || context.contains("neg") {
+        score -= 500;
+    }
+
+    score
 }
 
 /// Best-effort heuristic for the "primary prompt" inside ComfyUI workflow JSON.
@@ -335,4 +368,78 @@ fn extract_primary_prompt_from_workflow(workflow_str: &str) -> Option<String> {
     let mut path = Vec::new();
     walk(&val, &mut path, false, &mut best);
     best.map(|(_, prompt)| prompt)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_comfyui_prompts;
+
+    #[test]
+    fn comfyui_prompts_meta_title_negative_beats_length() {
+        let prompt_json = r#"{
+            "3": {
+                "class_type": "CLIPTextEncode",
+                "inputs": { "text": "a cat" },
+                "_meta": { "title": "CLIP Text Encode (Prompt)" }
+            },
+            "4": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": "blurry, low quality, watermark, bad anatomy, extra limbs, deformed, ugly, duplicate, morbid, mutilated"
+                },
+                "_meta": { "title": "CLIP Text Encode (Negative)" }
+            }
+        }"#;
+
+        let (pos, neg) = extract_comfyui_prompts(prompt_json);
+        assert_eq!(pos.as_deref(), Some("a cat"));
+        assert_eq!(
+            neg.as_deref(),
+            Some("blurry, low quality, watermark, bad anatomy, extra limbs, deformed, ugly, duplicate, morbid, mutilated")
+        );
+    }
+
+    #[test]
+    fn comfyui_prompts_node_id_negative_beats_length() {
+        let prompt_json = r#"{
+            "positive_clip": {
+                "class_type": "CLIPTextEncode",
+                "inputs": { "text": "sunset over mountains" }
+            },
+            "negative_clip": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": "text, watermark, signature, jpeg artifacts, oversaturated, underexposed, overexposed, cropped, out of frame"
+                }
+            }
+        }"#;
+
+        let (pos, neg) = extract_comfyui_prompts(prompt_json);
+        assert_eq!(pos.as_deref(), Some("sunset over mountains"));
+        assert_eq!(
+            neg.as_deref(),
+            Some("text, watermark, signature, jpeg artifacts, oversaturated, underexposed, overexposed, cropped, out of frame")
+        );
+    }
+
+    #[test]
+    fn comfyui_prompts_falls_back_to_length_when_unlabeled() {
+        let prompt_json = r#"{
+            "1": {
+                "class_type": "CLIPTextEncode",
+                "inputs": { "text": "short neg" }
+            },
+            "2": {
+                "class_type": "CLIPTextEncode",
+                "inputs": { "text": "a much longer positive prompt with many descriptive tags" }
+            }
+        }"#;
+
+        let (pos, neg) = extract_comfyui_prompts(prompt_json);
+        assert_eq!(
+            pos.as_deref(),
+            Some("a much longer positive prompt with many descriptive tags")
+        );
+        assert_eq!(neg.as_deref(), Some("short neg"));
+    }
 }
