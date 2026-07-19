@@ -279,10 +279,14 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `←` / `→` | Single view | Previous / next image |
 | `Escape` | Single view | Return to grid |
 | `Ctrl+C` | Selection | Copy image pixels to clipboard |
-| `Ctrl+V` | Grid (folder open) | Paste clipboard image as PNG into the folder (then rename flow when applicable) |
+| `Ctrl+X` | Selection | Mark image to move; `Ctrl+V` into an open folder completes the move (same-filesystem `rename`) |
+| `Ctrl+V` | Grid (folder open) | Paste clipboard image as PNG into the folder (then rename flow when applicable), or complete a prior cut-move |
 | `Delete` | Grid (selection, not in a text field) | Move selection to trash (same as context menu) |
 | `Shift+Delete` | Grid | Permanent delete (confirmation) |
 | `f` | Selection (not in a text field) | Toggle favourite (grid, preview, and single view) |
+| `Ctrl+Shift+P` / `N` / `C` / `M` / `G` | Selection | Copy prompt / negative / path / metadata / generation command |
+| `Ctrl+Alt+T` / `M` | Folder open | Refresh folder thumbnails / folder metadata |
+| Double-click / middle-click | Single view | Toggle window fullscreen |
 
 ---
 
@@ -310,7 +314,7 @@ On exit, the app writes **window geometry**, **three GtkPaned positions** (`left
 | `full_view_favourite_icon` | `true` | Show the favourite star HUD in single/full view (read only) |
 | `full_view_favourite_icon_seconds` | `2` | Seconds the full-view favourite star stays visible before fading (read only) |
 
-Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites plus folder-scoped UI state in the **`ui_state`** table (`sort_key`, `search_text`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
+Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites plus folder-scoped UI state in the **`ui_state`** table (`sort_key`, `search_text`, `favorites_only`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
 
 ---
 
@@ -520,7 +524,7 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 - [x] **External open** — file manager and external editor (optional `external_editor` config); per-format custom apps remain a possible enhancement
 - [ ] **Side-by-side compare** — pin reference image, diff against selection
 - [ ] **Free-form tags** — label images beyond favourite/unfavourite
-- [ ] **Version checker** — background check and in-app banner exist; point **`updater.rs`** at the real `api.github.com/repos/.../releases/latest` URL (replace `OWNER/REPO`) so updates surface for your fork
+- [x] **Version checker** — background check + in-app banner (`src/updater.rs` → `mholtzhausen/lumen-node` releases; `services::update_checker`)
 
 ---
 

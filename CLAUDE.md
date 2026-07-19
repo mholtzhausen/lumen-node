@@ -82,36 +82,41 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 make build      # cargo build
 make run        # cargo run
 make check      # cargo check (fast type-check, no binary)
+make test       # cargo test (unit tests, e.g. db.rs)
 make clean      # cargo clean
 ```
 
-No test suite exists yet. `cargo check` is the fastest correctness check.
+Prefer `make check` for a fast correctness loop; use `make test` when touching persistence/schema. There is no full UI test suite yet.
 
 The `PKG_CONFIG_PATH` in the Makefile is required for GTK4/libadwaita linking on this system — always use `make` rather than bare `cargo` commands to ensure it is set.
 
 ## Architecture
 
-**LumenNode** is a GTK4/libadwaita desktop image gallery written in Rust. The entire UI is built imperatively in `build_ui()` in [src/main.rs](src/main.rs) — there is no `.ui` file or GtkBuilder XML.
+**LumenNode** is a GTK4/libadwaita desktop image gallery written in Rust. UI is built imperatively (no `.ui` / GtkBuilder XML). `build_ui()` in [src/main.rs](src/main.rs) is the composition root; most widgets and handlers live under [src/ui/](src/ui/). See [ARCHITECTURE.md](ARCHITECTURE.md) for the fuller module map.
 
 ### Module responsibilities
 
 | Module | Role |
 |---|---|
-| [src/main.rs](src/main.rs) | UI construction, event wiring, all GTK state. `build_ui()` is the god node (38 edges). |
-| [src/scanner.rs](src/scanner.rs) | Background thread: 2-phase directory scan (enumerate → enrich). Communicates to UI via `async-channel`. |
-| [src/db.rs](src/db.rs) | Per-folder SQLite (`.lumen-node.db`). Caches SHA-256 hash + metadata. Staleness check on mtime+size. |
+| [src/main.rs](src/main.rs) | Composition root: assembles `ui::` / `core::`, owns `ScanProgressState` and shared flags, wires receivers. |
+| [src/ui/](src/ui/) | Shell/chrome, grid/preview, actions/menus, keyboard, layout, scan runtime drain, navigation, selection, session. |
+| [src/core/](src/core/) | `app_state`, `scan_coordinator` (folder switches, generation IDs). |
+| [src/scanner.rs](src/scanner.rs) | Background thread: 2-phase directory scan (enumerate → enrich). Sends `ScanMessage` ([src/scan.rs](src/scan.rs)) via `async-channel`. |
+| [src/db.rs](src/db.rs) | Per-folder SQLite (`.lumen-node.db`). Caches SHA-256 hash + metadata; `ui_state` for sort/search/favourites filter/thumbnail size. Staleness check on mtime+size. |
 | [src/thumbnails.rs](src/thumbnails.rs) | Freedesktop thumbnail spec (`$XDG_CACHE_HOME/thumbnails/`). Two stores: MD5-URI named (spec-compliant) and hash-named (`lumen-node/` subdir). |
-| [src/metadata.rs](src/metadata.rs) | Format-dispatched metadata extraction: EXIF for JPEG/TIFF, PNG `tEXt` chunks for AI-gen images (A1111, ComfyUI, InvokeAI). |
-| [src/config.rs](src/config.rs) | `~/.lumen-node/config.yml` — plain-text KV file. Stores last folder, pane sizes, sort key, thumbnail size. |
+| [src/metadata.rs](src/metadata.rs) | Format-dispatched metadata extraction: EXIF for JPEG/TIFF/PNG eXIf; PNG text chunks for AI-gen images (A1111, ComfyUI, InvokeAI). |
+| [src/config.rs](src/config.rs) | `~/.lumen-node/config.yml` — plain-text KV. Window/panes/recent folders/`color_scheme`; optional read-only keys (`external_editor`, full-view favourite HUD, startup sort/search/thumb defaults). |
+| [src/updater.rs](src/updater.rs) / [src/services/](src/services/) | GitHub release check + in-app banner wiring. |
 
 ### Data flow
 
 ```
-User picks folder
-  → scan_directory() [background thread]
+User browses or opens a folder (tree / Open / history)
+  → scan_coordinator → scan_directory() [background thread]
       Phase 1: emit ScanMessage::ImageEnumerated  →  UI inserts placeholder rows
       Phase 2: db::ensure_indexed_with_outcome()  →  emit ScanMessage::ImageEnriched → UI updates row with hash+meta
-  → thumbnail loading: async per-image, skipped during full-preview to avoid jank
+  → ui::scan_runtime drains channel on main thread (idle batches)
+  → thumbnail loading: async per-image, skipped/deferred during full-preview / early enum
 ```
 
 ### Key design decisions
@@ -120,5 +125,5 @@ User picks folder
 - **Generation counter**: `scan_directory()` takes a `generation: u64`. Stale messages from a previous scan are discarded by comparing generation IDs, preventing races when the user switches folders quickly.
 - **Thumbnail staleness**: thumbnails are validated by comparing stored `Thumb::MTime` against current file mtime. Invalid thumbnails are regenerated.
 - **Per-folder DB**: each scanned directory gets its own `.lumen-node.db` SQLite file (WAL mode). This avoids a central index and keeps the DB close to the images.
-- **AI image metadata**: PNG `tEXt` chunks are parsed for Automatic1111 `"parameters"`, ComfyUI `"prompt"`/`"workflow"`, and InvokeAI `"invokeai_metadata"` keys.
+- **AI image metadata**: PNG text chunks (`tEXt` / `zTXt` / `iTXt`) are parsed for Automatic1111 `"parameters"`, ComfyUI `"prompt"`/`"workflow"`, and InvokeAI `"invokeai_metadata"` keys.
 - **Progress bar**: three-phase weighted progress: enumeration (10%), thumbnail (35%), enrichment (55%).
