@@ -421,6 +421,7 @@ fn build_ui(app: &adw::Application) {
     let right = build_right_sidebar(RightSidebarDeps {
         initial_right_sidebar_visible: chrome.initial_right_sidebar_visible,
         meta_pane_start_px: pane_metrics.meta_pane_start_px,
+        min_meta_split_px: MIN_META_SPLIT_PX,
     });
 
     let sync_ctx_menu = install_context_menu_wiring(ContextMenuWiringDeps {

@@ -1,3 +1,4 @@
+use crate::metadata_section::connect_meta_expander_paned_sync;
 use crate::ui::sidebar::{
     append_meta_paned_to_sidebar, connect_meta_paned_dirty_tracking, create_meta_content_container,
     create_meta_expander, create_meta_paned, create_meta_position_programmatic,
@@ -10,6 +11,7 @@ use gtk4::prelude::*;
 pub(crate) struct RightSidebarDeps {
     pub(crate) initial_right_sidebar_visible: bool,
     pub(crate) meta_pane_start_px: i32,
+    pub(crate) min_meta_split_px: i32,
 }
 
 #[derive(Clone)]
@@ -54,6 +56,13 @@ pub(crate) fn build_right_sidebar(deps: RightSidebarDeps) -> RightSidebarBundle 
         &meta_position_programmatic,
         &meta_split_dirty,
         &pane_restore_complete,
+    );
+    connect_meta_expander_paned_sync(
+        &meta_expander,
+        &meta_paned,
+        &meta_split_before_auto_collapse,
+        &meta_position_programmatic,
+        deps.min_meta_split_px,
     );
     append_meta_paned_to_sidebar(&right_sidebar, &meta_paned);
 
