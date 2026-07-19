@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=GTK Starter
+Comment=Production-oriented GTK4 + libadwaita boilerplate
+Exec=gtk-starter
+Icon=com.example.GtkStarter
+Type=Application
+Categories=Development;
+Keywords=gtk;rust;boilerplate;

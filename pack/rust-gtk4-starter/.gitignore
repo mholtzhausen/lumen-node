@@ -1,0 +1,5 @@
+/target/
+**/*.rs.bk
+packaging/AppDir/
+packaging/*.AppImage
+packaging/linuxdeploy*.AppImage

@@ -162,6 +162,10 @@ Additional Makefile targets for packaging and maintenance: `uninstall`, `appimag
 
 > **Prefer `make`** for builds: the Makefile exports `PKG_CONFIG_PATH` so `pkg-config` finds GTK4/libadwaita on Debian-like systems. If your distro already resolves those packages, `cargo build` may work; match the Makefile’s `PKG_CONFIG_PATH` when linking fails.
 
+### GTK4 starter pack
+
+To bootstrap a **new** Rust + GTK4/libadwaita app with the same threading, channel, and packaging patterns as LumenNode, copy [`pack/rust-gtk4-starter/`](pack/rust-gtk4-starter/) (see [`pack/README.md`](pack/README.md) and [`PITFALLS.md`](pack/rust-gtk4-starter/PITFALLS.md)).
+
 ---
 
 ## Usage

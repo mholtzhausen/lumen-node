@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.example.GtkStarter</id>
+  <name>GTK Starter</name>
+  <summary>Production-oriented GTK4 + libadwaita boilerplate</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Starter template for Rust desktop apps using GTK4 and libadwaita, with safe worker-to-UI messaging.</p>
+  </description>
+  <releases>
+    <release version="0.1.0" date="2026-05-21"/>
+  </releases>
+</component>

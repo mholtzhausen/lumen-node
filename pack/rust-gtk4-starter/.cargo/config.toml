@@ -1,0 +1,3 @@
+# Uncomment on some distros if the linker cannot find GTK without explicit rpath.
+# [target.x86_64-unknown-linux-gnu]
+# rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/x86_64-linux-gnu"]
