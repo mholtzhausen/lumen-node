@@ -73,6 +73,12 @@ pub struct AppConfig {
     pub external_editor: Option<PathBuf>,
     /// Appearance: `system` | `light` | `dark`. Default when unset: system.
     pub color_scheme: Option<ColorSchemePref>,
+    /// Show the favourite star HUD in full/single view. Default when unset: true.
+    /// Hand-edit only (not rewritten by `save`).
+    pub full_view_favourite_icon: Option<bool>,
+    /// Seconds the full-view favourite star stays visible before fading. Default: 2.
+    /// Hand-edit only (not rewritten by `save`).
+    pub full_view_favourite_icon_seconds: Option<f64>,
 }
 
 /// Loads `~/.lumen-node/config.yml`.  Missing file → empty config.
@@ -95,6 +101,8 @@ pub fn load() -> AppConfig {
     let mut thumbnail_size = None;
     let mut external_editor = None;
     let mut color_scheme = None;
+    let mut full_view_favourite_icon = None;
+    let mut full_view_favourite_icon_seconds = None;
     if let Ok(content) = std::fs::read_to_string(config_path()) {
         for line in content.lines() {
             if let Some(val) = line.strip_prefix("last_folder: ") {
@@ -146,6 +154,10 @@ pub fn load() -> AppConfig {
                 }
             } else if let Some(val) = line.strip_prefix("color_scheme: ") {
                 color_scheme = ColorSchemePref::parse(val);
+            } else if let Some(val) = line.strip_prefix("full_view_favourite_icon: ") {
+                full_view_favourite_icon = val.trim().parse::<bool>().ok();
+            } else if let Some(val) = line.strip_prefix("full_view_favourite_icon_seconds: ") {
+                full_view_favourite_icon_seconds = val.trim().parse::<f64>().ok().filter(|v| *v >= 0.0);
             }
         }
     }
@@ -168,6 +180,8 @@ pub fn load() -> AppConfig {
         thumbnail_size,
         external_editor,
         color_scheme,
+        full_view_favourite_icon,
+        full_view_favourite_icon_seconds,
     }
 }
 

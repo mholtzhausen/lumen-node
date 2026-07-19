@@ -14,11 +14,26 @@ use crate::ui::right_sidebar::RightSidebarBundle;
 use crate::ui::preview::clear_picture;
 use crate::ui::selection::{handle_selection_change_event, ClickTrace};
 use crate::ui::shell::{install_history_popover_handler, install_open_button_handler};
-use crate::ui::sidebar::{clear_metadata_sidebar, populate_metadata_sidebar};
+use crate::ui::grid::show_full_view_favourite_hud;
+use crate::ui::sidebar::{
+    clear_metadata_sidebar, populate_metadata_sidebar, update_preview_favourite_indicator,
+};
 use gtk4::prelude::*;
 use gtk4::{ListScrollFlags, StringObject};
 use libadwaita as adw;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
+
+fn favourite_for_selected(app_state: &AppState) -> Option<bool> {
+    let path = app_state.selected_path.borrow().clone()?;
+    Some(
+        app_state
+            .favourite_cache
+            .borrow()
+            .get(&path)
+            .copied()
+            .unwrap_or(false),
+    )
+}
 
 pub(crate) struct ContextMenuWiringDeps {
     pub(crate) app_state: AppState,
@@ -39,6 +54,44 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
         move |meta: &ImageMetadata| populate_metadata_sidebar(&meta_listbox, meta)
     });
     let start_scan_for_folder: Rc<dyn Fn(PathBuf)> = deps.start_scan_for_folder.clone();
+
+    let on_favourite_changed: Rc<dyn Fn(bool)> = {
+        let preview_favourite = deps.right.preview_favourite.clone();
+        let hud = deps.center.full_view_favourite_hud.clone();
+        let view_stack = deps.center.view_stack.clone();
+        Rc::new(move |is_favourite: bool| {
+            update_preview_favourite_indicator(&preview_favourite, Some(is_favourite));
+            if view_stack.visible_child_name().as_deref() == Some("single") {
+                show_full_view_favourite_hud(&hud, is_favourite);
+            }
+        })
+    };
+    *deps.app_state.on_favourite_changed.borrow_mut() = Some(on_favourite_changed.clone());
+
+    {
+        let window = deps.window.clone();
+        deps.right.preview_favourite.button.connect_clicked(move |_| {
+            let _ = gtk4::prelude::WidgetExt::activate_action(
+                &window,
+                "ctx.toggle-favourite",
+                None,
+            );
+        });
+    }
+    {
+        let window = deps.window.clone();
+        deps.center
+            .full_view_favourite_hud
+            .button
+            .connect_clicked(move |_| {
+                let _ = gtk4::prelude::WidgetExt::activate_action(
+                    &window,
+                    "ctx.toggle-favourite",
+                    None,
+                );
+            });
+    }
+
     install_context_menu(
         &deps.window,
         &deps.toast_overlay,
@@ -65,6 +118,7 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
             start_scan_for_folder: deps.start_scan_for_folder.clone(),
         },
         &deps.filter,
+        on_favourite_changed,
     )
 }
 
@@ -87,11 +141,15 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
     let meta_cache_sel = deps.app_state.meta_cache.clone();
     let app_state_sel = deps.app_state.clone();
     let grid_view_sel = deps.center.grid_view.clone();
+    let preview_favourite_sel = deps.right.preview_favourite.clone();
+    let hud_sel = deps.center.full_view_favourite_hud.clone();
+    let view_stack_sel = deps.center.view_stack.clone();
     deps.selection_model
         .connect_selection_changed(move |model, _, _| {
             let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
                 clear_picture(&meta_preview_sel);
                 clear_metadata_sidebar(&meta_listbox_sel);
+                update_preview_favourite_indicator(&preview_favourite_sel, None);
                 return;
             };
             let selected = model.selected();
@@ -114,6 +172,11 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                 &meta_preview_sel,
                 &app_state_sel,
             );
+            let is_favourite = favourite_for_selected(&app_state_sel);
+            update_preview_favourite_indicator(&preview_favourite_sel, is_favourite);
+            if view_stack_sel.visible_child_name().as_deref() == Some("single") {
+                show_full_view_favourite_hud(&hud_sel, is_favourite.unwrap_or(false));
+            }
         });
 }
 

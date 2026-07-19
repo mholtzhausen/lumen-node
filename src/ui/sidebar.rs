@@ -47,11 +47,81 @@ pub fn create_meta_scroll_list() -> (gtk4::ScrolledWindow, gtk4::ListBox) {
     (meta_scroll, meta_listbox)
 }
 
-pub fn create_meta_expander(meta_scroll: &gtk4::ScrolledWindow) -> gtk4::Expander {
-    let meta_expander = gtk4::Expander::new(Some("Metadata"));
+/// Favourite indicator on the Metadata expander header (right side).
+#[derive(Clone)]
+pub struct PreviewFavouriteIndicator {
+    pub button: gtk4::Button,
+    pub label: gtk4::Label,
+}
+
+pub fn create_meta_expander(
+    meta_scroll: &gtk4::ScrolledWindow,
+) -> (gtk4::Expander, PreviewFavouriteIndicator) {
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    header.set_hexpand(true);
+
+    let title = gtk4::Label::new(Some("Metadata"));
+    title.set_halign(Align::Start);
+    title.set_hexpand(true);
+    header.append(&title);
+
+    let fav_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    fav_box.set_halign(Align::End);
+
+    let button = gtk4::Button::from_icon_name("non-starred-symbolic");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.add_css_class("thumbnail-favourite-button");
+    button.set_tooltip_text(Some("Toggle favourite"));
+    button.set_focus_on_click(false);
+    button.set_sensitive(false);
+
+    let label = gtk4::Label::new(None);
+    label.add_css_class("caption");
+    label.set_visible(false);
+
+    fav_box.append(&label);
+    fav_box.append(&button);
+    header.append(&fav_box);
+
+    let meta_expander = gtk4::Expander::new(None);
+    meta_expander.set_label_widget(Some(&header));
     meta_expander.set_expanded(true);
     meta_expander.set_child(Some(meta_scroll));
-    meta_expander
+
+    (
+        meta_expander,
+        PreviewFavouriteIndicator { button, label },
+    )
+}
+
+pub fn update_preview_favourite_indicator(
+    indicator: &PreviewFavouriteIndicator,
+    is_favourite: Option<bool>,
+) {
+    match is_favourite {
+        Some(true) => {
+            indicator.button.set_sensitive(true);
+            indicator.button.set_icon_name("starred-symbolic");
+            indicator.button.add_css_class("thumbnail-favourite-active");
+            indicator.label.set_text("Favourite");
+            indicator.label.set_visible(true);
+        }
+        Some(false) => {
+            indicator.button.set_sensitive(true);
+            indicator.button.set_icon_name("non-starred-symbolic");
+            indicator.button.remove_css_class("thumbnail-favourite-active");
+            indicator.label.set_text("");
+            indicator.label.set_visible(false);
+        }
+        None => {
+            indicator.button.set_sensitive(false);
+            indicator.button.set_icon_name("non-starred-symbolic");
+            indicator.button.remove_css_class("thumbnail-favourite-active");
+            indicator.label.set_text("");
+            indicator.label.set_visible(false);
+        }
+    }
 }
 
 pub fn create_meta_split_before_auto_collapse() -> std::rc::Rc<std::cell::Cell<Option<i32>>> {

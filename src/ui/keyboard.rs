@@ -184,6 +184,29 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             }
             return glib::Propagation::Proceed;
         }
+        if (key == gdk::Key::f || key == gdk::Key::F)
+            && !ctrl_pressed
+            && !state.contains(gdk::ModifierType::ALT_MASK)
+            && !state.contains(gdk::ModifierType::SUPER_MASK)
+        {
+            if focus_in_text_input(&window_for_keys) {
+                return glib::Propagation::Proceed;
+            }
+            if selected_image_path(&selection_for_keys).is_none() {
+                return glib::Propagation::Proceed;
+            }
+            // Stateful boolean action: activate toggles state via change-state.
+            if gtk4::prelude::WidgetExt::activate_action(
+                &window_for_keys,
+                "ctx.toggle-favourite",
+                None,
+            )
+            .is_ok()
+            {
+                return glib::Propagation::Stop;
+            }
+            return glib::Propagation::Proceed;
+        }
         if key == gdk::Key::Escape {
             let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
             if in_grid {

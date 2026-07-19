@@ -156,6 +156,7 @@ fn dispatch_full_view_load(
 }
 
 pub(crate) struct NavigationDeps {
+    pub(crate) app_state: crate::core::app_state::AppState,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) center: CenterContentBundle,
     pub(crate) right: RightSidebarBundle,
@@ -166,6 +167,20 @@ pub(crate) struct NavigationDeps {
     pub(crate) pre_fullview_right: Rc<Cell<bool>>,
 }
 
+fn show_hud_for_path(
+    app_state: &crate::core::app_state::AppState,
+    hud: &crate::ui::grid::FullViewFavouriteHud,
+    path: &str,
+) {
+    let is_favourite = app_state
+        .favourite_cache
+        .borrow()
+        .get(path)
+        .copied()
+        .unwrap_or(false);
+    crate::ui::grid::show_full_view_favourite_hud(hud, is_favourite);
+}
+
 pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
     let stack_for_grid = deps.center.view_stack.clone();
     let picture_for_grid = deps.center.single_picture.clone();
@@ -174,11 +189,14 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
     let right_toggle_grid = deps.right_toggle.clone();
     let pre_fullview_left_grid = deps.pre_fullview_left.clone();
     let pre_fullview_right_grid = deps.pre_fullview_right.clone();
+    let hud_for_grid = deps.center.full_view_favourite_hud.clone();
+    let app_state_for_grid = deps.app_state.clone();
     deps.center.grid_view.connect_activate(move |_, pos| {
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
             let path_str = item.string().to_string();
             let trace = new_full_view_trace(path_str.clone());
             dispatch_full_view_load(&picture_for_grid, &path_str, trace);
+            show_hud_for_path(&app_state_for_grid, &hud_for_grid, &path_str);
         }
         enter_single_view_mode(
             &stack_for_grid,
@@ -196,6 +214,8 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
     let right_toggle_preview = deps.right_toggle.clone();
     let pre_fullview_left_preview = deps.pre_fullview_left.clone();
     let pre_fullview_right_preview = deps.pre_fullview_right.clone();
+    let hud_for_preview = deps.center.full_view_favourite_hud.clone();
+    let app_state_for_preview = deps.app_state.clone();
     let dbl_click = GestureClick::new();
     dbl_click.connect_pressed(move |_, n_press, _, _| {
         if n_press < 2 {
@@ -210,6 +230,7 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
         let path_str = item.string().to_string();
         let trace = new_full_view_trace(path_str.clone());
         dispatch_full_view_load(&picture_for_preview, &path_str, trace);
+        show_hud_for_path(&app_state_for_preview, &hud_for_preview, &path_str);
         enter_single_view_mode(
             &stack_for_preview,
             &left_toggle_preview,

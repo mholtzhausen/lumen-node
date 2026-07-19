@@ -398,6 +398,10 @@ fn build_ui(app: &adw::Application) {
         start_scan_for_folder: start_scan_for_folder.clone(),
         thumb_generations: thumb_generations.clone(),
         bound_paths: app_state.bound_paths.clone(),
+        full_view_favourite_icon: app_config.full_view_favourite_icon.unwrap_or(true),
+        full_view_favourite_icon_seconds: app_config
+            .full_view_favourite_icon_seconds
+            .unwrap_or(2.0),
     });
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---
@@ -456,6 +460,7 @@ fn build_ui(app: &adw::Application) {
     let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     install_navigation_handlers(NavigationDeps {
+        app_state: app_state.clone(),
         window: window.clone(),
         center: center.clone(),
         right: right.clone(),

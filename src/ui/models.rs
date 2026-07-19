@@ -153,8 +153,7 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
 
     let selection_model = SingleSelection::new(Some(sort_model.clone()));
     let selection_for_default = selection_model.clone();
-    let selected_path_hint: std::rc::Rc<std::cell::RefCell<Option<String>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let selected_path_hint = deps.app_state.selected_path.clone();
     {
         let selected_path_hint = selected_path_hint.clone();
         selection_model.connect_selection_changed(move |model, _, _| {

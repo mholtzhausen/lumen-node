@@ -2,8 +2,8 @@ use crate::core::app_state::AppState;
 use crate::ui::grid::{
     add_scroll_flag_overlay, attach_grid_page, attach_single_page, build_scroll_flag_overlay,
     create_center_box, create_grid_overlay, create_grid_scroll, create_grid_view,
-    create_single_picture, install_grid_factory, install_grid_scroll_speed_gate,
-    set_default_grid_page, GridFactoryDeps,
+    create_single_view, install_grid_factory, install_grid_scroll_speed_gate,
+    set_default_grid_page, FullViewFavouriteHud, GridFactoryDeps,
 };
 use crate::ui::list_mutation::ListMutationContext;
 use gtk4::{glib, SingleSelection};
@@ -28,6 +28,8 @@ pub(crate) struct CenterContentDeps {
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
+    pub(crate) full_view_favourite_icon: bool,
+    pub(crate) full_view_favourite_icon_seconds: f64,
 }
 
 #[derive(Clone)]
@@ -37,6 +39,7 @@ pub(crate) struct CenterContentBundle {
     pub(crate) grid_view: gtk4::GridView,
     pub(crate) grid_scroll: gtk4::ScrolledWindow,
     pub(crate) single_picture: gtk4::Picture,
+    pub(crate) full_view_favourite_hud: FullViewFavouriteHud,
 }
 
 pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBundle {
@@ -78,8 +81,11 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
     );
 
     attach_grid_page(&view_stack, &grid_overlay);
-    let single_picture = create_single_picture();
-    attach_single_page(&view_stack, &single_picture);
+    let (single_overlay, single_picture, full_view_favourite_hud) = create_single_view(
+        deps.full_view_favourite_icon,
+        deps.full_view_favourite_icon_seconds,
+    );
+    attach_single_page(&view_stack, &single_overlay);
     set_default_grid_page(&view_stack);
     let center_box = create_center_box(&view_stack);
 
@@ -89,5 +95,6 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
         grid_view,
         grid_scroll,
         single_picture,
+        full_view_favourite_hud,
     }
 }

@@ -39,6 +39,10 @@ pub(crate) struct AppState {
     pub(crate) thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     /// Safe storage for bound paths per Widget (replaces unsafe set_data).
     pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
+    /// Absolute path of the currently selected image (if any).
+    pub(crate) selected_path: Rc<RefCell<Option<String>>>,
+    /// Optional UI sync after favourite toggles (preview header + full-view HUD).
+    pub(crate) on_favourite_changed: Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
 }
 
 pub(crate) fn build_app_state(
@@ -102,5 +106,7 @@ pub(crate) fn build_app_state(
         initial_thumbnail_size,
         thumb_generations: Rc::new(RefCell::new(HashMap::new())),
         bound_paths: Rc::new(RefCell::new(HashMap::new())),
+        selected_path: Rc::new(RefCell::new(None)),
+        on_favourite_changed: Rc::new(RefCell::new(None)),
     }
 }

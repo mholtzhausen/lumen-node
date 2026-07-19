@@ -282,6 +282,7 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `Ctrl+V` | Grid (folder open) | Paste clipboard image as PNG into the folder (then rename flow when applicable) |
 | `Delete` | Grid (selection, not in a text field) | Move selection to trash (same as context menu) |
 | `Shift+Delete` | Grid | Permanent delete (confirmation) |
+| `f` | Selection (not in a text field) | Toggle favourite (grid, preview, and single view) |
 
 ---
 
@@ -289,7 +290,7 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 
 Config lives at `~/.lumen-node/config.yml` — a plain-text `key: value` file you can edit by hand.
 
-On exit, the app writes **window geometry**, **three GtkPaned positions** (`left_pane_pos`, `right_pane_pos`, `meta_pane_pos`), **percentage splits** (`left_pane_width_pct`, `right_pane_width_pct`, `meta_pane_height_pct`), **sidebar visibility**, **color scheme**, **last folder**, and **recent folder** lines. Theme changes via the header toggle also write `color_scheme` immediately. It does **not** write `sort_key`, `search_text`, `thumbnail_size`, or `external_editor` back on save; those keys are only read when present (for defaults or tooling paths).
+On exit, the app writes **window geometry**, **three GtkPaned positions** (`left_pane_pos`, `right_pane_pos`, `meta_pane_pos`), **percentage splits** (`left_pane_width_pct`, `right_pane_width_pct`, `meta_pane_height_pct`), **sidebar visibility**, **color scheme**, **last folder**, and **recent folder** lines. Theme changes via the header toggle also write `color_scheme` immediately. It does **not** write `sort_key`, `search_text`, `thumbnail_size`, `external_editor`, `full_view_favourite_icon`, or `full_view_favourite_icon_seconds` back on save; those keys are only read when present (for defaults or tooling paths).
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -306,6 +307,8 @@ On exit, the app writes **window geometry**, **three GtkPaned positions** (`left
 | `recent_folder` | — | Repeated entry for recent folder history |
 | `sort_key` / `search_text` / `thumbnail_size` | — | Optional startup defaults (read only; per-folder values live in SQLite `ui_state`) |
 | `external_editor` | — | Optional path to an editor binary for “Open in External Editor” |
+| `full_view_favourite_icon` | `true` | Show the favourite star HUD in single/full view (read only) |
+| `full_view_favourite_icon_seconds` | `2` | Seconds the full-view favourite star stays visible before fading (read only) |
 
 Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites plus folder-scoped UI state in the **`ui_state`** table (`sort_key`, `search_text`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
 

@@ -3,7 +3,7 @@ use crate::ui::sidebar::{
     create_meta_expander, create_meta_paned, create_meta_position_programmatic,
     create_meta_preview_picture, create_meta_scroll_list, create_meta_split_before_auto_collapse,
     create_meta_split_dirty_flag, create_pane_restore_complete_flag, create_right_sidebar,
-    initialize_meta_paned_position,
+    initialize_meta_paned_position, PreviewFavouriteIndicator,
 };
 use gtk4::prelude::*;
 
@@ -18,6 +18,7 @@ pub(crate) struct RightSidebarBundle {
     pub(crate) meta_preview: gtk4::Picture,
     pub(crate) meta_listbox: gtk4::ListBox,
     pub(crate) meta_expander: gtk4::Expander,
+    pub(crate) preview_favourite: PreviewFavouriteIndicator,
     pub(crate) meta_split_before_auto_collapse: std::rc::Rc<std::cell::Cell<Option<i32>>>,
     pub(crate) meta_paned: gtk4::Paned,
     pub(crate) meta_position_programmatic: std::rc::Rc<std::cell::Cell<u32>>,
@@ -34,7 +35,7 @@ pub(crate) fn build_right_sidebar(deps: RightSidebarDeps) -> RightSidebarBundle 
     // Bottom pane: metadata list
     let meta_content = create_meta_content_container();
     let (meta_scroll, meta_listbox) = create_meta_scroll_list();
-    let meta_expander = create_meta_expander(&meta_scroll);
+    let (meta_expander, preview_favourite) = create_meta_expander(&meta_scroll);
     meta_content.append(&meta_expander);
     let meta_split_before_auto_collapse = create_meta_split_before_auto_collapse();
 
@@ -61,6 +62,7 @@ pub(crate) fn build_right_sidebar(deps: RightSidebarDeps) -> RightSidebarBundle 
         meta_preview,
         meta_listbox,
         meta_expander,
+        preview_favourite,
         meta_split_before_auto_collapse,
         meta_paned,
         meta_position_programmatic,

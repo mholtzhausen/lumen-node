@@ -90,6 +90,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
 
     let hash_cache_bind = deps.hash_cache.clone();
     let favourite_cache_bind = deps.app_state.favourite_cache.clone();
+    let selected_path_bind = deps.app_state.selected_path.clone();
     let thumbnail_size_bind = deps.thumbnail_size.clone();
     let fast_scroll_active_bind = deps.fast_scroll_active.clone();
     let thumb_generations_bind = deps.thumb_generations.clone();
@@ -104,10 +105,18 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             &fast_scroll_active_bind,
             hash_cache_bind.clone(),
             favourite_cache_bind.clone(),
+            selected_path_bind.clone(),
             &thumb_generations_bind,
             &bound_paths_bind,
         );
     });
+
+    let app_state_for_sel = deps.app_state.clone();
+    deps.mutation_ctx
+        .selection_model
+        .connect_selection_changed(move |_, _, _| {
+            refresh_realized_grid_favourite_icons(&app_state_for_sel);
+        });
 
     let thumb_generations_unbind = deps.thumb_generations.clone();
     let bound_paths_unbind = deps.bound_paths.clone();
@@ -163,9 +172,109 @@ pub fn create_single_picture() -> gtk4::Picture {
     single_picture
 }
 
-pub fn attach_single_page(view_stack: &adw::ViewStack, single_picture: &gtk4::Picture) {
-    let single_page = view_stack.add_titled(single_picture, Some("single"), "Single");
+/// Full-view favourite star HUD (top-right), auto-hides after a configurable hold.
+#[derive(Clone)]
+pub struct FullViewFavouriteHud {
+    pub button: Button,
+    pub enabled: bool,
+    pub hold_ms: u64,
+    fade_gen: Rc<Cell<u64>>,
+}
+
+pub fn create_single_view(
+    enabled: bool,
+    hold_seconds: f64,
+) -> (gtk4::Overlay, gtk4::Picture, FullViewFavouriteHud) {
+    let single_picture = create_single_picture();
+    let overlay = Overlay::new();
+    overlay.set_hexpand(true);
+    overlay.set_vexpand(true);
+    overlay.set_child(Some(&single_picture));
+
+    let button = Button::from_icon_name("non-starred-symbolic");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.add_css_class("thumbnail-favourite-button");
+    button.add_css_class("full-view-favourite-hud");
+    button.set_tooltip_text(Some("Toggle favourite"));
+    button.set_focus_on_click(false);
+    button.set_halign(gtk4::Align::End);
+    button.set_valign(gtk4::Align::Start);
+    button.set_margin_top(16);
+    button.set_margin_end(16);
+    button.set_opacity(0.0);
+    button.set_visible(false);
+    overlay.add_overlay(&button);
+
+    let hold_ms = (hold_seconds.max(0.0) * 1000.0).round() as u64;
+    let hud = FullViewFavouriteHud {
+        button,
+        enabled,
+        hold_ms,
+        fade_gen: Rc::new(Cell::new(0)),
+    };
+    (overlay, single_picture, hud)
+}
+
+pub fn attach_single_page(view_stack: &adw::ViewStack, single_page_child: &impl IsA<gtk4::Widget>) {
+    let single_page = view_stack.add_titled(single_page_child, Some("single"), "Single");
     single_page.set_icon_name(Some("view-fullscreen-symbolic"));
+}
+
+/// Show (or refresh) the full-view favourite HUD for `is_favourite`, then fade out.
+pub fn show_full_view_favourite_hud(hud: &FullViewFavouriteHud, is_favourite: bool) {
+    if !hud.enabled {
+        hud.button.set_visible(false);
+        hud.button.set_opacity(0.0);
+        return;
+    }
+    hud.button.set_icon_name(if is_favourite {
+        "starred-symbolic"
+    } else {
+        "non-starred-symbolic"
+    });
+    if is_favourite {
+        hud.button.add_css_class("thumbnail-favourite-active");
+    } else {
+        hud.button.remove_css_class("thumbnail-favourite-active");
+    }
+    hud.button.set_visible(true);
+    hud.button.set_opacity(1.0);
+
+    let gen = hud.fade_gen.get().saturating_add(1);
+    hud.fade_gen.set(gen);
+    let fade_gen = hud.fade_gen.clone();
+    let button = hud.button.clone();
+    let hold_ms = hud.hold_ms;
+    glib::timeout_add_local_once(Duration::from_millis(hold_ms), move || {
+        if fade_gen.get() != gen {
+            return;
+        }
+        fade_full_view_favourite_hud(&button, fade_gen, gen, 1.0);
+    });
+}
+
+fn fade_full_view_favourite_hud(
+    button: &Button,
+    fade_gen: Rc<Cell<u64>>,
+    gen: u64,
+    opacity: f64,
+) {
+    if fade_gen.get() != gen {
+        return;
+    }
+    const STEP: f64 = 0.12;
+    const INTERVAL_MS: u64 = 30;
+    let next = (opacity - STEP).max(0.0);
+    button.set_opacity(next);
+    if next <= 0.0 {
+        button.set_visible(false);
+        return;
+    }
+    let button = button.clone();
+    glib::timeout_add_local_once(Duration::from_millis(INTERVAL_MS), move || {
+        fade_full_view_favourite_hud(&button, fade_gen, gen, next);
+    });
 }
 
 pub fn set_default_grid_page(view_stack: &adw::ViewStack) {
@@ -284,14 +393,20 @@ fn apply_favourite_button_state(
     favourite_btn: &Button,
     favourite_cache: &Rc<RefCell<HashMap<String, bool>>>,
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+    selected_path: &Rc<RefCell<Option<String>>>,
     hover_active: bool,
 ) {
     let key = favourite_btn.as_ptr() as usize;
-    let is_favourite = bound_paths
-        .borrow()
-        .get(&key)
+    let bound_path = bound_paths.borrow().get(&key).cloned();
+    let is_favourite = bound_path
+        .as_ref()
         .and_then(|path| favourite_cache.borrow().get(path).copied())
         .unwrap_or(false);
+    let is_selected = match (bound_path.as_ref(), selected_path.borrow().as_ref()) {
+        (Some(bound), Some(selected)) => bound == selected,
+        _ => false,
+    };
+    let show_chrome = is_favourite || hover_active || is_selected;
 
     favourite_btn.set_icon_name(if is_favourite {
         "starred-symbolic"
@@ -305,12 +420,12 @@ fn apply_favourite_button_state(
     }
     favourite_btn.set_opacity(if is_favourite {
         1.0
-    } else if hover_active {
+    } else if show_chrome {
         0.66
     } else {
         0.0
     });
-    favourite_btn.set_visible(is_favourite || hover_active);
+    favourite_btn.set_visible(show_chrome);
 }
 
 pub fn refresh_realized_grid_favourite_icons(app_state: &AppState) {
@@ -330,6 +445,7 @@ pub fn refresh_realized_grid_favourite_icons(app_state: &AppState) {
             &favourite_btn,
             &app_state.favourite_cache,
             &app_state.bound_paths,
+            &app_state.selected_path,
             false,
         );
     }
@@ -400,8 +516,14 @@ fn toggle_grid_favourite(
                     &button,
                     &app_state.favourite_cache,
                     &bound_paths,
+                    &app_state.selected_path,
                     true,
                 );
+            }
+        }
+        if app_state.selected_path.borrow().as_ref() == Some(&path) {
+            if let Some(cb) = app_state.on_favourite_changed.borrow().as_ref() {
+                cb(favourite);
             }
         }
         let toast = adw::Toast::new(if favourite {
@@ -532,6 +654,8 @@ pub fn setup_grid_list_item(
     let favourite_cache_leave = app_state.favourite_cache.clone();
     let bound_paths_enter = bound_paths.clone();
     let bound_paths_leave = bound_paths.clone();
+    let selected_path_enter = app_state.selected_path.clone();
+    let selected_path_leave = app_state.selected_path.clone();
     let motion = EventControllerMotion::new();
     motion.connect_enter(move |_, _, _| {
         rename_btn_enter.set_opacity(1.0);
@@ -540,6 +664,7 @@ pub fn setup_grid_list_item(
             &favourite_btn_enter,
             &favourite_cache_enter,
             &bound_paths_enter,
+            &selected_path_enter,
             true,
         );
     });
@@ -550,6 +675,7 @@ pub fn setup_grid_list_item(
             &favourite_btn_leave,
             &favourite_cache_leave,
             &bound_paths_leave,
+            &selected_path_leave,
             false,
         );
     });
@@ -565,6 +691,7 @@ pub fn bind_grid_list_item(
     fast_scroll_active: &Rc<Cell<bool>>,
     hash_cache: Rc<RefCell<HashMap<String, String>>>,
     favourite_cache: Rc<RefCell<HashMap<String, bool>>>,
+    selected_path: Rc<RefCell<Option<String>>>,
     thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
 ) {
@@ -630,7 +757,13 @@ pub fn bind_grid_list_item(
     bound_paths_map.insert(name_label.as_ptr() as usize, path_str.clone());
     bound_paths_map.insert(action_box.as_ptr() as usize, path_str.clone());
     drop(bound_paths_map);
-    apply_favourite_button_state(&favourite_btn, &favourite_cache, bound_paths, false);
+    apply_favourite_button_state(
+        &favourite_btn,
+        &favourite_cache,
+        bound_paths,
+        &selected_path,
+        false,
+    );
     let thumb_key = thumb_image.as_ptr() as usize;
     let generation_token = thumb_generations
         .borrow()
