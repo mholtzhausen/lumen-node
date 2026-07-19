@@ -1,8 +1,9 @@
 use crate::dialogs::{open_delete_dialog, open_rename_dialog};
 use crate::file_name_ops::clipboard_base_name_hint;
 use crate::ui::center::CenterContentBundle;
+use crate::ui::grid::is_immersive_view;
 use crate::ui::list_mutation::ListMutationContext;
-use crate::ui::preview::load_picture_async;
+use crate::ui::preview::{clear_picture, load_picture_async};
 use crate::ui::zoom::{adjust_zoom, zoom_in, zoom_out, zoom_reset};
 use crate::view_helpers::selected_image_path;
 use crate::core::app_state::AppState;
@@ -39,6 +40,9 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
     let stack_for_keys = deps.center.view_stack.clone();
     let selection_for_keys = deps.selection_model.clone();
     let picture_for_keys = deps.center.single_picture.clone();
+    let compare_left_for_keys = deps.center.compare_left_picture.clone();
+    let compare_right_for_keys = deps.center.compare_right_picture.clone();
+    let pinned_for_keys = deps.app_state.pinned_compare_path.clone();
     let meta_preview_for_keys = deps.meta_preview.clone();
     let grid_view_for_keys = deps.center.grid_view.clone();
     let grid_scroll_for_keys = deps.center.grid_scroll.clone();
@@ -262,12 +266,13 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                 if focus_in_text_input(&window_for_keys) {
                     return glib::Propagation::Proceed;
                 }
-                let in_single =
-                    stack_for_keys.visible_child_name().as_deref() == Some("single");
-                let target = if in_single {
-                    &picture_for_keys
-                } else {
-                    &meta_preview_for_keys
+                let page = stack_for_keys.visible_child_name();
+                let target = match page.as_deref() {
+                    Some("single") => &picture_for_keys,
+                    // Keyboard zoom targets the moving (right) pane; each pane
+                    // still zooms independently via Ctrl+scroll.
+                    Some("compare") => &compare_right_for_keys,
+                    _ => &meta_preview_for_keys,
                 };
                 if zoom_in_key {
                     zoom_in(target);
@@ -280,7 +285,29 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             }
         }
         if key == gdk::Key::Escape {
-            let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
+            let page = stack_for_keys.visible_child_name();
+            if page.as_deref() == Some("compare") {
+                // Exit compare first → single view with current selection.
+                *pinned_for_keys.borrow_mut() = None;
+                clear_picture(&compare_left_for_keys);
+                clear_picture(&compare_right_for_keys);
+                if let Some(item) = selection_for_keys
+                    .selected_item()
+                    .and_downcast::<StringObject>()
+                {
+                    load_picture_async(
+                        &picture_for_keys,
+                        &item.string().to_string(),
+                        None,
+                        None,
+                    );
+                } else {
+                    clear_picture(&picture_for_keys);
+                }
+                stack_for_keys.set_visible_child_name("single");
+                return glib::Propagation::Stop;
+            }
+            let in_grid = page.as_deref() == Some("grid");
             if in_grid {
                 if esc_pending.get() {
                     if let Some(app) = window_for_keys.application() {
@@ -358,8 +385,9 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             }
             return glib::Propagation::Stop;
         }
-        let in_single = stack_for_keys.visible_child_name().as_deref() == Some("single");
-        if in_single && (key == gdk::Key::Left || key == gdk::Key::Right) {
+        let page = stack_for_keys.visible_child_name();
+        let in_nav = is_immersive_view(page.as_deref());
+        if in_nav && (key == gdk::Key::Left || key == gdk::Key::Right) {
             let count = selection_for_keys.n_items();
             if count == 0 {
                 return glib::Propagation::Proceed;
@@ -376,7 +404,15 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                     .selected_item()
                     .and_downcast::<StringObject>()
                 {
-                    load_picture_async(&picture_for_keys, &item.string().to_string(), None, None);
+                    let path = item.string().to_string();
+                    if page.as_deref() == Some("compare") {
+                        // Lock-left: only the right (selection) pane advances.
+                        // Selection wiring also reloads compare_right; load here
+                        // so keyboard nav stays responsive if that path changes.
+                        load_picture_async(&compare_right_for_keys, &path, None, None);
+                    } else {
+                        load_picture_async(&picture_for_keys, &path, None, None);
+                    }
                 }
             }
             return glib::Propagation::Stop;
@@ -389,50 +425,15 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
 pub(crate) fn install_scroll_navigation_handlers(
     selection_model: &gtk4::SingleSelection,
     single_picture: &gtk4::Picture,
+    compare_left_picture: &gtk4::Picture,
+    compare_right_picture: &gtk4::Picture,
     meta_preview: &gtk4::Picture,
 ) {
-    {
-        let selection = selection_model.clone();
-        let picture = single_picture.clone();
-        let nav_accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
-        let zoom_accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
-        let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
-        scroll.connect_scroll(move |controller, _dx, dy| {
-            if controller
-                .current_event_state()
-                .contains(gdk::ModifierType::CONTROL_MASK)
-            {
-                zoom_accum.set(zoom_accum.get() + dy);
-                let steps = zoom_accum.get().trunc() as i32;
-                if steps != 0 {
-                    zoom_accum.set(zoom_accum.get().fract());
-                    // Scroll down (positive dy) zooms out; up zooms in.
-                    adjust_zoom(&picture, -steps);
-                }
-                return glib::Propagation::Stop;
-            }
-            let count = selection.n_items();
-            if count == 0 {
-                return glib::Propagation::Proceed;
-            }
-            nav_accum.set(nav_accum.get() + dy);
-            let steps = nav_accum.get().trunc() as i32;
-            if steps == 0 {
-                return glib::Propagation::Stop;
-            }
-            nav_accum.set(nav_accum.get().fract());
-            let cur = selection.selected() as i32;
-            let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
-            if next != cur as u32 {
-                selection.set_selected(next);
-                if let Some(item) = selection.selected_item().and_downcast::<StringObject>() {
-                    load_picture_async(&picture, &item.string().to_string(), None, None);
-                }
-            }
-            glib::Propagation::Stop
-        });
-        single_picture.add_controller(scroll);
-    }
+    install_picture_scroll_nav(selection_model, single_picture, true);
+    // Compare panes: Ctrl+scroll zooms that pane; plain scroll advances selection
+    // (right pane only — left stays pinned via selection wiring / lock-left).
+    install_picture_scroll_nav(selection_model, compare_left_picture, false);
+    install_picture_scroll_nav(selection_model, compare_right_picture, false);
     {
         let selection = selection_model.clone();
         let picture = meta_preview.clone();
@@ -471,6 +472,58 @@ pub(crate) fn install_scroll_navigation_handlers(
         });
         meta_preview.add_controller(scroll);
     }
+}
+
+/// Scroll on a center picture: Ctrl+scroll zooms; plain scroll advances selection.
+/// When `reload_self` is true, also reload this picture (single view). Compare panes
+/// leave reload to selection wiring so only the right pane updates (lock-left).
+fn install_picture_scroll_nav(
+    selection_model: &gtk4::SingleSelection,
+    picture: &gtk4::Picture,
+    reload_self: bool,
+) {
+    let selection = selection_model.clone();
+    let picture_nav = picture.clone();
+    let nav_accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+    let zoom_accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+    let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+    scroll.connect_scroll(move |controller, _dx, dy| {
+        if controller
+            .current_event_state()
+            .contains(gdk::ModifierType::CONTROL_MASK)
+        {
+            zoom_accum.set(zoom_accum.get() + dy);
+            let steps = zoom_accum.get().trunc() as i32;
+            if steps != 0 {
+                zoom_accum.set(zoom_accum.get().fract());
+                // Scroll down (positive dy) zooms out; up zooms in.
+                adjust_zoom(&picture_nav, -steps);
+            }
+            return glib::Propagation::Stop;
+        }
+        let count = selection.n_items();
+        if count == 0 {
+            return glib::Propagation::Proceed;
+        }
+        nav_accum.set(nav_accum.get() + dy);
+        let steps = nav_accum.get().trunc() as i32;
+        if steps == 0 {
+            return glib::Propagation::Stop;
+        }
+        nav_accum.set(nav_accum.get().fract());
+        let cur = selection.selected() as i32;
+        let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
+        if next != cur as u32 {
+            selection.set_selected(next);
+            if reload_self {
+                if let Some(item) = selection.selected_item().and_downcast::<StringObject>() {
+                    load_picture_async(&picture_nav, &item.string().to_string(), None, None);
+                }
+            }
+        }
+        glib::Propagation::Stop
+    });
+    picture.add_controller(scroll);
 }
 
 fn focus_in_text_input(window: &adw::ApplicationWindow) -> bool {

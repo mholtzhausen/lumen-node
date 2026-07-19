@@ -439,6 +439,19 @@ fn build_ui(app: &adw::Application) {
         min_meta_split_px: MIN_META_SPLIT_PX,
     });
 
+    // -----------------------------------------------------------------------
+    // Wire: sidebar toggle buttons → show/hide panels
+    // -----------------------------------------------------------------------
+    connect_sidebar_visibility_toggles(
+        &chrome.left_toggle,
+        &chrome.left_sidebar,
+        &chrome.right_toggle,
+        &right.right_sidebar,
+    );
+
+    let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+
     let sync_ctx_menu = install_context_menu_wiring(ContextMenuWiringDeps {
         app_state: app_state.clone(),
         window: window.clone(),
@@ -450,6 +463,10 @@ fn build_ui(app: &adw::Application) {
         start_scan_for_folder: start_scan_for_folder.clone(),
         external_editor: app_config.external_editor.clone(),
         filter: filter.clone(),
+        left_toggle: chrome.left_toggle.clone(),
+        right_toggle: chrome.right_toggle.clone(),
+        pre_fullview_left: pre_fullview_left.clone(),
+        pre_fullview_right: pre_fullview_right.clone(),
     });
 
     install_scan_runtime(ScanRuntimeDeps {
@@ -464,18 +481,6 @@ fn build_ui(app: &adw::Application) {
         on_scan_complete: Some(refresh_empty_state.clone()),
     });
 
-    // -----------------------------------------------------------------------
-    // Wire: sidebar toggle buttons → show/hide panels
-    // -----------------------------------------------------------------------
-    connect_sidebar_visibility_toggles(
-        &chrome.left_toggle,
-        &chrome.left_sidebar,
-        &chrome.right_toggle,
-        &right.right_sidebar,
-    );
-
-    let pre_fullview_left: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-    let pre_fullview_right: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     install_navigation_handlers(NavigationDeps {
         app_state: app_state.clone(),
         window: window.clone(),
@@ -576,8 +581,8 @@ fn build_ui(app: &adw::Application) {
         let footer_bar = footer_bar.clone();
         let update_banner = update_banner.clone();
         view_stack.connect_visible_child_name_notify(move |stack| {
-            let in_single = stack.visible_child_name().as_deref() == Some("single");
-            let show_chrome = !in_single;
+            let immersive = ui::grid::is_immersive_view(stack.visible_child_name().as_deref());
+            let show_chrome = !immersive;
             header_bar.set_visible(show_chrome);
             controls_row.set_visible(show_chrome);
             footer_bar.set_visible(show_chrome);

@@ -5,8 +5,8 @@ This document describes how the LumenNode codebase is laid out today: where UI l
 ## High-level layout
 
 - **`src/main.rs`** — Composition root: `build_ui()` assembles modules under `ui::` and `core::`, owns scan progress state (`ScanProgressState`), global flags such as `SUPPRESS_SIDEBAR_DURING_PREVIEW`, and wires `glib::spawn_local` receivers. It is no longer the only place with GTK logic; most widgets and handlers live under `src/ui/`.
-- **`src/ui/`** — Presentation and interaction: shell/chrome, grid and preview, context menus and actions, keyboard, layout, scan runtime (channel drain), navigation, selection (including click-to-preview timing), session helpers, and wiring glue. Preview / single-view zoom lives in **`ui::zoom`** (display-only CSS scale on `GtkPicture`, Ctrl+scroll and `+/-`/`0`, fade-out level HUD). Tabbed preferences live in **`ui::preferences`** (`adw::PreferencesWindow`: General / Appearance / Startup).
-- **`src/core/`** — Cross-cutting coordination without owning widgets: `app_state` (startup state from config + folder DB), `scan_coordinator` (folder switches, scan generation IDs, coordination with grid defer flags).
+- **`src/ui/`** — Presentation and interaction: shell/chrome, grid and preview, context menus and actions, keyboard, layout, scan runtime (channel drain), navigation, selection (including click-to-preview timing), session helpers, and wiring glue. Preview / single-view zoom lives in **`ui::zoom`** (display-only CSS scale on `GtkPicture`, Ctrl+scroll and `+/-`/`0`, fade-out level HUD). The center `ViewStack` has **`grid`**, **`single`**, and **`compare`** pages; compare is a horizontal `gtk4::Paned` with two zoomed pictures (left = `AppState.pinned_compare_path`, right = selection; Left/Right and scroll advance the right pane only). Tabbed preferences live in **`ui::preferences`** (`adw::PreferencesWindow`: General / Appearance / Startup).
+- **`src/core/`** — Cross-cutting coordination without owning widgets: `app_state` (startup state from config + folder DB, including `pinned_compare_path` for compare mode), `scan_coordinator` (folder switches, scan generation IDs, coordination with grid defer flags; clears the compare pin on folder change).
 - **`src/services/`** — Background services (for example release/update checking) used from lifecycle wiring.
 - **`src/scanner.rs`** — Background `std::thread` that walks a folder and enriches via `db`; sends **`ScanMessage`** variants defined in **`src/scan.rs`** over a bounded `async-channel`.
 - **`src/db.rs`** — Per-folder `.lumen-node.db`: `images` rows, **`ui_state`** key-value rows (`sort_key`, `search_text`, `favorites_only`, `thumbnail_size`), WAL + `synchronous=NORMAL`.
@@ -57,4 +57,4 @@ An earlier “Phase 0” baseline described extraction from a monolithic `main.r
 ## Verification
 
 - `make check` — type-check without producing a full binary.
-- Manual smoke flows (if present under `docs/manual-smoke.md`) — folder scan, metadata, rename/delete, grid vs single view, persisted UI state.
+- Manual smoke flows (if present under `docs/manual-smoke.md`) — folder scan, metadata, rename/delete, grid vs single vs compare view, persisted UI state.

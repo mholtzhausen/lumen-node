@@ -24,8 +24,9 @@ Run this checklist after structural changes and before release.
 ## Navigation and Persistence
 
 1. Toggle between grid and full preview and back.
-2. Open another folder, then return using recent folders.
-3. Restart app and verify last folder and UI state restore.
+2. Pin an image for compare (context menu), confirm left stays fixed while Left/Right changes the right pane; Escape exits to single, then to grid.
+3. Open another folder, then return using recent folders.
+4. Restart app and verify last folder and UI state restore.
 
 ## Release Artifacts
 

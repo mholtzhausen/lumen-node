@@ -222,6 +222,51 @@ pub fn attach_single_page(view_stack: &adw::ViewStack, single_page_child: &impl 
     single_page.set_icon_name(Some("view-fullscreen-symbolic"));
 }
 
+/// Side-by-side compare: horizontal paned with independent zoom on each picture.
+/// Left = pinned reference; right = current selection (lock-left navigation).
+pub fn create_compare_view() -> (gtk4::Overlay, gtk4::Picture, gtk4::Picture) {
+    let left_picture = create_single_picture();
+    let left_overlay = Overlay::new();
+    left_overlay.set_hexpand(true);
+    left_overlay.set_vexpand(true);
+    left_overlay.set_child(Some(&left_picture));
+    crate::ui::zoom::install_picture_zoom(&left_picture, &left_overlay);
+
+    let right_picture = create_single_picture();
+    let right_overlay = Overlay::new();
+    right_overlay.set_hexpand(true);
+    right_overlay.set_vexpand(true);
+    right_overlay.set_child(Some(&right_picture));
+    crate::ui::zoom::install_picture_zoom(&right_picture, &right_overlay);
+
+    let paned = gtk4::Paned::new(Orientation::Horizontal);
+    paned.set_hexpand(true);
+    paned.set_vexpand(true);
+    paned.set_resize_start_child(true);
+    paned.set_resize_end_child(true);
+    paned.set_shrink_start_child(true);
+    paned.set_shrink_end_child(true);
+    paned.set_start_child(Some(&left_overlay));
+    paned.set_end_child(Some(&right_overlay));
+    paned.set_position(480);
+
+    let host = Overlay::new();
+    host.set_hexpand(true);
+    host.set_vexpand(true);
+    host.set_child(Some(&paned));
+    (host, left_picture, right_picture)
+}
+
+pub fn attach_compare_page(view_stack: &adw::ViewStack, compare_page_child: &impl IsA<gtk4::Widget>) {
+    let compare_page = view_stack.add_titled(compare_page_child, Some("compare"), "Compare");
+    compare_page.set_icon_name(Some("preferences-desktop-display-symbolic"));
+}
+
+/// True for single-view or compare pages (immersive center, chrome/sidebars hidden).
+pub fn is_immersive_view(page_name: Option<&str>) -> bool {
+    matches!(page_name, Some("single") | Some("compare"))
+}
+
 /// Show (or refresh) the full-view favourite HUD for `is_favourite`, then fade out.
 pub fn show_full_view_favourite_hud(hud: &FullViewFavouriteHud, is_favourite: bool) {
     if !hud.enabled {
@@ -296,11 +341,48 @@ pub fn enter_single_view_mode(
     pre_fullview_left: &Rc<Cell<bool>>,
     pre_fullview_right: &Rc<Cell<bool>>,
 ) {
-    pre_fullview_left.set(left_toggle.is_active());
-    pre_fullview_right.set(right_toggle.is_active());
+    remember_pre_fullview_if_needed(
+        view_stack,
+        left_toggle,
+        right_toggle,
+        pre_fullview_left,
+        pre_fullview_right,
+    );
     view_stack.set_visible_child_name("single");
     left_toggle.set_active(false);
     right_toggle.set_active(false);
+}
+
+pub fn enter_compare_view_mode(
+    view_stack: &adw::ViewStack,
+    left_toggle: &gtk4::ToggleButton,
+    right_toggle: &gtk4::ToggleButton,
+    pre_fullview_left: &Rc<Cell<bool>>,
+    pre_fullview_right: &Rc<Cell<bool>>,
+) {
+    remember_pre_fullview_if_needed(
+        view_stack,
+        left_toggle,
+        right_toggle,
+        pre_fullview_left,
+        pre_fullview_right,
+    );
+    view_stack.set_visible_child_name("compare");
+    left_toggle.set_active(false);
+    right_toggle.set_active(false);
+}
+
+fn remember_pre_fullview_if_needed(
+    view_stack: &adw::ViewStack,
+    left_toggle: &gtk4::ToggleButton,
+    right_toggle: &gtk4::ToggleButton,
+    pre_fullview_left: &Rc<Cell<bool>>,
+    pre_fullview_right: &Rc<Cell<bool>>,
+) {
+    if !is_immersive_view(view_stack.visible_child_name().as_deref()) {
+        pre_fullview_left.set(left_toggle.is_active());
+        pre_fullview_right.set(right_toggle.is_active());
+    }
 }
 
 pub static ACTIVE_THUMBNAIL_TASKS: AtomicU64 = AtomicU64::new(0);

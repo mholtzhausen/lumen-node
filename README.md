@@ -80,7 +80,7 @@ Current UI screenshot:
 | | Feature |
 |---|---|
 | ⚡ | **Progressive loading** — folder opens instantly, thumbnails fill in behind |
-| 🖼️ | **Grid + single-view** — grid for browsing, click for focus, Escape to return; empty grid shows guidance (open folder, no images, no matches) |
+| 🖼️ | **Grid + single-view + compare** — grid for browsing, click for focus, Escape to return; pin a reference for side-by-side compare (lock-left); empty grid shows guidance (open folder, no images, no matches) |
 | 📐 | **4 thumbnail sizes** — 128px base with larger steps up to 240px (128, 160, 208, 240), adjustable in one click |
 | 🔍 | **Live search** — filters grid by filename and metadata in real time |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |
@@ -185,21 +185,28 @@ Double-click / Enter → make that folder the new sidebar root (and show its ima
 ### Navigating
 
 ```
-Grid view                Single view
-─────────────────────    ─────────────────────
-Click image     → focus  Left / Right  → prev/next
-Page Up/Down    → page   Escape        → back to grid
+Grid view                Single view              Compare view
+─────────────────────    ─────────────────────    ─────────────────────
+Click image     → focus  Left / Right  → prev/next Left / Right  → right pane only
+Page Up/Down    → page   Escape        → grid     Escape        → single (unpin)
 Home / End      → ends
 ```
 
+### Side-by-side compare
+
+1. Right-click an image → **Pin for compare** (pins that image on the left and opens compare mode).
+2. Left/Right arrows or plain scroll advance the **right** pane only; the left reference stays pinned.
+3. Each pane zooms independently (`Ctrl+scroll` on that pane; `+/-` / `0` target the right pane).
+4. Exit: **Escape** (compare → single, then Escape again → grid), context menu **Exit compare**, or middle-click either compare pane → grid.
+
 ### The context menu
 
-Right-click any image thumbnail, the single-view image, or the sidebar preview. Sections match the live `gio::Menu` in `src/ui/actions.rs`:
+Right-click any image thumbnail, the single-view / compare image, or the sidebar preview. Sections match the live `gio::Menu` in `src/ui/actions.rs`:
 
 - **Prompt:** Copy Prompt, Copy Negative Prompt, Copy Seed, Copy Generation Command (rebuilds a CLI-style invocation)
 - **Clipboard:** Copy Image (pixels), Copy Path, Copy Metadata
 - **Open:** Open in File Manager, Open in External Editor (optional `external_editor` in config; otherwise the default image app)
-- **Organise:** Favourite (toggle), Move to Trash
+- **Organise:** Favourite (toggle), Pin for compare, Exit compare, Move to Trash
 - **Refresh** (submenu): Refresh Thumbnail, Refresh Metadata, Refresh Folder Thumbnails, Refresh Folder Metadata
 
 ### Pane layout
@@ -277,10 +284,12 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `End` | Grid | Jump to last image |
 | `Escape` | Grid | Quit (toast warns, second press confirms) |
 | `←` / `→` | Single view | Previous / next image |
+| `←` / `→` | Compare view | Previous / next on the **right** pane only (left stays pinned) |
+| `Escape` | Compare view | Exit compare → single view (clears pin) |
 | `Escape` | Single view | Return to grid |
-| `+` / `-` (or keypad) | Preview or single view (not in a text field) | Zoom in / out (fit-to-display is the default) |
-| `0` (or keypad) | Preview or single view (not in a text field) | Reset zoom to fit-to-display |
-| `Ctrl+scroll` | Preview or single-view image | Zoom in / out (plain scroll still changes image) |
+| `+` / `-` (or keypad) | Preview, single, or compare (right pane; not in a text field) | Zoom in / out (fit-to-display is the default) |
+| `0` (or keypad) | Preview, single, or compare (right pane; not in a text field) | Reset zoom to fit-to-display |
+| `Ctrl+scroll` | Preview, single-view, or either compare pane | Zoom that picture (plain scroll still changes selection / right pane) |
 | `Ctrl+C` | Selection | Copy image pixels to clipboard |
 | `Ctrl+X` | Selection | Mark image to move; `Ctrl+V` into an open folder completes the move (same-filesystem `rename`) |
 | `Ctrl+V` | Grid (folder open) | Paste clipboard image as PNG into the folder (then rename flow when applicable), or complete a prior cut-move |
@@ -290,7 +299,8 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `F2` | Selection (not in a text field) | Rename selected image |
 | `Ctrl+Shift+P` / `N` / `S` / `C` / `M` / `G` | Selection | Copy prompt / negative / seed / path / metadata / generation command |
 | `Ctrl+Alt+T` / `M` | Folder open | Refresh folder thumbnails / folder metadata |
-| Double-click / middle-click | Single view | Toggle window fullscreen |
+| Double-click | Single / compare view | Toggle window fullscreen |
+| Middle-click | Single / compare view | Return to grid (compare also clears pin) |
 
 ---
 
@@ -526,7 +536,7 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 - [x] **Favourite filtering** — favorites-only toggle is wired in the header and persisted per folder (`ui_state.favorites_only`)
 - [x] **Trash / delete** — move to trash from context menu and `Delete`; permanent delete via `Shift+Delete` with confirmation
 - [x] **External open** — file manager and external editor (optional `external_editor` config); per-format custom apps remain a possible enhancement
-- [ ] **Side-by-side compare** — pin reference image, diff against selection
+- [x] **Side-by-side compare** — pin reference image (left), navigate selection on the right (lock-left); context menu Pin / Exit compare
 - [ ] **Free-form tags** — label images beyond favourite/unfavourite
 - [x] **Version checker** — background check + in-app banner (`src/updater.rs` → `mholtzhausen/lumen-node` releases; `services::update_checker`)
 

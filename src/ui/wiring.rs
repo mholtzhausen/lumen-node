@@ -11,7 +11,7 @@ use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::open_folder::{build_open_folder_action, OpenFolderActionDeps};
 use crate::ui::right_sidebar::RightSidebarBundle;
-use crate::ui::preview::clear_picture;
+use crate::ui::preview::{clear_picture, load_picture_async};
 use crate::ui::selection::{handle_selection_change_event, ClickTrace};
 use crate::ui::shell::{install_history_popover_handler, install_open_button_handler};
 use crate::ui::grid::show_full_view_favourite_hud;
@@ -21,7 +21,11 @@ use crate::ui::sidebar::{
 use gtk4::prelude::*;
 use gtk4::{ListScrollFlags, StringObject};
 use libadwaita as adw;
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    path::PathBuf,
+    rc::Rc,
+};
 
 fn favourite_for_selected(app_state: &AppState) -> Option<bool> {
     let path = app_state.selected_path.borrow().clone()?;
@@ -46,6 +50,10 @@ pub(crate) struct ContextMenuWiringDeps {
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) external_editor: Option<PathBuf>,
     pub(crate) filter: gtk4::CustomFilter,
+    pub(crate) left_toggle: gtk4::ToggleButton,
+    pub(crate) right_toggle: gtk4::ToggleButton,
+    pub(crate) pre_fullview_left: Rc<Cell<bool>>,
+    pub(crate) pre_fullview_right: Rc<Cell<bool>>,
 }
 
 pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn Fn()> {
@@ -111,7 +119,14 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
         deps.external_editor.as_ref(),
         &deps.center.grid_view,
         &deps.center.single_picture,
+        &deps.center.compare_left_picture,
+        &deps.center.compare_right_picture,
         &deps.right.meta_preview,
+        &deps.center.view_stack,
+        &deps.left_toggle,
+        &deps.right_toggle,
+        &deps.pre_fullview_left,
+        &deps.pre_fullview_right,
         &ListMutationContext {
             app_state: deps.app_state.clone(),
             selection_model: deps.selection_model.clone(),
@@ -144,12 +159,16 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
     let preview_favourite_sel = deps.right.preview_favourite.clone();
     let hud_sel = deps.center.full_view_favourite_hud.clone();
     let view_stack_sel = deps.center.view_stack.clone();
+    let compare_right_sel = deps.center.compare_right_picture.clone();
     deps.selection_model
         .connect_selection_changed(move |model, _, _| {
             let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
                 clear_picture(&meta_preview_sel);
                 clear_metadata_sidebar(&meta_listbox_sel);
                 update_preview_favourite_indicator(&preview_favourite_sel, None);
+                if view_stack_sel.visible_child_name().as_deref() == Some("compare") {
+                    clear_picture(&compare_right_sel);
+                }
                 return;
             };
             let selected = model.selected();
@@ -174,8 +193,12 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
             );
             let is_favourite = favourite_for_selected(&app_state_sel);
             update_preview_favourite_indicator(&preview_favourite_sel, is_favourite);
-            if view_stack_sel.visible_child_name().as_deref() == Some("single") {
+            let page = view_stack_sel.visible_child_name();
+            if page.as_deref() == Some("single") {
                 show_full_view_favourite_hud(&hud_sel, is_favourite.unwrap_or(false));
+            }
+            if page.as_deref() == Some("compare") {
+                load_picture_async(&compare_right_sel, &item.string().to_string(), None, None);
             }
         });
 }

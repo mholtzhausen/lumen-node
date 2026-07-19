@@ -86,10 +86,12 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         pre_fullview_right: deps.pre_fullview_right.clone(),
     });
 
-    // Scroll on single-view / meta-preview -> navigate images.
+    // Scroll on single-view / compare / meta-preview -> navigate images.
     install_scroll_navigation_handlers(
         &deps.selection_model,
         &deps.center.single_picture,
+        &deps.center.compare_left_picture,
+        &deps.center.compare_right_picture,
         &deps.right.meta_preview,
     );
 

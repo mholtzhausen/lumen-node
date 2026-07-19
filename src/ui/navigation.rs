@@ -272,4 +272,49 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
         right_toggle_for_single_middle.set_active(pre_fullview_right_single_middle.get());
     });
     deps.center.single_picture.add_controller(middle_click_single);
+
+    // Compare panes: double-click toggles fullscreen; middle-click exits to grid
+    // and clears the pin (same immersive exit as single-view middle-click).
+    for picture in [
+        &deps.center.compare_left_picture,
+        &deps.center.compare_right_picture,
+    ] {
+        let window_for_dbl = deps.window.clone();
+        let dbl_click = GestureClick::new();
+        dbl_click.connect_pressed(move |_, n_press, _, _| {
+            if n_press < 2 {
+                return;
+            }
+            if window_for_dbl.is_fullscreen() {
+                window_for_dbl.unfullscreen();
+            } else {
+                window_for_dbl.fullscreen();
+            }
+        });
+        picture.add_controller(dbl_click);
+
+        let window_for_middle = deps.window.clone();
+        let stack_for_middle = deps.center.view_stack.clone();
+        let left_toggle_for_middle = deps.left_toggle.clone();
+        let right_toggle_for_middle = deps.right_toggle.clone();
+        let pre_left_middle = deps.pre_fullview_left.clone();
+        let pre_right_middle = deps.pre_fullview_right.clone();
+        let pinned_for_middle = deps.app_state.pinned_compare_path.clone();
+        let compare_left_clear = deps.center.compare_left_picture.clone();
+        let compare_right_clear = deps.center.compare_right_picture.clone();
+        let middle_click = GestureClick::new();
+        middle_click.set_button(2);
+        middle_click.connect_pressed(move |_, _, _, _| {
+            if window_for_middle.is_fullscreen() {
+                window_for_middle.unfullscreen();
+            }
+            *pinned_for_middle.borrow_mut() = None;
+            crate::ui::preview::clear_picture(&compare_left_clear);
+            crate::ui::preview::clear_picture(&compare_right_clear);
+            stack_for_middle.set_visible_child_name("grid");
+            left_toggle_for_middle.set_active(pre_left_middle.get());
+            right_toggle_for_middle.set_active(pre_right_middle.get());
+        });
+        picture.add_controller(middle_click);
+    }
 }

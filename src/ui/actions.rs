@@ -7,7 +7,8 @@ use crate::metadata_view::{
     has_generation_command_content,
 };
 use crate::ui::list_mutation::ListMutationContext;
-use crate::ui::grid::refresh_realized_grid_favourite_icons;
+use crate::ui::grid::{enter_compare_view_mode, refresh_realized_grid_favourite_icons};
+use crate::ui::preview::{clear_picture, load_picture_async};
 use crate::thumbnails;
 use crate::view_helpers::{attach_context_menu_with_prepare, selected_image_path};
 use gtk4::glib::prelude::*;
@@ -37,6 +38,8 @@ struct CtxMenuActionHandles {
     open_in_external_editor: gio::SimpleAction,
     toggle_favourite: gio::SimpleAction,
     move_to_trash: gio::SimpleAction,
+    pin_for_compare: gio::SimpleAction,
+    exit_compare: gio::SimpleAction,
 }
 
 fn register_context_menu_accels(window: &adw::ApplicationWindow) {
@@ -93,6 +96,7 @@ fn sync_context_menu_action_states(
     selection_model: &SingleSelection,
     meta_cache: &RefCell<HashMap<String, ImageMetadata>>,
     current_folder: &RefCell<Option<PathBuf>>,
+    pinned_compare_path: &RefCell<Option<String>>,
     h: &CtxMenuActionHandles,
 ) {
     let path_opt = selected_image_path(selection_model);
@@ -150,6 +154,9 @@ fn sync_context_menu_action_states(
     h.open_in_external_editor.set_enabled(has_sel && file_on_disk);
     h.toggle_favourite.set_enabled(has_sel && indexed);
     h.move_to_trash.set_enabled(has_sel && file_on_disk);
+    h.pin_for_compare.set_enabled(has_sel && file_on_disk);
+    h.exit_compare
+        .set_enabled(pinned_compare_path.borrow().is_some());
 
     let fav_state = match (path_opt.as_ref(), current_folder.borrow().as_ref().cloned()) {
         (Some(path), Some(folder)) if indexed => db::open(&folder)
@@ -181,7 +188,14 @@ pub fn install_context_menu(
     external_editor: Option<&PathBuf>,
     grid_view: &GridView,
     single_picture: &Picture,
+    compare_left_picture: &Picture,
+    compare_right_picture: &Picture,
     meta_preview: &Picture,
+    view_stack: &adw::ViewStack,
+    left_toggle: &gtk4::ToggleButton,
+    right_toggle: &gtk4::ToggleButton,
+    pre_fullview_left: &Rc<Cell<bool>>,
+    pre_fullview_right: &Rc<Cell<bool>>,
     mutation_ctx: &ListMutationContext,
     filter: &gtk4::CustomFilter,
     on_favourite_changed: Rc<dyn Fn(bool)>,
@@ -565,6 +579,82 @@ pub fn install_context_menu(
         open_trash_dialog(&window_for_trash, &toast_for_trash, &mutation_ctx_for_trash, path);
     });
 
+    let pin_for_compare_action = gio::SimpleAction::new("pin-for-compare", None);
+    let exit_compare_action = gio::SimpleAction::new("exit-compare", None);
+
+    {
+        let selection_for_pin = selection_model.clone();
+        let pinned_for_pin = mutation_ctx.app_state.pinned_compare_path.clone();
+        let left_picture = compare_left_picture.clone();
+        let right_picture = compare_right_picture.clone();
+        let view_stack_pin = view_stack.clone();
+        let left_toggle_pin = left_toggle.clone();
+        let right_toggle_pin = right_toggle.clone();
+        let pre_left_pin = pre_fullview_left.clone();
+        let pre_right_pin = pre_fullview_right.clone();
+        let sync_slot_pin = sync_context_menu_slot.clone();
+        let toast_pin = toast_overlay.clone();
+        pin_for_compare_action.connect_activate(move |_, _| {
+            let Some(path) = selected_image_path(&selection_for_pin) else {
+                return;
+            };
+            if !path.exists() {
+                return;
+            }
+            let path_str = path.to_string_lossy().to_string();
+            *pinned_for_pin.borrow_mut() = Some(path_str.clone());
+            load_picture_async(&left_picture, &path_str, None, None);
+            load_picture_async(&right_picture, &path_str, None, None);
+            enter_compare_view_mode(
+                &view_stack_pin,
+                &left_toggle_pin,
+                &right_toggle_pin,
+                &pre_left_pin,
+                &pre_right_pin,
+            );
+            let toast = adw::Toast::new("Pinned for compare — Left/Right advances the right pane");
+            toast.set_timeout(2);
+            toast_pin.add_toast(toast);
+            if let Some(sync) = sync_slot_pin.borrow().as_ref() {
+                sync();
+            }
+        });
+    }
+
+    {
+        let pinned_for_exit = mutation_ctx.app_state.pinned_compare_path.clone();
+        let left_picture = compare_left_picture.clone();
+        let right_picture = compare_right_picture.clone();
+        let single_picture_exit = single_picture.clone();
+        let selection_for_exit = selection_model.clone();
+        let view_stack_exit = view_stack.clone();
+        let sync_slot_exit = sync_context_menu_slot.clone();
+        exit_compare_action.connect_activate(move |_, _| {
+            *pinned_for_exit.borrow_mut() = None;
+            clear_picture(&left_picture);
+            clear_picture(&right_picture);
+            if view_stack_exit.visible_child_name().as_deref() == Some("compare") {
+                if let Some(item) = selection_for_exit
+                    .selected_item()
+                    .and_downcast::<StringObject>()
+                {
+                    load_picture_async(
+                        &single_picture_exit,
+                        &item.string().to_string(),
+                        None,
+                        None,
+                    );
+                } else {
+                    clear_picture(&single_picture_exit);
+                }
+                view_stack_exit.set_visible_child_name("single");
+            }
+            if let Some(sync) = sync_slot_exit.borrow().as_ref() {
+                sync();
+            }
+        });
+    }
+
     action_group.add_action(&copy_prompt_action);
     action_group.add_action(&copy_negative_prompt_action);
     action_group.add_action(&copy_seed_action);
@@ -580,6 +670,8 @@ pub fn install_context_menu(
     action_group.add_action(&open_in_external_editor_action);
     action_group.add_action(&toggle_favourite_action);
     action_group.add_action(&move_to_trash_action);
+    action_group.add_action(&pin_for_compare_action);
+    action_group.add_action(&exit_compare_action);
     window.insert_action_group("ctx", Some(&action_group));
     register_context_menu_accels(window);
 
@@ -616,6 +708,8 @@ pub fn install_context_menu(
 
     let organise_section = gio::Menu::new();
     organise_section.append(Some("Favourite"), Some("ctx.toggle-favourite"));
+    organise_section.append(Some("Pin for compare"), Some("ctx.pin-for-compare"));
+    organise_section.append(Some("Exit compare"), Some("ctx.exit-compare"));
     organise_section.append(Some("Move to Trash"), Some("ctx.move-to-trash"));
     menu_model.append_section(None, &organise_section);
 
@@ -648,17 +742,21 @@ pub fn install_context_menu(
         open_in_external_editor: open_in_external_editor_action.clone(),
         toggle_favourite: toggle_favourite_action.clone(),
         move_to_trash: move_to_trash_action.clone(),
+        pin_for_compare: pin_for_compare_action.clone(),
+        exit_compare: exit_compare_action.clone(),
     };
     let sync_fn = Rc::new({
         let selection_for_sync = selection_model.clone();
         let meta_cache_for_sync = meta_cache.clone();
         let current_folder_for_sync = current_folder.clone();
+        let pinned_for_sync = mutation_ctx.app_state.pinned_compare_path.clone();
         let handles_for_sync = handles.clone();
         move || {
             sync_context_menu_action_states(
                 &selection_for_sync,
                 &meta_cache_for_sync,
                 &current_folder_for_sync,
+                &pinned_for_sync,
                 &handles_for_sync,
             );
         }
@@ -678,6 +776,18 @@ pub fn install_context_menu(
     {
         let sync_for_menu = sync_fn.clone();
         attach_context_menu_with_prepare(single_picture, &menu_model, move |_, _, _| {
+            sync_for_menu();
+        });
+    }
+    {
+        let sync_for_menu = sync_fn.clone();
+        attach_context_menu_with_prepare(compare_left_picture, &menu_model, move |_, _, _| {
+            sync_for_menu();
+        });
+    }
+    {
+        let sync_for_menu = sync_fn.clone();
+        attach_context_menu_with_prepare(compare_right_picture, &menu_model, move |_, _, _| {
             sync_for_menu();
         });
     }
