@@ -96,14 +96,23 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             let cut_source_path = cut_source_path.clone();
             let mutation_ctx = mutation_ctx_keys.clone();
             glib::MainContext::default().spawn_local(async move {
-                if let Some(source) = cut_source_path.borrow_mut().take() {
+                let pending_cut = cut_source_path.borrow().clone();
+                if let Some(source) = pending_cut {
                     if source.exists() {
                         let file_name = source
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "moved-image.png".to_string());
                         let destination = unique_destination_path(&folder, &file_name);
-                        if std::fs::rename(&source, &destination).is_ok() {
+                        let move_err = match std::fs::rename(&source, &destination) {
+                            Ok(()) => None,
+                            Err(rename_err) => match std::fs::copy(&source, &destination) {
+                                Ok(_) => std::fs::remove_file(&source).err(),
+                                Err(_) => Some(rename_err),
+                            },
+                        };
+                        if move_err.is_none() {
+                            cut_source_path.borrow_mut().take();
                             if let Ok(conn) = db::open(&folder) {
                                 if source.parent() == Some(folder.as_path()) {
                                     let _ = db::remove_image_row(&conn, &source);
@@ -119,7 +128,16 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                             toast_overlay.add_toast(toast);
                             return;
                         }
+                        let detail = move_err
+                            .map(|e| e.to_string())
+                            .unwrap_or_else(|| "unknown error".to_string());
+                        let toast =
+                            adw::Toast::new(&format!("Could not move image: {detail}"));
+                        toast.set_timeout(3);
+                        toast_overlay.add_toast(toast);
+                        return;
                     }
+                    cut_source_path.borrow_mut().take();
                 }
                 let Ok(Some(texture)) = clipboard.read_texture_future().await else {
                     let toast = adw::Toast::new("Clipboard does not contain an image");
