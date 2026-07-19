@@ -292,6 +292,7 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.search_text,
         &deps.app_state.favorites_only,
         &deps.app_state.active_tags,
+        &deps.app_state.similar_paths,
         &deps.app_state.sort_key,
         &deps.filter,
         &deps.sorter,

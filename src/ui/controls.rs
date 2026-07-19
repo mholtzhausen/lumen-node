@@ -204,6 +204,7 @@ pub(crate) fn apply_clear_filters(
     search_text: &Rc<RefCell<String>>,
     favorites_only: &Rc<Cell<bool>>,
     active_tags: &Rc<RefCell<HashSet<String>>>,
+    similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     sort_key: &Rc<RefCell<String>>,
     filter: &CustomFilter,
     sorter: &CustomSorter,
@@ -218,6 +219,7 @@ pub(crate) fn apply_clear_filters(
     *search_text.borrow_mut() = String::new();
     favorites_only.set(false);
     active_tags.borrow_mut().clear();
+    *similar_paths.borrow_mut() = None;
     *sort_key.borrow_mut() = SORT_KEY_NAME_ASC.to_string();
     favourites_filter_btn.remove_css_class("favorites-filter-active");
     favourites_filter_btn.set_active(false);
@@ -287,6 +289,7 @@ pub(crate) fn install_clear_button_handler(
     search_text: &Rc<RefCell<String>>,
     favorites_only: &Rc<Cell<bool>>,
     active_tags: &Rc<RefCell<HashSet<String>>>,
+    similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     sort_key: &Rc<RefCell<String>>,
     filter: &CustomFilter,
     sorter: &CustomSorter,
@@ -301,6 +304,7 @@ pub(crate) fn install_clear_button_handler(
     let search_text_clear = search_text.clone();
     let favorites_only_clear = favorites_only.clone();
     let active_tags_clear = active_tags.clone();
+    let similar_paths_clear = similar_paths.clone();
     let sort_key_clear = sort_key.clone();
     let filter_clear = filter.clone();
     let sorter_clear = sorter.clone();
@@ -316,6 +320,7 @@ pub(crate) fn install_clear_button_handler(
             &search_text_clear,
             &favorites_only_clear,
             &active_tags_clear,
+            &similar_paths_clear,
             &sort_key_clear,
             &filter_clear,
             &sorter_clear,

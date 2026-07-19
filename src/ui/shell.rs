@@ -74,6 +74,7 @@ pub(crate) fn build_header_controls(
     copy_section.append(Some("Copy Negative Prompt"), Some("ctx.copy-negative-prompt"));
     copy_section.append(Some("Copy Seed"), Some("ctx.copy-seed"));
     copy_section.append(Some("Copy Generation Command"), Some("ctx.copy-generation-command"));
+    copy_section.append(Some("Similar in folder"), Some("ctx.show-similar"));
     edit_menu.append_section(None, &copy_section);
 
     let clipboard_section = gio::Menu::new();

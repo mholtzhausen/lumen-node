@@ -13,6 +13,7 @@ mod recent_folders;
 mod scan;
 mod scanner;
 mod services;
+mod similarity;
 mod sort;
 mod sort_flags;
 mod thumbnail_sizing;

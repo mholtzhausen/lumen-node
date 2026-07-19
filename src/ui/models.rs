@@ -27,11 +27,17 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
     let search_text_filter = deps.app_state.search_text.clone();
     let favorites_only_filter = deps.app_state.favorites_only.clone();
     let active_tags_filter = deps.app_state.active_tags.clone();
+    let similar_paths_filter = deps.app_state.similar_paths.clone();
     let filter = CustomFilter::new(move |obj| {
         let path_str = obj
             .downcast_ref::<StringObject>()
             .map(|s| s.string().to_string())
             .unwrap_or_default();
+        if let Some(similar) = similar_paths_filter.borrow().as_ref() {
+            if !similar.contains(&path_str) {
+                return false;
+            }
+        }
         let matches_favorite = if favorites_only_filter.get() {
             favourite_cache_filter
                 .borrow()

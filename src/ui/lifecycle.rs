@@ -345,6 +345,11 @@ fn schedule_path_index_refresh(
             return;
         }
         app_state.hash_cache.borrow_mut().insert(path.clone(), hash);
+        crate::similarity::upsert_prompt_index(
+            &mut app_state.prompt_similarity_index.borrow_mut(),
+            &path,
+            &meta,
+        );
         app_state.meta_cache.borrow_mut().insert(path.clone(), meta);
         app_state.favourite_cache.borrow_mut().insert(path.clone(), favourite);
         app_state.tags_cache.borrow_mut().insert(path, tags);

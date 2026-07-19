@@ -6,6 +6,10 @@ use crate::metadata_view::{
     extract_seed_from_parameters, format_generation_command, format_metadata_text,
     has_generation_command_content,
 };
+use crate::similarity::{
+    find_similar_paths, meta_has_similarity_source, upsert_prompt_index, SIMILAR_MIN_SCORE,
+    SIMILAR_TOP_N,
+};
 use crate::ui::controls::refresh_tag_filter_from_folder;
 use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::grid::{enter_compare_view_mode, refresh_realized_grid_favourite_icons};
@@ -44,6 +48,7 @@ struct CtxMenuActionHandles {
     move_to_trash: gio::SimpleAction,
     pin_for_compare: gio::SimpleAction,
     exit_compare: gio::SimpleAction,
+    show_similar: gio::SimpleAction,
     remove_tags_menu: gio::Menu,
 }
 
@@ -143,11 +148,13 @@ fn sync_context_menu_action_states(
         .as_ref()
         .is_some_and(|m| has_generation_command_content(m));
     let meta_ok = meta.as_ref().is_some_and(metadata_has_content);
+    let similar_ok = meta.as_ref().is_some_and(meta_has_similarity_source);
 
     h.copy_prompt.set_enabled(prompt_ok);
     h.copy_negative_prompt.set_enabled(neg_ok);
     h.copy_seed.set_enabled(seed_ok);
     h.copy_generation_command.set_enabled(gen_ok);
+    h.show_similar.set_enabled(similar_ok);
     h.copy_image.set_enabled(has_sel && file_on_disk);
     h.copy_path.set_enabled(has_sel && file_on_disk);
     h.copy_metadata.set_enabled(meta_ok);
@@ -257,6 +264,7 @@ pub fn install_context_menu(
         gio::SimpleAction::new("remove-tag", Some(glib::VariantTy::STRING));
     let remove_tags_menu = gio::Menu::new();
     let move_to_trash_action = gio::SimpleAction::new("move-to-trash", None);
+    let show_similar_action = gio::SimpleAction::new("show-similar", None);
 
     let selection_for_actions = selection_model.clone();
     let meta_cache_for_actions = meta_cache.clone();
@@ -410,6 +418,7 @@ pub fn install_context_menu(
     let selection_for_actions = selection_model.clone();
     let meta_cache_for_actions = meta_cache.clone();
     let hash_cache_for_actions = hash_cache.clone();
+    let prompt_index_for_refresh = mutation_ctx.app_state.prompt_similarity_index.clone();
     let refresh_metadata_sidebar_for_actions = refresh_metadata_sidebar.clone();
     let meta_expander_for_actions = meta_expander.clone();
     let meta_paned_for_actions = meta_paned.clone();
@@ -430,6 +439,11 @@ pub fn install_context_menu(
         };
         if let Some(row) = db::refresh_indexed(&conn, &path) {
             let path_key = path.to_string_lossy().to_string();
+            upsert_prompt_index(
+                &mut prompt_index_for_refresh.borrow_mut(),
+                &path_key,
+                &row.meta,
+            );
             meta_cache_for_actions
                 .borrow_mut()
                 .insert(path_key.clone(), row.meta.clone());
@@ -795,6 +809,46 @@ pub fn install_context_menu(
         });
     }
 
+    {
+        let selection_for_similar = selection_model.clone();
+        let index_for_similar = mutation_ctx.app_state.prompt_similarity_index.clone();
+        let similar_paths = mutation_ctx.app_state.similar_paths.clone();
+        let filter_for_similar = filter.clone();
+        let toast_for_similar = toast_overlay.clone();
+        show_similar_action.connect_activate(move |_, _| {
+            let Some(path) = selected_image_path(&selection_for_similar) else {
+                return;
+            };
+            let path_key = path.to_string_lossy().to_string();
+            let Some(matches) = find_similar_paths(
+                &index_for_similar.borrow(),
+                &path_key,
+                SIMILAR_TOP_N,
+                SIMILAR_MIN_SCORE,
+            ) else {
+                return;
+            };
+            let count = matches.len();
+            *similar_paths.borrow_mut() = Some(matches);
+            filter_for_similar.changed(gtk4::FilterChange::Different);
+
+            let toast = adw::Toast::new(&format!(
+                "Showing {} similar image{}",
+                count,
+                if count == 1 { "" } else { "s" }
+            ));
+            toast.set_button_label(Some("Clear"));
+            toast.set_timeout(4);
+            let similar_paths_clear = similar_paths.clone();
+            let filter_clear = filter_for_similar.clone();
+            toast.connect_button_clicked(move |_| {
+                *similar_paths_clear.borrow_mut() = None;
+                filter_clear.changed(gtk4::FilterChange::Different);
+            });
+            toast_for_similar.add_toast(toast);
+        });
+    }
+
     action_group.add_action(&copy_prompt_action);
     action_group.add_action(&copy_negative_prompt_action);
     action_group.add_action(&copy_seed_action);
@@ -814,6 +868,7 @@ pub fn install_context_menu(
     action_group.add_action(&move_to_trash_action);
     action_group.add_action(&pin_for_compare_action);
     action_group.add_action(&exit_compare_action);
+    action_group.add_action(&show_similar_action);
     window.insert_action_group("ctx", Some(&action_group));
     register_context_menu_accels(window);
 
@@ -829,6 +884,7 @@ pub fn install_context_menu(
         Some("Copy Generation Command"),
         Some("ctx.copy-generation-command"),
     );
+    prompt_section.append(Some("Similar in folder"), Some("ctx.show-similar"));
     menu_model.append_section(None, &prompt_section);
 
     let clipboard_section = gio::Menu::new();
@@ -890,6 +946,7 @@ pub fn install_context_menu(
         move_to_trash: move_to_trash_action.clone(),
         pin_for_compare: pin_for_compare_action.clone(),
         exit_compare: exit_compare_action.clone(),
+        show_similar: show_similar_action.clone(),
         remove_tags_menu: remove_tags_menu.clone(),
     };
     let sync_fn = Rc::new({

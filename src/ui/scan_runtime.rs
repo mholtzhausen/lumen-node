@@ -1,5 +1,6 @@
 use crate::core::app_state::AppState;
 use crate::scan::ScanMessage;
+use crate::similarity::upsert_prompt_index;
 use crate::sort_flags::compute_sort_fields;
 use crate::ui::grid::{
     refresh_realized_grid_favourite_icons, refresh_realized_grid_thumbnails,
@@ -50,6 +51,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
         let meta_cache_recv = deps.app_state.meta_cache.clone();
         let favourite_cache_recv = deps.app_state.favourite_cache.clone();
         let tags_cache_recv = deps.app_state.tags_cache.clone();
+        let prompt_index_recv = deps.app_state.prompt_similarity_index.clone();
         let sort_fields_cache_recv = deps.app_state.sort_fields_cache.clone();
         let active_scan_generation_recv = deps.app_state.active_scan_generation.clone();
         let scan_in_progress_recv = deps.app_state.scan_in_progress.clone();
@@ -76,6 +78,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
             let meta_cache_recv = meta_cache_recv.clone();
             let favourite_cache_recv = favourite_cache_recv.clone();
             let tags_cache_recv = tags_cache_recv.clone();
+            let prompt_index_recv = prompt_index_recv.clone();
             let sort_fields_cache_recv = sort_fields_cache_recv.clone();
             let active_scan_generation_recv = active_scan_generation_recv.clone();
             let scan_in_progress_recv = scan_in_progress_recv.clone();
@@ -173,6 +176,11 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                             if has_thumbnail_hash {
                                 hash_cache_recv.borrow_mut().insert(path.clone(), hash);
                             }
+                            upsert_prompt_index(
+                                &mut prompt_index_recv.borrow_mut(),
+                                &path,
+                                &meta,
+                            );
                             meta_cache_recv.borrow_mut().insert(path.clone(), meta);
                             favourite_cache_recv
                                 .borrow_mut()

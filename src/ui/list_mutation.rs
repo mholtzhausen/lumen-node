@@ -39,6 +39,13 @@ impl ListMutationContext {
         self.app_state.meta_cache.borrow_mut().remove(&target);
         self.app_state.favourite_cache.borrow_mut().remove(&target);
         self.app_state.tags_cache.borrow_mut().remove(&target);
+        self.app_state
+            .prompt_similarity_index
+            .borrow_mut()
+            .remove(&target);
+        if let Some(similar) = self.app_state.similar_paths.borrow_mut().as_mut() {
+            similar.remove(&target);
+        }
         self.app_state.sort_fields_cache.borrow_mut().remove(&target);
 
         if selected_path_before.as_deref() == Some(target.as_str()) {

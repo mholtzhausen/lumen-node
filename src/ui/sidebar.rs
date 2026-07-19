@@ -260,6 +260,9 @@ pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) 
         ("Workflow", meta.workflow_json.as_deref()),
     ];
 
+    let can_show_similar = crate::similarity::meta_has_similarity_source(meta);
+    let mut similar_button_placed = false;
+
     for (key, maybe_val) in long_rows {
         let Some(val) = maybe_val else { continue };
         let display_val = val.to_string();
@@ -278,6 +281,20 @@ pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) 
         key_label.set_halign(Align::Start);
         key_label.set_hexpand(true);
         header_box.append(&key_label);
+
+        let place_similar = can_show_similar
+            && !similar_button_placed
+            && (*key == "Prompt" || *key == "Parameters");
+        if place_similar {
+            let similar_btn = gtk4::Button::with_label("Similar");
+            similar_btn.add_css_class("flat");
+            similar_btn.set_tooltip_text(Some("Similar in folder"));
+            similar_btn.connect_clicked(move |btn| {
+                let _ = gtk4::prelude::WidgetExt::activate_action(btn, "ctx.show-similar", None);
+            });
+            header_box.append(&similar_btn);
+            similar_button_placed = true;
+        }
 
         let copy_text = display_val.clone();
         let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");

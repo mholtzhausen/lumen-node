@@ -97,6 +97,7 @@ Current UI screenshot:
 | 🎨 | **InvokeAI** — reads `invokeai_metadata` JSON for structured prompt + model info |
 | 📋 | **One-click copy** — prompt, negative prompt, seed, or full generation command |
 | 🔁 | **CLI reconstruction** — right-click → *Copy Generation Command* builds `--prompt "..." --negative "..." --seed X` |
+| 🔗 | **Similar in folder** — after enrichment, find near-duplicate prompts / same-seed variants (context menu or metadata pane); temporary grid filter, clear with × / toast / empty-state |
 
 ### For photographers
 
@@ -204,11 +205,13 @@ Home / End      → ends
 
 Right-click any image thumbnail, the single-view / compare image, or the sidebar preview. Sections match the live `gio::Menu` in `src/ui/actions.rs`:
 
-- **Prompt:** Copy Prompt, Copy Negative Prompt, Copy Seed, Copy Generation Command (rebuilds a CLI-style invocation)
+- **Prompt:** Copy Prompt, Copy Negative Prompt, Copy Seed, Copy Generation Command (rebuilds a CLI-style invocation), Similar in folder (temporary grid filter by prompt-token Jaccard + same-seed boost)
 - **Clipboard:** Copy Image (pixels), Copy Path, Copy Metadata
 - **Open:** Open in File Manager, Open in External Editor (optional `external_editor` in config; otherwise the default image app)
-- **Organise:** Favourite (toggle), Pin for compare, Exit compare, Move to Trash
+- **Organise:** Favourite (toggle), Add tag / Remove tag, Pin for compare, Exit compare, Move to Trash
 - **Refresh** (submenu): Refresh Thumbnail, Refresh Metadata, Refresh Folder Thumbnails, Refresh Folder Metadata
+
+**Similar in folder** is enabled when the selection has a prompt or raw parameters. The metadata pane shows a **Similar** button next to the Prompt (or Parameters) row. The filter ANDs with search / favourites / tags; clear it via the header × button, the toast’s Clear action, or the empty-state “Clear filters” CTA.
 
 ### Pane layout
 
@@ -547,6 +550,7 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 - [x] **Side-by-side compare** — pin reference image (left), navigate selection on the right (lock-left); context menu Pin / Exit compare
 - [x] **Free-form tags** — junction table `image_tags`, context menu add/remove, header multi-select filter (AND), search inclusion, `ui_state.active_tags`
 - [x] **Version checker** — background check + in-app banner (`src/updater.rs` → `mholtzhausen/lumen-node` releases; `services::update_checker`)
+- [x] **Prompt / parameter similarity browse** — in-memory token index after enrich; *Similar in folder* from context menu / metadata pane (`src/similarity.rs`)
 
 ---
 

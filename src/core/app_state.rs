@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::similarity::PromptIndexEntry;
 use crate::sort_flags::SortFields;
 use crate::thumbnail_sizing::normalize_thumbnail_size;
 use crate::ImageMetadata;
@@ -23,6 +24,10 @@ pub(crate) struct AppState {
     pub(crate) favourite_cache: Rc<RefCell<HashMap<String, bool>>>,
     /// Per-image tags (path → tag list), populated on enrich / tag mutations.
     pub(crate) tags_cache: Rc<RefCell<HashMap<String, Vec<String>>>>,
+    /// Prompt-token (+ optional seed) index for “Similar in folder” browse.
+    pub(crate) prompt_similarity_index: Rc<RefCell<HashMap<String, PromptIndexEntry>>>,
+    /// When `Some`, grid CustomFilter requires the path to be in this set (ANDed with other filters).
+    pub(crate) similar_paths: Rc<RefCell<Option<HashSet<String>>>>,
     pub(crate) sort_fields_cache: Rc<RefCell<HashMap<String, SortFields>>>,
     pub(crate) active_scan_generation: Rc<Cell<u64>>,
     pub(crate) scan_in_progress: Rc<Cell<bool>>,
@@ -98,6 +103,8 @@ pub(crate) fn build_app_state(
         meta_cache: Rc::new(RefCell::new(HashMap::new())),
         favourite_cache: Rc::new(RefCell::new(HashMap::new())),
         tags_cache: Rc::new(RefCell::new(HashMap::new())),
+        prompt_similarity_index: Rc::new(RefCell::new(HashMap::new())),
+        similar_paths: Rc::new(RefCell::new(None)),
         sort_fields_cache: Rc::new(RefCell::new(HashMap::new())),
         active_scan_generation: Rc::new(Cell::new(0_u64)),
         scan_in_progress: Rc::new(Cell::new(false)),
