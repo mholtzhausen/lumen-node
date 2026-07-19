@@ -211,7 +211,7 @@ pub(crate) fn build_header_controls(
     let size_buttons = Rc::new(size_buttons_vec);
 
     let search_entry = gtk4::SearchEntry::new();
-    search_entry.set_placeholder_text(Some("Search..."));
+    search_entry.set_placeholder_text(Some("Search filename or prompt…"));
     search_entry.set_width_request(220);
     search_entry.set_hexpand(true);
 
