@@ -24,6 +24,17 @@ pub fn create_meta_preview_picture() -> gtk4::Picture {
     meta_preview
 }
 
+/// Preview picture wrapped in an overlay host for the zoom-level HUD.
+pub fn create_meta_preview() -> (gtk4::Overlay, gtk4::Picture) {
+    let meta_preview = create_meta_preview_picture();
+    let overlay = gtk4::Overlay::new();
+    overlay.set_vexpand(true);
+    overlay.set_hexpand(true);
+    overlay.set_child(Some(&meta_preview));
+    crate::ui::zoom::install_picture_zoom(&meta_preview, &overlay);
+    (overlay, meta_preview)
+}
+
 pub fn create_meta_content_container() -> gtk4::Box {
     let meta_content = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
     meta_content.set_vexpand(true);
@@ -140,7 +151,10 @@ pub fn create_pane_restore_complete_flag() -> std::rc::Rc<std::cell::Cell<bool>>
     std::rc::Rc::new(std::cell::Cell::new(false))
 }
 
-pub fn create_meta_paned(meta_preview: &gtk4::Picture, meta_content: &gtk4::Box) -> gtk4::Paned {
+pub fn create_meta_paned(
+    meta_preview: &impl IsA<gtk4::Widget>,
+    meta_content: &gtk4::Box,
+) -> gtk4::Paned {
     let meta_paned = gtk4::Paned::new(gtk4::Orientation::Vertical);
     meta_paned.set_vexpand(true);
     meta_paned.set_start_child(Some(meta_preview));

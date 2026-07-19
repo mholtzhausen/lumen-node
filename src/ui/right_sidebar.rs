@@ -2,7 +2,7 @@ use crate::metadata_section::connect_meta_expander_paned_sync;
 use crate::ui::sidebar::{
     append_meta_paned_to_sidebar, connect_meta_paned_dirty_tracking, create_meta_content_container,
     create_meta_expander, create_meta_paned, create_meta_position_programmatic,
-    create_meta_preview_picture, create_meta_scroll_list, create_meta_split_before_auto_collapse,
+    create_meta_preview, create_meta_scroll_list, create_meta_split_before_auto_collapse,
     create_meta_split_dirty_flag, create_pane_restore_complete_flag, create_right_sidebar,
     initialize_meta_paned_position, PreviewFavouriteIndicator,
 };
@@ -31,8 +31,8 @@ pub(crate) struct RightSidebarBundle {
 pub(crate) fn build_right_sidebar(deps: RightSidebarDeps) -> RightSidebarBundle {
     let right_sidebar = create_right_sidebar(deps.initial_right_sidebar_visible);
 
-    // Top pane: image preview
-    let meta_preview = create_meta_preview_picture();
+    // Top pane: image preview (overlay hosts zoom-level HUD)
+    let (meta_preview_host, meta_preview) = create_meta_preview();
 
     // Bottom pane: metadata list
     let meta_content = create_meta_content_container();
@@ -42,7 +42,7 @@ pub(crate) fn build_right_sidebar(deps: RightSidebarDeps) -> RightSidebarBundle 
     let meta_split_before_auto_collapse = create_meta_split_before_auto_collapse();
 
     // Vertical paned: preview (top) | metadata (bottom)
-    let meta_paned = create_meta_paned(&meta_preview, &meta_content);
+    let meta_paned = create_meta_paned(&meta_preview_host, &meta_content);
     let meta_position_programmatic = create_meta_position_programmatic();
     let meta_split_dirty = create_meta_split_dirty_flag();
     let pane_restore_complete = create_pane_restore_complete_flag();

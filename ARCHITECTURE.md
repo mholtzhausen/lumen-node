@@ -5,7 +5,7 @@ This document describes how the LumenNode codebase is laid out today: where UI l
 ## High-level layout
 
 - **`src/main.rs`** — Composition root: `build_ui()` assembles modules under `ui::` and `core::`, owns scan progress state (`ScanProgressState`), global flags such as `SUPPRESS_SIDEBAR_DURING_PREVIEW`, and wires `glib::spawn_local` receivers. It is no longer the only place with GTK logic; most widgets and handlers live under `src/ui/`.
-- **`src/ui/`** — Presentation and interaction: shell/chrome, grid and preview, context menus and actions, keyboard, layout, scan runtime (channel drain), navigation, selection (including click-to-preview timing), session helpers, and wiring glue.
+- **`src/ui/`** — Presentation and interaction: shell/chrome, grid and preview, context menus and actions, keyboard, layout, scan runtime (channel drain), navigation, selection (including click-to-preview timing), session helpers, and wiring glue. Preview / single-view zoom lives in **`ui::zoom`** (display-only CSS scale on `GtkPicture`, Ctrl+scroll and `+/-`/`0`, fade-out level HUD).
 - **`src/core/`** — Cross-cutting coordination without owning widgets: `app_state` (startup state from config + folder DB), `scan_coordinator` (folder switches, scan generation IDs, coordination with grid defer flags).
 - **`src/services/`** — Background services (for example release/update checking) used from lifecycle wiring.
 - **`src/scanner.rs`** — Background `std::thread` that walks a folder and enriches via `db`; sends **`ScanMessage`** variants defined in **`src/scan.rs`** over a bounded `async-channel`.

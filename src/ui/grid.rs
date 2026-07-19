@@ -190,6 +190,7 @@ pub fn create_single_view(
     overlay.set_hexpand(true);
     overlay.set_vexpand(true);
     overlay.set_child(Some(&single_picture));
+    crate::ui::zoom::install_picture_zoom(&single_picture, &overlay);
 
     let button = Button::from_icon_name("non-starred-symbolic");
     button.add_css_class("flat");

@@ -22,3 +22,4 @@ pub mod shell;
 pub mod sidebar;
 pub mod tree;
 pub mod wiring;
+pub mod zoom;

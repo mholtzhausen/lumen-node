@@ -51,6 +51,7 @@ pub fn clear_picture(picture: &Picture) {
         let _: Option<i32> = picture.steal_data("loading-max-dim");
     }
     picture.set_paintable(gdk::Paintable::NONE);
+    crate::ui::zoom::zoom_reset_silent(picture);
 }
 
 pub fn load_picture_async(
@@ -79,6 +80,7 @@ pub fn load_picture_async(
         return;
     }
 
+    crate::ui::zoom::zoom_reset_silent(picture);
     picture.set_paintable(gdk::Paintable::NONE);
 
     let prev_cancel: Option<gio::Cancellable> = unsafe { picture.steal_data("loading-cancel") };

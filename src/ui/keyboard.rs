@@ -3,6 +3,7 @@ use crate::file_name_ops::clipboard_base_name_hint;
 use crate::ui::center::CenterContentBundle;
 use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::preview::load_picture_async;
+use crate::ui::zoom::{adjust_zoom, zoom_in, zoom_out, zoom_reset};
 use crate::view_helpers::selected_image_path;
 use crate::core::app_state::AppState;
 use crate::db;
@@ -18,6 +19,7 @@ pub(crate) struct KeyboardDeps {
     pub(crate) app_state: AppState,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) center: CenterContentBundle,
+    pub(crate) meta_preview: gtk4::Picture,
     pub(crate) selection_model: gtk4::SingleSelection,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) toast_overlay: adw::ToastOverlay,
@@ -37,6 +39,7 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
     let stack_for_keys = deps.center.view_stack.clone();
     let selection_for_keys = deps.selection_model.clone();
     let picture_for_keys = deps.center.single_picture.clone();
+    let meta_preview_for_keys = deps.meta_preview.clone();
     let grid_view_for_keys = deps.center.grid_view.clone();
     let grid_scroll_for_keys = deps.center.grid_scroll.clone();
     let thumbnail_size_for_keys = deps.thumbnail_size.clone();
@@ -54,6 +57,8 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
     };
     key_controller.connect_key_pressed(move |_, key, _, state| {
         let ctrl_pressed = state.contains(gdk::ModifierType::CONTROL_MASK);
+        let alt_pressed = state.contains(gdk::ModifierType::ALT_MASK);
+        let super_pressed = state.contains(gdk::ModifierType::SUPER_MASK);
         if ctrl_pressed && key == gdk::Key::c {
             let Some(path) = selected_image_path(&selection_for_keys) else {
                 return glib::Propagation::Stop;
@@ -247,6 +252,33 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             );
             return glib::Propagation::Stop;
         }
+        if !ctrl_pressed && !alt_pressed && !super_pressed {
+            let zoom_in_key = key == gdk::Key::plus
+                || key == gdk::Key::equal
+                || key == gdk::Key::KP_Add;
+            let zoom_out_key = key == gdk::Key::minus || key == gdk::Key::KP_Subtract;
+            let zoom_reset_key = key == gdk::Key::_0 || key == gdk::Key::KP_0;
+            if zoom_in_key || zoom_out_key || zoom_reset_key {
+                if focus_in_text_input(&window_for_keys) {
+                    return glib::Propagation::Proceed;
+                }
+                let in_single =
+                    stack_for_keys.visible_child_name().as_deref() == Some("single");
+                let target = if in_single {
+                    &picture_for_keys
+                } else {
+                    &meta_preview_for_keys
+                };
+                if zoom_in_key {
+                    zoom_in(target);
+                } else if zoom_out_key {
+                    zoom_out(target);
+                } else {
+                    zoom_reset(target);
+                }
+                return glib::Propagation::Stop;
+            }
+        }
         if key == gdk::Key::Escape {
             let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
             if in_grid {
@@ -362,19 +394,33 @@ pub(crate) fn install_scroll_navigation_handlers(
     {
         let selection = selection_model.clone();
         let picture = single_picture.clone();
-        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let nav_accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let zoom_accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
         let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
-        scroll.connect_scroll(move |_, _dx, dy| {
+        scroll.connect_scroll(move |controller, _dx, dy| {
+            if controller
+                .current_event_state()
+                .contains(gdk::ModifierType::CONTROL_MASK)
+            {
+                zoom_accum.set(zoom_accum.get() + dy);
+                let steps = zoom_accum.get().trunc() as i32;
+                if steps != 0 {
+                    zoom_accum.set(zoom_accum.get().fract());
+                    // Scroll down (positive dy) zooms out; up zooms in.
+                    adjust_zoom(&picture, -steps);
+                }
+                return glib::Propagation::Stop;
+            }
             let count = selection.n_items();
             if count == 0 {
                 return glib::Propagation::Proceed;
             }
-            accum.set(accum.get() + dy);
-            let steps = accum.get().trunc() as i32;
+            nav_accum.set(nav_accum.get() + dy);
+            let steps = nav_accum.get().trunc() as i32;
             if steps == 0 {
                 return glib::Propagation::Stop;
             }
-            accum.set(accum.get().fract());
+            nav_accum.set(nav_accum.get().fract());
             let cur = selection.selected() as i32;
             let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
             if next != cur as u32 {
@@ -389,19 +435,33 @@ pub(crate) fn install_scroll_navigation_handlers(
     }
     {
         let selection = selection_model.clone();
-        let accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let picture = meta_preview.clone();
+        let nav_accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let zoom_accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
         let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
-        scroll.connect_scroll(move |_, _dx, dy| {
+        scroll.connect_scroll(move |controller, _dx, dy| {
+            if controller
+                .current_event_state()
+                .contains(gdk::ModifierType::CONTROL_MASK)
+            {
+                zoom_accum.set(zoom_accum.get() + dy);
+                let steps = zoom_accum.get().trunc() as i32;
+                if steps != 0 {
+                    zoom_accum.set(zoom_accum.get().fract());
+                    adjust_zoom(&picture, -steps);
+                }
+                return glib::Propagation::Stop;
+            }
             let count = selection.n_items();
             if count == 0 {
                 return glib::Propagation::Proceed;
             }
-            accum.set(accum.get() + dy);
-            let steps = accum.get().trunc() as i32;
+            nav_accum.set(nav_accum.get() + dy);
+            let steps = nav_accum.get().trunc() as i32;
             if steps == 0 {
                 return glib::Propagation::Stop;
             }
-            accum.set(accum.get().fract());
+            nav_accum.set(nav_accum.get().fract());
             let cur = selection.selected() as i32;
             let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
             if next != cur as u32 {

@@ -73,6 +73,31 @@ pub(crate) fn present_shortcuts_window(parent: &adw::ApplicationWindow) {
     ));
     navigation.add_group(&single_nav);
 
+    let zoom = ShortcutsGroup::builder().title("Zoom").build();
+    add_key(
+        &zoom,
+        "Zoom in",
+        "plus",
+        Some("Preview or single view; keypad + also works"),
+    );
+    add_key(
+        &zoom,
+        "Zoom out",
+        "minus",
+        Some("Preview or single view; keypad - also works"),
+    );
+    add_key(
+        &zoom,
+        "Reset to fit",
+        "0",
+        Some("Preview or single view; keypad 0 also works"),
+    );
+    zoom.add_shortcut(&gesture_shortcut(
+        "Zoom in / out",
+        "Ctrl+scroll on preview or single-view image",
+    ));
+    navigation.add_group(&zoom);
+
     window.add_section(&navigation);
 
     // ── Clipboard ────────────────────────────────────────────────────────────

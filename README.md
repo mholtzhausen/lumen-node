@@ -278,6 +278,9 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `Escape` | Grid | Quit (toast warns, second press confirms) |
 | `←` / `→` | Single view | Previous / next image |
 | `Escape` | Single view | Return to grid |
+| `+` / `-` (or keypad) | Preview or single view (not in a text field) | Zoom in / out (fit-to-display is the default) |
+| `0` (or keypad) | Preview or single view (not in a text field) | Reset zoom to fit-to-display |
+| `Ctrl+scroll` | Preview or single-view image | Zoom in / out (plain scroll still changes image) |
 | `Ctrl+C` | Selection | Copy image pixels to clipboard |
 | `Ctrl+X` | Selection | Mark image to move; `Ctrl+V` into an open folder completes the move (same-filesystem `rename`) |
 | `Ctrl+V` | Grid (folder open) | Paste clipboard image as PNG into the folder (then rename flow when applicable), or complete a prior cut-move |

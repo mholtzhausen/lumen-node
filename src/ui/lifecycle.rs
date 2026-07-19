@@ -74,6 +74,7 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
         app_state: deps.app_state.clone(),
         window: deps.window.clone(),
         center: deps.center.clone(),
+        meta_preview: deps.right.meta_preview.clone(),
         selection_model: deps.selection_model.clone(),
         thumbnail_size: deps.thumbnail_size.clone(),
         toast_overlay: deps.toast_overlay.clone(),
