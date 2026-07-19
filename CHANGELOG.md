@@ -1,3 +1,17 @@
+## 1.6.0 (2893af0)
+### Features and Improvements
+- Added full-view favourite HUD with configurable icon and display duration.
+- Added `color_scheme` config and a header theme toggle (system / light / dark).
+- Improved folder tree navigation: single-click browses images; double-click sets the tree root.
+- Restored selection after sort/filter and cleared preview/metadata when nothing is selected.
+- Expanded README, ARCHITECTURE, and CLAUDE documentation (shortcuts, session/tree root, starter pack).
+
+### Bugfixes
+- No explicit bugfix-only commits were recorded in this release range.
+
+### Deprecations
+- No deprecations were introduced in this release.
+
 ## 1.5.0 (bfaf208)
 ### Features and Improvements
 - Added favorites filter functionality to the UI.
