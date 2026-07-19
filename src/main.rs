@@ -542,6 +542,8 @@ fn build_ui(app: &adw::Application) {
         sorter: sorter.clone(),
         start_scan_for_folder: start_scan_for_folder.clone(),
         filter: filter.clone(),
+        toast_overlay: toast_overlay.clone(),
+        selection_model: selection_model.clone(),
     });
 
     let layout_bundle = assemble_and_mount_layout(LayoutMountDeps {

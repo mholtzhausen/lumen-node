@@ -3,7 +3,9 @@ use crate::db;
 use crate::sort::{sort_key_for_index, SORT_KEY_NAME_ASC};
 use crate::ui::grid::apply_thumbnail_size_change;
 use gtk4::prelude::*;
-use gtk4::{CustomFilter, CustomSorter};
+use gtk4::gio::ListStore;
+use gtk4::{CustomFilter, CustomSorter, SingleSelection};
+use libadwaita as adw;
 use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc};
 
 pub(crate) fn install_sort_dropdown_handler(
@@ -156,11 +158,17 @@ pub(crate) fn install_favorites_only_handler(
     favorites_only: &Rc<Cell<bool>>,
     filter: &CustomFilter,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    toast_overlay: &adw::ToastOverlay,
+    selection_model: &SingleSelection,
+    list_store: &ListStore,
 ) {
     let favourites_filter_btn_toggle = favourites_filter_btn.clone();
     let favorites_only_toggle = favorites_only.clone();
     let filter_toggle = filter.clone();
     let current_folder_toggle = current_folder.clone();
+    let toast_overlay_toggle = toast_overlay.clone();
+    let selection_model_toggle = selection_model.clone();
+    let list_store_toggle = list_store.clone();
     favourites_filter_btn.connect_toggled(move |btn| {
         let active = btn.is_active();
         favorites_only_toggle.set(active);
@@ -177,6 +185,16 @@ pub(crate) fn install_favorites_only_handler(
             );
         }
         filter_toggle.changed(gtk4::FilterChange::Different);
+        if active
+            && list_store_toggle.n_items() > 0
+            && selection_model_toggle.n_items() == 0
+        {
+            let toast = adw::Toast::new(
+                "No favourites match — turn off the favourites filter to see all images.",
+            );
+            toast.set_timeout(2);
+            toast_overlay_toggle.add_toast(toast);
+        }
     });
 }
 

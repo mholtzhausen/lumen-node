@@ -238,6 +238,8 @@ pub(crate) struct ControlsWiringDeps {
     pub(crate) sorter: gtk4::CustomSorter,
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) filter: gtk4::CustomFilter,
+    pub(crate) toast_overlay: adw::ToastOverlay,
+    pub(crate) selection_model: gtk4::SingleSelection,
 }
 
 pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
@@ -273,6 +275,9 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.favorites_only,
         &deps.filter,
         &deps.app_state.current_folder,
+        &deps.toast_overlay,
+        &deps.selection_model,
+        &deps.app_state.list_store,
     );
     install_thumbnail_size_handlers(
         &deps.chrome.size_buttons,
