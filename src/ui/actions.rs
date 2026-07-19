@@ -45,6 +45,7 @@ fn register_context_menu_accels(window: &adw::ApplicationWindow) {
     };
     app.set_accels_for_action("ctx.copy-prompt", &["<Primary><Shift>p"]);
     app.set_accels_for_action("ctx.copy-negative-prompt", &["<Primary><Shift>n"]);
+    app.set_accels_for_action("ctx.copy-seed", &["<Primary><Shift>s"]);
     app.set_accels_for_action("ctx.copy-path", &["<Primary><Shift>c"]);
     app.set_accels_for_action("ctx.copy-metadata", &["<Primary><Shift>m"]);
     app.set_accels_for_action("ctx.copy-generation-command", &["<Primary><Shift>g"]);
