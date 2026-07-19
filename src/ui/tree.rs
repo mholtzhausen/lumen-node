@@ -3,11 +3,12 @@ use crate::db;
 use crate::recent_folders::push_recent_folder_entry;
 use crate::sort::sort_index_for_key;
 use crate::thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
-use crate::tree_sidebar::reset_tree_root;
+use crate::tree_sidebar::{reset_tree_root, tree_root_path};
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use gtk4::prelude::*;
 use gtk4::{gio, glib, Image, Label, ListItem, ListView, Orientation, ScrolledWindow, TreeListRow};
-use std::path::PathBuf;
+use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 pub(crate) struct TreeWidgets {
@@ -87,7 +88,7 @@ pub(crate) fn build_tree_widgets(
         let Some(expander) = list_item.child().and_downcast::<gtk4::TreeExpander>() else {
             return;
         };
-        let Some(row) = list_item.item().and_downcast::<gtk4::TreeListRow>() else {
+        let Some(row) = list_item.item().and_downcast::<TreeListRow>() else {
             expander.set_list_row(None::<&gtk4::TreeListRow>);
             return;
         };
@@ -149,23 +150,96 @@ pub(crate) struct TreeFolderSelectionDeps {
     pub(crate) recent_folders_limit: usize,
 }
 
-/// Wire tree folder selection → restore/save UI state, recent list, tree root, and start scan.
-pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
-    let current_folder = deps.app_state.current_folder.clone();
-    let recent_folders = deps.app_state.recent_folders.clone();
-    let tree_root = deps.chrome.tree_root.clone();
-    let sort_key = deps.app_state.sort_key.clone();
-    let search_text = deps.app_state.search_text.clone();
-    let favorites_only = deps.app_state.favorites_only.clone();
-    let thumbnail_size = deps.app_state.thumbnail_size.clone();
-    let sort_dropdown = deps.chrome.sort_dropdown.clone();
-    let favourites_filter_btn = deps.chrome.favourites_filter_btn.clone();
-    let search_entry = deps.chrome.search_entry.clone();
-    let size_buttons = deps.chrome.size_buttons.clone();
-    let progress_state = deps.app_state.progress_state.clone();
-    let start_scan = deps.start_scan_for_folder.clone();
-    let recent_limit = deps.recent_folders_limit;
+struct BrowseFolderCtx {
+    current_folder: Rc<RefCell<Option<PathBuf>>>,
+    recent_folders: Rc<RefCell<Vec<PathBuf>>>,
+    tree_root: gio::ListStore,
+    sort_key: Rc<RefCell<String>>,
+    search_text: Rc<RefCell<String>>,
+    favorites_only: Rc<Cell<bool>>,
+    thumbnail_size: Rc<RefCell<i32>>,
+    sort_dropdown: gtk4::DropDown,
+    favourites_filter_btn: gtk4::ToggleButton,
+    search_entry: gtk4::SearchEntry,
+    size_buttons: Rc<Vec<gtk4::ToggleButton>>,
+    progress_state: Rc<RefCell<crate::ScanProgressState>>,
+    start_scan: Rc<dyn Fn(PathBuf)>,
+    recent_limit: usize,
+}
 
+/// Restore/seed per-folder UI state, set current folder, update recent list, and scan.
+/// When `persist_as_root` is true, `last_folder` is written as `path`; otherwise the
+/// existing tree root path is preserved in config.
+fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
+    if let Some(saved_ui_state) = db::load_ui_state(path) {
+        let selected_sort = sort_index_for_key(&saved_ui_state.sort_key);
+        *ctx.sort_key.borrow_mut() = saved_ui_state.sort_key;
+        *ctx.search_text.borrow_mut() = saved_ui_state.search_text.clone();
+        ctx.favorites_only.set(saved_ui_state.favorites_only);
+        *ctx.thumbnail_size.borrow_mut() = normalize_thumbnail_size(saved_ui_state.thumbnail_size);
+
+        if ctx.sort_dropdown.selected() != selected_sort {
+            ctx.sort_dropdown.set_selected(selected_sort);
+        }
+        ctx.favourites_filter_btn
+            .set_active(saved_ui_state.favorites_only);
+        if saved_ui_state.favorites_only {
+            ctx.favourites_filter_btn
+                .add_css_class("favorites-filter-active");
+        } else {
+            ctx.favourites_filter_btn
+                .remove_css_class("favorites-filter-active");
+        }
+        ctx.search_entry.set_text(&saved_ui_state.search_text);
+        for (i, btn) in ctx.size_buttons.iter().enumerate() {
+            btn.set_active(thumbnail_size_options()[i] == *ctx.thumbnail_size.borrow());
+        }
+    } else {
+        let seeded_state = db::UiState {
+            sort_key: ctx.sort_key.borrow().clone(),
+            search_text: ctx.search_text.borrow().clone(),
+            favorites_only: ctx.favorites_only.get(),
+            thumbnail_size: *ctx.thumbnail_size.borrow(),
+        };
+        let _ = db::save_ui_state(path, &seeded_state);
+    }
+
+    *ctx.current_folder.borrow_mut() = Some(path.to_path_buf());
+    ctx.progress_state.borrow_mut().current_folder_path = path.display().to_string();
+    {
+        let mut history = ctx.recent_folders.borrow_mut();
+        push_recent_folder_entry(&mut history, path, ctx.recent_limit);
+        let root_owned = tree_root_path(&ctx.tree_root);
+        let last_folder = if persist_as_root {
+            Some(path)
+        } else {
+            root_owned.as_deref().or(Some(path))
+        };
+        crate::config::save_recent_state(last_folder, &history);
+    }
+    (ctx.start_scan)(path.to_path_buf());
+}
+
+/// Wire tree folder selection → browse thumbnails; activate (double-click/Enter) → re-root.
+pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
+    let ctx = Rc::new(BrowseFolderCtx {
+        current_folder: deps.app_state.current_folder.clone(),
+        recent_folders: deps.app_state.recent_folders.clone(),
+        tree_root: deps.chrome.tree_root.clone(),
+        sort_key: deps.app_state.sort_key.clone(),
+        search_text: deps.app_state.search_text.clone(),
+        favorites_only: deps.app_state.favorites_only.clone(),
+        thumbnail_size: deps.app_state.thumbnail_size.clone(),
+        sort_dropdown: deps.chrome.sort_dropdown.clone(),
+        favourites_filter_btn: deps.chrome.favourites_filter_btn.clone(),
+        search_entry: deps.chrome.search_entry.clone(),
+        size_buttons: deps.chrome.size_buttons.clone(),
+        progress_state: deps.app_state.progress_state.clone(),
+        start_scan: deps.start_scan_for_folder.clone(),
+        recent_limit: deps.recent_folders_limit,
+    });
+
+    let browse_ctx = ctx.clone();
     deps.chrome
         .tree_selection
         .connect_selection_changed(move |model, _, _| {
@@ -176,49 +250,41 @@ pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
                 return;
             };
             let Some(path) = file.path() else { return };
-            if current_folder.borrow().as_deref() == Some(path.as_path()) {
+            if browse_ctx.current_folder.borrow().as_deref() == Some(path.as_path()) {
                 return;
             }
-
-            if let Some(saved_ui_state) = db::load_ui_state(path.as_path()) {
-                let selected_sort = sort_index_for_key(&saved_ui_state.sort_key);
-                *sort_key.borrow_mut() = saved_ui_state.sort_key;
-                *search_text.borrow_mut() = saved_ui_state.search_text.clone();
-                favorites_only.set(saved_ui_state.favorites_only);
-                *thumbnail_size.borrow_mut() =
-                    normalize_thumbnail_size(saved_ui_state.thumbnail_size);
-
-                if sort_dropdown.selected() != selected_sort {
-                    sort_dropdown.set_selected(selected_sort);
-                }
-                favourites_filter_btn.set_active(saved_ui_state.favorites_only);
-                if saved_ui_state.favorites_only {
-                    favourites_filter_btn.add_css_class("favorites-filter-active");
-                } else {
-                    favourites_filter_btn.remove_css_class("favorites-filter-active");
-                }
-                search_entry.set_text(&saved_ui_state.search_text);
-                for (i, btn) in size_buttons.iter().enumerate() {
-                    btn.set_active(thumbnail_size_options()[i] == *thumbnail_size.borrow());
-                }
-            } else {
-                let seeded_state = db::UiState {
-                    sort_key: sort_key.borrow().clone(),
-                    search_text: search_text.borrow().clone(),
-                    favorites_only: favorites_only.get(),
-                    thumbnail_size: *thumbnail_size.borrow(),
-                };
-                let _ = db::save_ui_state(path.as_path(), &seeded_state);
-            }
-
-            *current_folder.borrow_mut() = Some(path.clone());
-            progress_state.borrow_mut().current_folder_path = path.display().to_string();
-            {
-                let mut history = recent_folders.borrow_mut();
-                push_recent_folder_entry(&mut history, path.as_path(), recent_limit);
-                crate::config::save_recent_state(Some(path.as_path()), &history);
-            }
-            reset_tree_root(&tree_root, path.as_path());
-            start_scan(path);
+            browse_folder(&browse_ctx, &path, false);
         });
+
+    let activate_ctx = ctx;
+    let tree_model = deps.chrome.tree_model.clone();
+    deps.chrome.tree_list_view.connect_activate(move |_, pos| {
+        let Some(row) = tree_model.item(pos).and_downcast::<TreeListRow>() else {
+            return;
+        };
+        let Some(file) = row.item().and_downcast::<gio::File>() else {
+            return;
+        };
+        let Some(path) = file.path() else { return };
+
+        let root_owned = tree_root_path(&activate_ctx.tree_root);
+        let already_root = root_owned.as_deref() == Some(path.as_path());
+        if already_root {
+            // Already the tree root; ensure thumbnails match if needed.
+            if activate_ctx.current_folder.borrow().as_deref() != Some(path.as_path()) {
+                browse_folder(&activate_ctx, &path, true);
+            }
+            return;
+        }
+
+        if activate_ctx.current_folder.borrow().as_deref() != Some(path.as_path()) {
+            browse_folder(&activate_ctx, &path, true);
+        } else {
+            // Already browsing this folder — only re-root and persist.
+            let mut history = activate_ctx.recent_folders.borrow_mut();
+            push_recent_folder_entry(&mut history, path.as_path(), activate_ctx.recent_limit);
+            crate::config::save_recent_state(Some(path.as_path()), &history);
+        }
+        reset_tree_root(&activate_ctx.tree_root, path.as_path());
+    });
 }

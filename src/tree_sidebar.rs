@@ -77,6 +77,14 @@ pub fn reset_tree_root(tree_root: &gio::ListStore, root_path: &Path) {
     tree_root.append(&gio::File::for_path(root_path));
 }
 
+/// Returns the path of the current tree root (first entry), if present.
+pub fn tree_root_path(tree_root: &gio::ListStore) -> Option<PathBuf> {
+    tree_root
+        .item(0)
+        .and_downcast::<gio::File>()
+        .and_then(|file| file.path())
+}
+
 /// Builds the root `ListStore` for the file tree.
 /// Uses last opened folder when present, otherwise falls back to home.
 pub fn build_tree_root(last_folder: Option<&PathBuf>) -> gio::ListStore {

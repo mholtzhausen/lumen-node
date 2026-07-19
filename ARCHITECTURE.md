@@ -14,6 +14,11 @@ This document describes how the LumenNode codebase is laid out today: where UI l
 - **`src/config.rs`** — `~/.lumen-node/config.yml` load/save for window, panes, recent folders, **`color_scheme`** (`system` / `light` / `dark`), etc.; **`external_editor`** and optional startup defaults (`sort_key`, `search_text`, `thumbnail_size`) are loaded but not rewritten by `config::save` (hand-editing only for those defaults). Theme preference is applied through `adw::StyleManager::set_color_scheme` from the header toggle in `src/ui/shell.rs` (and on startup).
 - **`src/dialogs.rs`**, **`src/metadata_section.rs`**, **`src/metadata_view.rs`**, **`src/view_helpers.rs`**, **`src/tree_sidebar.rs`**, etc. — Shared dialogs and helpers still at crate root where not yet folded into `ui/`.
 
+## Folder tree vs gallery folder
+
+- **Tree root** — first entry of the sidebar `ListStore` (`tree_sidebar::reset_tree_root` / `tree_root_path`). Set by Open Folder, recent history, session restore, or **double-click / Enter** on a tree row (`ListView::activate` in `ui::tree`). Persisted as `last_folder` in config.
+- **Current folder** — `AppState.current_folder`, what the thumbnail grid scans. **Single-click** on a tree row browses here without changing the tree root; `last_folder` stays the root.
+
 ## Dependency direction (typical)
 
 ```

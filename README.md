@@ -102,7 +102,7 @@ Current UI screenshot:
 | | Feature |
 |---|---|
 | 📷 | **EXIF extraction** — camera make/model, exposure time, ISO sensitivity |
-| 📁 | **Folder tree sidebar** — navigate directories without a file manager |
+| 📁 | **Folder tree sidebar** — single-click to browse; double-click to set as root |
 | 🗄️ | **Per-folder cache** — `.lumen-node.db` lives next to your images, no central index |
 | ♻️ | **Refresh controls** — force re-thumbnail or re-index single images or entire folders |
 
@@ -173,7 +173,14 @@ To bootstrap a **new** Rust + GTK4/libadwaita app with the same threading, chann
 
 ### Opening a folder
 
-Click **Open Folder** in the header bar, or simply launch the app — it reopens the last folder you browsed.
+Click **Open Folder** in the header bar, or simply launch the app — it reopens the last **tree root** (the folder that anchors the sidebar). Open Folder, history, and session restore all set that root and show its images in the grid.
+
+### Folder tree
+
+```
+Single-click folder  → show that folder’s images in the grid (sidebar root unchanged)
+Double-click / Enter → make that folder the new sidebar root (and show its images)
+```
 
 ### Navigating
 
@@ -286,7 +293,7 @@ On exit, the app writes **window geometry**, **three GtkPaned positions** (`left
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `last_folder` | — | Folder reopened at launch |
+| `last_folder` | — | Sidebar tree root restored at launch |
 | `window_width` / `window_height` | 1280×800 | Window size |
 | `window_maximized` | false | Maximized state |
 | `left_pane_pos` / `right_pane_pos` / `meta_pane_pos` | — | Integer GtkPaned divider positions persisted on exit |
@@ -328,7 +335,7 @@ src/
 ### Data flow
 
 ```
-User selects folder
+User browses or opens a folder (tree click / Open / history)
        │
        ▼
 scan_directory()  ──── background thread ────────────────────────────────────┐
