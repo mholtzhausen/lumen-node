@@ -1,4 +1,5 @@
 use crate::core::app_state::AppState;
+use crate::ui::empty_state::{add_empty_status_overlay, create_empty_status_page};
 use crate::ui::grid::{
     add_scroll_flag_overlay, attach_grid_page, attach_single_page, build_scroll_flag_overlay,
     create_center_box, create_grid_overlay, create_grid_scroll, create_grid_view,
@@ -40,6 +41,8 @@ pub(crate) struct CenterContentBundle {
     pub(crate) grid_scroll: gtk4::ScrolledWindow,
     pub(crate) single_picture: gtk4::Picture,
     pub(crate) full_view_favourite_hud: FullViewFavouriteHud,
+    pub(crate) empty_status_page: adw::StatusPage,
+    pub(crate) empty_state_action_btn: gtk4::Button,
 }
 
 pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBundle {
@@ -71,6 +74,9 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
     let (scroll_flag_box, scroll_flag) = build_scroll_flag_overlay();
     add_scroll_flag_overlay(&grid_overlay, &scroll_flag_box);
 
+    let empty_state = create_empty_status_page();
+    add_empty_status_overlay(&grid_overlay, &empty_state.page);
+
     install_grid_scroll_speed_gate(
         &grid_scroll,
         &grid_view,
@@ -96,5 +102,7 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
         grid_scroll,
         single_picture,
         full_view_favourite_hud,
+        empty_status_page: empty_state.page,
+        empty_state_action_btn: empty_state.action_btn,
     }
 }

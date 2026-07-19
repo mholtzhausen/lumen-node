@@ -32,6 +32,7 @@ use scan::ScanMessage;
 use sort::SORT_KEY_NAME_ASC;
 use ui::center::{build_center_content, CenterContentDeps};
 use ui::chrome::build_left_chrome;
+use ui::empty_state::{install_empty_state_wiring, EmptyStateWiringDeps};
 use ui::layout::{assemble_and_mount_layout, compute_startup_pane_metrics, LayoutMountDeps};
 use ui::lifecycle::{install_lifecycle, LifecycleDeps};
 use ui::models::{build_model_bundle, ModelAssemblyDeps};
@@ -382,7 +383,7 @@ fn build_ui(app: &adw::Application) {
     let filter = model_bundle.filter;
     let sorter = model_bundle.sorter;
     let _filter_model = model_bundle.filter_model;
-    let _sort_model = model_bundle.sort_model;
+    let sort_model = model_bundle.sort_model;
     let selection_model = model_bundle.selection_model;
 
     let center = build_center_content(CenterContentDeps {
@@ -402,6 +403,20 @@ fn build_ui(app: &adw::Application) {
         full_view_favourite_icon_seconds: app_config
             .full_view_favourite_icon_seconds
             .unwrap_or(2.0),
+    });
+
+    let refresh_empty_state = install_empty_state_wiring(EmptyStateWiringDeps {
+        app_state: app_state.clone(),
+        selection_model: selection_model.clone(),
+        sort_model: sort_model.clone(),
+        status_page: center.empty_status_page.clone(),
+        action_btn: center.empty_state_action_btn.clone(),
+        window: window.clone(),
+        favourites_filter_btn: chrome.favourites_filter_btn.clone(),
+        search_entry: chrome.search_entry.clone(),
+        sort_dropdown: chrome.sort_dropdown.clone(),
+        filter: filter.clone(),
+        sorter: sorter.clone(),
     });
 
     // --- Right sidebar: preview (top) + metadata list (bottom) ---
@@ -446,6 +461,7 @@ fn build_ui(app: &adw::Application) {
         progress_bar: progress_bar.clone(),
         filter: filter.clone(),
         sync_context_menu: Some(sync_ctx_menu),
+        on_scan_complete: Some(refresh_empty_state.clone()),
     });
 
     // -----------------------------------------------------------------------

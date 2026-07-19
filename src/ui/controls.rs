@@ -63,6 +63,55 @@ pub(crate) fn install_search_entry_handler(
     });
 }
 
+pub(crate) fn apply_clear_filters(
+    search_text: &Rc<RefCell<String>>,
+    favorites_only: &Rc<Cell<bool>>,
+    sort_key: &Rc<RefCell<String>>,
+    filter: &CustomFilter,
+    sorter: &CustomSorter,
+    favourites_filter_btn: &gtk4::ToggleButton,
+    search_entry: &gtk4::SearchEntry,
+    sort_dropdown: &gtk4::DropDown,
+    thumbnail_size: &Rc<RefCell<i32>>,
+    current_folder: &Rc<RefCell<Option<PathBuf>>>,
+) {
+    *search_text.borrow_mut() = String::new();
+    favorites_only.set(false);
+    *sort_key.borrow_mut() = SORT_KEY_NAME_ASC.to_string();
+    favourites_filter_btn.remove_css_class("favorites-filter-active");
+    favourites_filter_btn.set_active(false);
+    search_entry.set_text("");
+    sort_dropdown.set_selected(0);
+    if let Some(folder) = current_folder.borrow().as_ref() {
+        let _ = db::save_ui_state(
+            folder.as_path(),
+            &db::UiState {
+                sort_key: sort_key.borrow().clone(),
+                search_text: search_text.borrow().clone(),
+                favorites_only: favorites_only.get(),
+                thumbnail_size: *thumbnail_size.borrow(),
+            },
+        );
+    }
+    filter.changed(gtk4::FilterChange::LessStrict);
+    sorter.changed(gtk4::SorterChange::Different);
+}
+
+pub(crate) fn deactivate_favorites_filter(
+    favorites_only: &Rc<Cell<bool>>,
+    filter: &CustomFilter,
+    favourites_filter_btn: &gtk4::ToggleButton,
+    current_folder: &Rc<RefCell<Option<PathBuf>>>,
+) {
+    favorites_only.set(false);
+    favourites_filter_btn.remove_css_class("favorites-filter-active");
+    favourites_filter_btn.set_active(false);
+    if let Some(folder) = current_folder.borrow().as_ref() {
+        let _ = db::set_ui_state_value(folder.as_path(), "favorites_only", "0");
+    }
+    filter.changed(gtk4::FilterChange::Different);
+}
+
 pub(crate) fn install_clear_button_handler(
     clear_btn: &gtk4::Button,
     search_text: &Rc<RefCell<String>>,
@@ -87,26 +136,18 @@ pub(crate) fn install_clear_button_handler(
     let thumbnail_size_clear = thumbnail_size.clone();
     let current_folder_clear = current_folder.clone();
     clear_btn.connect_clicked(move |_| {
-        *search_text_clear.borrow_mut() = String::new();
-        favorites_only_clear.set(false);
-        *sort_key_clear.borrow_mut() = SORT_KEY_NAME_ASC.to_string();
-        favourites_filter_btn_clear.remove_css_class("favorites-filter-active");
-        favourites_filter_btn_clear.set_active(false);
-        search_entry_clear.set_text("");
-        sort_dropdown_clear.set_selected(0);
-        if let Some(folder) = current_folder_clear.borrow().as_ref() {
-            let _ = db::save_ui_state(
-                folder.as_path(),
-                &db::UiState {
-                    sort_key: sort_key_clear.borrow().clone(),
-                    search_text: search_text_clear.borrow().clone(),
-                    favorites_only: favorites_only_clear.get(),
-                    thumbnail_size: *thumbnail_size_clear.borrow(),
-                },
-            );
-        }
-        filter_clear.changed(gtk4::FilterChange::LessStrict);
-        sorter_clear.changed(gtk4::SorterChange::Different);
+        apply_clear_filters(
+            &search_text_clear,
+            &favorites_only_clear,
+            &sort_key_clear,
+            &filter_clear,
+            &sorter_clear,
+            &favourites_filter_btn_clear,
+            &search_entry_clear,
+            &sort_dropdown_clear,
+            &thumbnail_size_clear,
+            &current_folder_clear,
+        );
     });
 }
 

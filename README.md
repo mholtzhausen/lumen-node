@@ -80,7 +80,7 @@ Current UI screenshot:
 | | Feature |
 |---|---|
 | ⚡ | **Progressive loading** — folder opens instantly, thumbnails fill in behind |
-| 🖼️ | **Grid + single-view** — grid for browsing, click for focus, Escape to return |
+| 🖼️ | **Grid + single-view** — grid for browsing, click for focus, Escape to return; empty grid shows guidance (open folder, no images, no matches) |
 | 📐 | **4 thumbnail sizes** — 128px base with larger steps up to 240px (128, 160, 208, 240), adjustable in one click |
 | 🔍 | **Live search** — filters grid by filename and metadata in real time |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |

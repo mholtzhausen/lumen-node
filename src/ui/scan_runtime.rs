@@ -26,6 +26,8 @@ pub(crate) struct ScanRuntimeDeps {
     pub(crate) filter: gtk4::CustomFilter,
     /// When set, invoked after each scan drain batch so context menu actions stay in sync.
     pub(crate) sync_context_menu: Option<Rc<dyn Fn()>>,
+    /// When set, invoked when a scan completes (including zero-result folders).
+    pub(crate) on_scan_complete: Option<Rc<dyn Fn()>>,
 }
 
 pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
@@ -33,6 +35,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
     const BATCH_SIZE: usize = SCAN_DRAIN_BATCH_SIZE as usize;
 
     let sync_context_menu = deps.sync_context_menu.clone();
+    let on_scan_complete = deps.on_scan_complete.clone();
 
     let buffer: Rc<RefCell<VecDeque<ScanMessage>>> = Rc::new(RefCell::new(VecDeque::new()));
     let drain_scheduled: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
@@ -56,7 +59,8 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
         let progress_bar_recv = deps.progress_bar.clone();
         let filter_recv = deps.filter.clone();
         let app_state_recv = deps.app_state.clone();
-        let sync_context_menu_sticky = sync_context_menu.clone();
+            let sync_context_menu_sticky = sync_context_menu.clone();
+            let on_scan_complete_sticky = on_scan_complete.clone();
         Rc::new(move || {
             if *drain_scheduled.borrow() {
                 return;
@@ -81,6 +85,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
             let progress_bar_recv = progress_bar_recv.clone();
             let filter_recv = filter_recv.clone();
             let sync_context_menu_recv = sync_context_menu_sticky.clone();
+            let on_scan_complete_recv = on_scan_complete_sticky.clone();
             glib::idle_add_local(move || {
                 *drain_scheduled.borrow_mut() = false;
                 SCAN_DRAIN_SCHEDULED.store(0, AtomicOrdering::Relaxed);
@@ -219,6 +224,9 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                 if scan_complete {
                     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.store(0, AtomicOrdering::Relaxed);
                     scan_in_progress_recv.set(false);
+                    if let Some(on_complete) = on_scan_complete_recv.as_ref() {
+                        on_complete();
+                    }
                     let n = list_store_recv.n_items();
                     let mut total_size_bytes = 0_u64;
                     {
