@@ -27,7 +27,9 @@ mod window_math;
 
 use byte_format::human_readable_bytes;
 use core::app_state::build_app_state;
-use core::scan_coordinator::{build_start_scan_for_folder, ScanCoordinatorDeps};
+use core::scan_coordinator::{
+    build_start_scan_for_folder, ImmersiveResetHandles, ScanCoordinatorDeps,
+};
 use metadata::ImageMetadata;
 use scan::ScanMessage;
 use sort::SORT_KEY_NAME_ASC;
@@ -49,7 +51,7 @@ use ui::wiring::{
     SelectionWiringDeps,
 };
 
-use std::{cell::Cell, rc::Rc, sync::atomic::AtomicU64};
+use std::{cell::Cell, cell::RefCell, rc::Rc, sync::atomic::AtomicU64};
 
 use adw::prelude::*;
 use gtk4::{gio, glib, Label, ProgressBar};
@@ -363,6 +365,7 @@ fn build_ui(app: &adw::Application) {
         build_left_chrome(&app_config, initial_thumbnail_size, &window, runtime_report);
     let chrome = left_chrome.wiring_handles();
 
+    let immersive_reset: Rc<RefCell<Option<ImmersiveResetHandles>>> = Rc::new(RefCell::new(None));
     let start_scan_for_folder = build_start_scan_for_folder(ScanCoordinatorDeps {
         app_state: app_state.clone(),
         sender: sender.clone(),
@@ -370,6 +373,7 @@ fn build_ui(app: &adw::Application) {
         progress_label: progress_label.clone(),
         progress_bar: progress_bar.clone(),
         similar_filter_btn: chrome.similar_filter_btn.clone(),
+        immersive_reset: immersive_reset.clone(),
     });
 
     let model_bundle = build_model_bundle(ModelAssemblyDeps {
@@ -462,6 +466,14 @@ fn build_ui(app: &adw::Application) {
         initial_meta_section_expanded: app_config.meta_section_expanded.unwrap_or(true),
         meta_pane_start_px: pane_metrics.meta_pane_start_px,
         min_meta_split_px: MIN_META_SPLIT_PX,
+    });
+
+    *immersive_reset.borrow_mut() = Some(ImmersiveResetHandles {
+        view_stack: center.view_stack.clone(),
+        single_picture: center.single_picture.clone(),
+        compare_left_picture: center.compare_left_picture.clone(),
+        compare_right_picture: center.compare_right_picture.clone(),
+        meta_preview: right.meta_preview.clone(),
     });
 
     // -----------------------------------------------------------------------
