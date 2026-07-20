@@ -81,6 +81,9 @@ pub struct AppConfig {
     /// Seconds the full-view favourite star stays visible before fading. Default: 2.
     /// Not rewritten by session `save`; updated via Preferences / `save_full_view_favourite_prefs`.
     pub full_view_favourite_icon_seconds: Option<f64>,
+    /// Scale for grid thumbnail chrome buttons (0.4–1.0). Default when unset: 0.6.
+    /// Not rewritten by session `save`; updated via Preferences / `save_thumbnail_chrome_scale`.
+    pub thumbnail_chrome_scale: Option<f64>,
 }
 
 /// Loads `~/.lumen-node/config.yml`.  Missing file → empty config.
@@ -106,6 +109,7 @@ pub fn load() -> AppConfig {
     let mut color_scheme = None;
     let mut full_view_favourite_icon = None;
     let mut full_view_favourite_icon_seconds = None;
+    let mut thumbnail_chrome_scale = None;
     if let Ok(content) = std::fs::read_to_string(config_path()) {
         for line in content.lines() {
             if let Some(val) = line.strip_prefix("last_folder: ") {
@@ -163,6 +167,12 @@ pub fn load() -> AppConfig {
                 full_view_favourite_icon = val.trim().parse::<bool>().ok();
             } else if let Some(val) = line.strip_prefix("full_view_favourite_icon_seconds: ") {
                 full_view_favourite_icon_seconds = val.trim().parse::<f64>().ok().filter(|v| *v >= 0.0);
+            } else if let Some(val) = line.strip_prefix("thumbnail_chrome_scale: ") {
+                thumbnail_chrome_scale = val
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .map(normalize_thumbnail_chrome_scale);
             }
         }
     }
@@ -188,6 +198,7 @@ pub fn load() -> AppConfig {
         color_scheme,
         full_view_favourite_icon,
         full_view_favourite_icon_seconds,
+        thumbnail_chrome_scale,
     }
 }
 
@@ -304,6 +315,26 @@ pub fn save_full_view_favourite_prefs(show_icon: bool, seconds: f64) {
             Some(format_config_f64(seconds)),
         ),
     ]);
+}
+
+/// Default grid chrome button scale (60% of the 28px base size).
+pub const DEFAULT_THUMBNAIL_CHROME_SCALE: f64 = 0.6;
+
+/// Clamps chrome scale to the supported Preferences slider range.
+pub fn normalize_thumbnail_chrome_scale(scale: f64) -> f64 {
+    if !scale.is_finite() {
+        return DEFAULT_THUMBNAIL_CHROME_SCALE;
+    }
+    scale.clamp(0.4, 1.0)
+}
+
+/// Updates `thumbnail_chrome_scale`, preserving other config lines.
+pub fn save_thumbnail_chrome_scale(scale: f64) {
+    let scale = normalize_thumbnail_chrome_scale(scale);
+    update_config_keys(&[(
+        "thumbnail_chrome_scale",
+        Some(format_config_f64(scale)),
+    )]);
 }
 
 /// Updates global startup defaults (`sort_key`, `search_text`, `thumbnail_size`).

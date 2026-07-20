@@ -54,6 +54,8 @@ pub(crate) struct AppState {
     pub(crate) pinned_compare_path: Rc<RefCell<Option<String>>>,
     /// Optional UI sync after favourite toggles (preview header + full-view HUD).
     pub(crate) on_favourite_changed: Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
+    /// Live scale for grid thumbnail chrome buttons (0.4–1.0).
+    pub(crate) thumbnail_chrome_scale: Rc<Cell<f64>>,
 }
 
 pub(crate) fn build_app_state(
@@ -93,6 +95,12 @@ pub(crate) fn build_app_state(
     let initial_thumbnail_size =
         normalize_thumbnail_size(app_config.thumbnail_size.unwrap_or(default_thumbnail_size));
     let thumbnail_size: Rc<RefCell<i32>> = Rc::new(RefCell::new(initial_thumbnail_size));
+    let thumbnail_chrome_scale = Rc::new(Cell::new(
+        app_config
+            .thumbnail_chrome_scale
+            .map(crate::config::normalize_thumbnail_chrome_scale)
+            .unwrap_or(crate::config::DEFAULT_THUMBNAIL_CHROME_SCALE),
+    ));
 
     AppState {
         current_folder,
@@ -125,5 +133,6 @@ pub(crate) fn build_app_state(
         selected_path: Rc::new(RefCell::new(None)),
         pinned_compare_path: Rc::new(RefCell::new(None)),
         on_favourite_changed: Rc::new(RefCell::new(None)),
+        thumbnail_chrome_scale,
     }
 }

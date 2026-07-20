@@ -678,10 +678,9 @@ pub fn setup_grid_list_item(
     thumb_overlay.set_child(Some(&thumb_image));
 
     let chrome_pane = GtkBox::new(Orientation::Vertical, 2);
+    chrome_pane.add_css_class("thumbnail-chrome-pane");
     chrome_pane.set_halign(gtk4::Align::End);
     chrome_pane.set_valign(gtk4::Align::Start);
-    chrome_pane.set_margin_top(4);
-    chrome_pane.set_margin_end(4);
     chrome_pane.set_opacity(0.0);
     chrome_pane.set_visible(false);
 
@@ -689,14 +688,16 @@ pub fn setup_grid_list_item(
     favourite_btn.add_css_class("flat");
     favourite_btn.add_css_class("circular");
     favourite_btn.add_css_class("thumbnail-favourite-button");
+    favourite_btn.add_css_class("thumbnail-chrome-button");
     favourite_btn.set_tooltip_text(Some("Toggle favourite"));
     favourite_btn.set_focus_on_click(false);
 
     let tags_btn = MenuButton::new();
-    tags_btn.set_icon_name("user-bookmarks-symbolic");
+    tags_btn.set_icon_name(crate::icons::TAG_ICON_NAME);
     tags_btn.add_css_class("flat");
     tags_btn.add_css_class("circular");
     tags_btn.add_css_class("thumbnail-favourite-button");
+    tags_btn.add_css_class("thumbnail-chrome-button");
     tags_btn.set_tooltip_text(Some("Tags"));
     tags_btn.set_focus_on_click(false);
 

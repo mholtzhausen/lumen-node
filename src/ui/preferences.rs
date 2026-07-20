@@ -3,7 +3,9 @@
 use crate::config::{self, ColorSchemePref};
 use crate::sort::{normalize_sort_key, sort_index_for_key, sort_key_for_index};
 use crate::thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
-use crate::ui::shell::{apply_color_scheme_pref, sync_theme_button};
+use crate::ui::shell::{
+    apply_color_scheme_pref, apply_thumbnail_chrome_scale, sync_theme_button,
+};
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -14,6 +16,8 @@ use std::rc::Rc;
 pub(crate) struct PreferencesDeps {
     pub(crate) color_scheme: Rc<Cell<ColorSchemePref>>,
     pub(crate) theme_btn: gtk4::Button,
+    pub(crate) thumbnail_chrome_scale: Rc<Cell<f64>>,
+    pub(crate) thumbnail_chrome_css: gtk4::CssProvider,
 }
 
 pub(crate) fn present_preferences_window(parent: &adw::ApplicationWindow, deps: PreferencesDeps) {
@@ -106,7 +110,7 @@ fn build_appearance_page(cfg: &config::AppConfig, deps: &PreferencesDeps) -> adw
         .name("appearance")
         .build();
 
-    let group = adw::PreferencesGroup::builder()
+    let theme_group = adw::PreferencesGroup::builder()
         .title("Theme")
         .description("Applies immediately and syncs with the header theme toggle.")
         .build();
@@ -142,8 +146,45 @@ fn build_appearance_page(cfg: &config::AppConfig, deps: &PreferencesDeps) -> adw
         config::save_color_scheme(pref);
     });
 
-    group.add(&scheme_row);
-    page.add(&group);
+    theme_group.add(&scheme_row);
+    page.add(&theme_group);
+
+    let chrome_group = adw::PreferencesGroup::builder()
+        .title("Grid chrome")
+        .description("Thumbnail favourite and tag button size. Applies immediately.")
+        .build();
+
+    let chrome_row = adw::ActionRow::builder()
+        .title("Button size")
+        .subtitle("Scale of the right-hand favourite/tag controls on thumbnails")
+        .build();
+
+    let initial_scale = deps.thumbnail_chrome_scale.get();
+    let adjustment = gtk4::Adjustment::new(initial_scale, 0.4, 1.0, 0.05, 0.1, 0.0);
+    let scale = gtk4::Scale::new(gtk4::Orientation::Horizontal, Some(&adjustment));
+    scale.set_draw_value(true);
+    scale.set_value_pos(gtk4::PositionType::Right);
+    scale.set_digits(2);
+    scale.set_hexpand(true);
+    scale.set_width_request(180);
+    scale.add_mark(0.6, gtk4::PositionType::Bottom, Some("60%"));
+    scale.add_mark(1.0, gtk4::PositionType::Bottom, Some("100%"));
+    scale.set_format_value_func(|_, value| format!("{:.0}%", value * 100.0));
+
+    let chrome_scale_cell = deps.thumbnail_chrome_scale.clone();
+    let chrome_css = deps.thumbnail_chrome_css.clone();
+    scale.connect_value_changed(move |s| {
+        let value = config::normalize_thumbnail_chrome_scale(s.value());
+        chrome_scale_cell.set(value);
+        apply_thumbnail_chrome_scale(&chrome_css, value);
+        config::save_thumbnail_chrome_scale(value);
+    });
+
+    chrome_row.add_suffix(&scale);
+    chrome_row.set_activatable_widget(Some(&scale));
+    chrome_group.add(&chrome_row);
+    page.add(&chrome_group);
+
     page
 }
 

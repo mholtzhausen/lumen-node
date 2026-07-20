@@ -15,8 +15,17 @@ pub(crate) fn build_left_chrome(
     initial_thumbnail_size: i32,
     window: &adw::ApplicationWindow,
     runtime_report: String,
+    thumbnail_chrome_scale: std::rc::Rc<std::cell::Cell<f64>>,
+    thumbnail_chrome_css: gtk4::CssProvider,
 ) -> LeftChrome {
-    let header = build_header_controls(app_config, initial_thumbnail_size, window, runtime_report);
+    let header = build_header_controls(
+        app_config,
+        initial_thumbnail_size,
+        window,
+        runtime_report,
+        thumbnail_chrome_scale,
+        thumbnail_chrome_css,
+    );
     let tree = build_tree_widgets(
         app_config.last_folder.as_ref(),
         header.initial_left_sidebar_visible,

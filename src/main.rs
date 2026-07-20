@@ -4,6 +4,7 @@ mod core;
 mod db;
 mod dialogs;
 mod file_name_ops;
+mod icons;
 mod image_types;
 mod json_tree;
 mod metadata;
@@ -305,8 +306,9 @@ pub(crate) fn sync_progress_widgets(
 
 fn build_ui(app: &adw::Application) {
     apply_consistent_theme_defaults();
+    icons::register_bundled_icons();
     let app_config = config::load();
-    let window = create_window_with_defaults(
+    let (window, thumbnail_chrome_css) = create_window_with_defaults(
         app,
         &app_config,
         DEFAULT_WINDOW_WIDTH,
@@ -361,8 +363,14 @@ fn build_ui(app: &adw::Application) {
     // -----------------------------------------------------------------------
     // Header chrome + left file-system tree (tree visibility follows header toggle)
     // -----------------------------------------------------------------------
-    let left_chrome =
-        build_left_chrome(&app_config, initial_thumbnail_size, &window, runtime_report);
+    let left_chrome = build_left_chrome(
+        &app_config,
+        initial_thumbnail_size,
+        &window,
+        runtime_report,
+        app_state.thumbnail_chrome_scale.clone(),
+        thumbnail_chrome_css,
+    );
     let chrome = left_chrome.wiring_handles();
 
     let immersive_reset: Rc<RefCell<Option<ImmersiveResetHandles>>> = Rc::new(RefCell::new(None));

@@ -211,7 +211,7 @@ Right-click any image thumbnail, the single-view / compare image, or the sidebar
 - **Organise:** Favourite (toggle), Add tag / Remove tag, Pin for compare, Exit compare, Move to Trash
 - **Refresh** (submenu): Refresh Thumbnail, Refresh Metadata, Refresh Folder Thumbnails, Refresh Folder Metadata
 
-Hovering a grid thumbnail (or selecting / favouriting it) shows a right-hand chrome pane with favourite and tags buttons. The tags button opens a short filterable checklist of folder tags; type a new name to get **Add `foo`**.
+Hovering a grid thumbnail (or selecting / favouriting it) shows a right-hand chrome pane with favourite and tags buttons (size is adjustable under **Preferences → Appearance**). The tags button opens a short filterable checklist of folder tags; type a new name to get **Add `foo`**.
 
 **Similar in folder** is enabled when the selection has a prompt or raw parameters. The metadata pane shows a **Similar** button next to the Prompt (or Parameters) row. The filter ANDs with search / favourites / tags; clear it via the header × button, the toast’s Clear action, or the empty-state “Clear filters” CTA.
 
@@ -340,6 +340,7 @@ On exit, the app writes **window geometry**, **three GtkPaned positions** (`left
 | `external_editor` | — | Optional path to an editor binary for “Open in External Editor” (Preferences → General) |
 | `full_view_favourite_icon` | `true` | Show the favourite star HUD in single/full view (Preferences → General; applies next launch) |
 | `full_view_favourite_icon_seconds` | `2` | Seconds the full-view favourite star stays visible before fading (Preferences → General) |
+| `thumbnail_chrome_scale` | `0.6` | Scale of grid thumbnail favourite/tag buttons (0.4–1.0; Preferences → Appearance; applies live) |
 
 Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites, free-form tags (`image_tags`), plus folder-scoped UI state in the **`ui_state`** table (`sort_key`, `search_text`, `favorites_only`, `active_tags`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
 
@@ -352,6 +353,7 @@ LumenNode is organized into focused Rust modules. For a developer-oriented map o
 ```
 src/
 ├── main.rs            Composition root, scan progress state, global flags, wiring entry
+├── icons.rs           Bundled symbolic icon registration (`lumen-tag-symbolic`)
 ├── ui/                GTK widgets, actions, keyboard, layout, zoom, preferences, empty_state, quick_tag, shortcuts, …
 ├── core/              app_state, scan_coordinator (folder switches, generation IDs)
 ├── services/          Background helpers (e.g. update check integration)

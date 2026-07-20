@@ -20,6 +20,45 @@ pub(crate) fn sync_theme_button(btn: &gtk4::Button, pref: ColorSchemePref) {
     btn.set_tooltip_text(Some(pref.tooltip()));
 }
 
+const THUMBNAIL_CHROME_BASE_PX: f64 = 28.0;
+const THUMBNAIL_CHROME_PAD_BASE_PX: f64 = 2.0;
+const THUMBNAIL_CHROME_MARGIN_BASE_PX: f64 = 4.0;
+
+/// Updates the live CSS metrics for grid thumbnail chrome (favourite + tag buttons).
+pub(crate) fn apply_thumbnail_chrome_scale(provider: &gtk4::CssProvider, scale: f64) {
+    let scale = crate::config::normalize_thumbnail_chrome_scale(scale);
+    let btn_px = ((THUMBNAIL_CHROME_BASE_PX * scale).round() as i32).clamp(12, 28);
+    let pad_px = ((THUMBNAIL_CHROME_PAD_BASE_PX * scale).round() as i32).max(1);
+    let margin_px = ((THUMBNAIL_CHROME_MARGIN_BASE_PX * scale).round() as i32).max(1);
+    provider.load_from_string(&format!(
+        "
+        .thumbnail-chrome-button {{
+            min-width: {btn_px}px;
+            min-height: {btn_px}px;
+            padding: {pad_px}px;
+        }}
+        .thumbnail-chrome-pane {{
+            margin-top: {margin_px}px;
+            margin-end: {margin_px}px;
+        }}
+        "
+    ));
+}
+
+fn install_thumbnail_chrome_css(
+    window: &adw::ApplicationWindow,
+    scale: f64,
+) -> gtk4::CssProvider {
+    let provider = gtk4::CssProvider::new();
+    apply_thumbnail_chrome_scale(&provider, scale);
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::prelude::WidgetExt::display(window),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    provider
+}
+
 pub(crate) struct PanedLayout {
     pub(crate) inner_paned: Paned,
     pub(crate) outer_paned: Paned,
@@ -55,6 +94,8 @@ pub(crate) fn build_header_controls(
     initial_thumbnail_size: i32,
     window: &adw::ApplicationWindow,
     runtime_report: String,
+    thumbnail_chrome_scale: Rc<Cell<f64>>,
+    thumbnail_chrome_css: gtk4::CssProvider,
 ) -> HeaderControls {
     let header_bar = adw::HeaderBar::new();
 
@@ -241,7 +282,7 @@ pub(crate) fn build_header_controls(
     favourites_filter_btn.add_css_class("flat");
 
     let tags_filter_btn = gtk4::MenuButton::new();
-    tags_filter_btn.set_icon_name("user-bookmarks-symbolic");
+    tags_filter_btn.set_icon_name(crate::icons::TAG_ICON_NAME);
     tags_filter_btn.set_tooltip_text(Some("Filter by tags"));
     tags_filter_btn.add_css_class("flat");
     let tags_filter_popover = gtk4::Popover::new();
@@ -334,12 +375,16 @@ pub(crate) fn build_header_controls(
     let window_for_prefs = window.clone();
     let color_scheme_prefs = color_scheme.clone();
     let theme_btn_prefs = theme_btn.clone();
+    let chrome_scale_prefs = thumbnail_chrome_scale.clone();
+    let chrome_css_prefs = thumbnail_chrome_css.clone();
     preferences_action.connect_activate(move |_, _| {
         crate::ui::preferences::present_preferences_window(
             &window_for_prefs,
             crate::ui::preferences::PreferencesDeps {
                 color_scheme: color_scheme_prefs.clone(),
                 theme_btn: theme_btn_prefs.clone(),
+                thumbnail_chrome_scale: chrome_scale_prefs.clone(),
+                thumbnail_chrome_css: chrome_css_prefs.clone(),
             },
         );
     });
@@ -379,7 +424,7 @@ pub(crate) fn create_window_with_defaults(
     min_center_pane_px: i32,
     min_right_pane_px: i32,
     min_meta_split_px: i32,
-) -> adw::ApplicationWindow {
+) -> (adw::ApplicationWindow, gtk4::CssProvider) {
     let window = adw::ApplicationWindow::new(app);
     window.set_title(Some("LumenNode"));
 
@@ -458,7 +503,13 @@ pub(crate) fn create_window_with_defaults(
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
-    window
+    let chrome_scale = app_config
+        .thumbnail_chrome_scale
+        .map(crate::config::normalize_thumbnail_chrome_scale)
+        .unwrap_or(crate::config::DEFAULT_THUMBNAIL_CHROME_SCALE);
+    let chrome_css = install_thumbnail_chrome_css(&window, chrome_scale);
+
+    (window, chrome_css)
 }
 
 pub(crate) fn assemble_paned_layout(
