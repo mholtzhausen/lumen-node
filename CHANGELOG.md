@@ -1,3 +1,27 @@
+## 1.7.0 (c664ab5)
+### Features and Improvements
+- Added side-by-side compare with pinned left image and lock-left navigation.
+- Added free-form image tags with filter chips, search, and per-folder persistence.
+- Added Similar in folder browse from prompt token overlap and seed.
+- Added tabbed Preferences dialog with safe partial `config.yml` writes.
+- Added Ctrl+scroll and `+/-` zoom for preview and full-view, with fit reset (`0`).
+- Added Help → Keyboard Shortcuts window for in-app accelerator discovery.
+- Show StatusPage guidance when the grid is empty or filters hide all images.
+- Persist Metadata expander open/closed state in `config.yml`.
+- Shrink collapsed metadata pane to header height so preview can expand.
+- Clarify search placeholder covers filename and prompt metadata.
+- Add F2 rename shortcut and Ctrl+Shift+S Copy Seed accelerator.
+- Toast when favourites-only filter empties a non-empty folder.
+
+### Bugfixes
+- Fix cross-filesystem cut/move with copy-remove fallback and clear errors.
+- Remove source-folder DB rows when cutting images across directories.
+- Score ComfyUI CLIP nodes by title/path so verbose negatives do not swap roles.
+- Adjust zoom overflow and Preferences UI text for clearer behavior.
+
+### Deprecations
+- No deprecations were introduced in this release.
+
 ## 1.6.0 (2893af0)
 ### Features and Improvements
 - Added full-view favourite HUD with configurable icon and display duration.
