@@ -7,6 +7,7 @@
 - Quick-tag popover closes on pointer leave / Escape; Enter creates when only **Add** is shown; tagged images use a filled tag icon.
 
 ### Bugfixes
+- Skip O(N) selection path scan on model `items-changed` when the current selection already matches `selected_path_hint` (reduces filter/search UI freezes).
 - Replace missing `tag-symbolic` glyph with the bundled `lumen-tag-symbolic` icon.
 
 ## 1.7.0 (c664ab5)

@@ -205,36 +205,41 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
                 return;
             }
 
+            let selected_path = selection_for_default
+                .selected_item()
+                .and_downcast::<StringObject>()
+                .map(|obj| obj.string().to_string());
+            let hint = selected_path_hint.borrow().clone();
+
+            // Fast path: selection already matches the path hint — no O(N) scan.
+            // Common after filter storms when the selection index was preserved.
+            if hint.is_some() && hint == selected_path {
+                return;
+            }
+
             // Prefer restoring by absolute path after sort/filter reshuffles.
-            let target_pos = selected_path_hint.borrow().as_ref().and_then(|wanted_path| {
-                (0..model.n_items()).find(|idx| {
+            if let Some(ref wanted_path) = hint {
+                if let Some(pos) = (0..model.n_items()).find(|idx| {
                     model
                         .item(*idx)
                         .and_downcast::<StringObject>()
                         .map(|obj| obj.string().as_str() == wanted_path.as_str())
                         .unwrap_or(false)
-                })
-            });
-
-            if let Some(pos) = target_pos {
-                if selection_for_default.selected() != pos {
-                    selection_for_default.set_selected(pos);
+                }) {
+                    if selection_for_default.selected() != pos {
+                        selection_for_default.set_selected(pos);
+                    }
+                    return;
                 }
-                return;
             }
 
             // Hint missing or stale (folder change): index may be unchanged so
             // selection-changed never fired — bounce to force a preview reload.
-            let selected_path = selection_for_default
-                .selected_item()
-                .and_downcast::<StringObject>()
-                .map(|obj| obj.string().to_string());
-
             match selected_path {
                 None => {
                     selection_for_default.set_selected(0);
                 }
-                Some(path) if selected_path_hint.borrow().as_ref() != Some(&path) => {
+                Some(path) if hint.as_ref() != Some(&path) => {
                     selection_for_default.set_can_unselect(true);
                     let pos = selection_for_default.selected();
                     let pos = if pos < model.n_items() { pos } else { 0 };
