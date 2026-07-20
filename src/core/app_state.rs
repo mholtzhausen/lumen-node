@@ -30,6 +30,12 @@ pub(crate) struct AppState {
     pub(crate) prompt_similarity_index: Rc<RefCell<HashMap<String, PromptIndexEntry>>>,
     /// When `Some`, grid CustomFilter requires the path to be in this set (ANDed with other filters).
     pub(crate) similar_paths: Rc<RefCell<Option<HashSet<String>>>>,
+    /// Path used as the query when the similar filter was last activated.
+    pub(crate) similar_query_path: Rc<RefCell<Option<String>>>,
+    /// Max similar images to keep (10–100); driven by header hover slider / config.
+    pub(crate) similar_top_n: Rc<Cell<usize>>,
+    /// Debounce generation for similar top-N slider applies.
+    pub(crate) similar_top_n_debounce_gen: Rc<Cell<u64>>,
     pub(crate) sort_fields_cache: Rc<RefCell<HashMap<String, SortFields>>>,
     pub(crate) active_scan_generation: Rc<Cell<u64>>,
     pub(crate) scan_in_progress: Rc<Cell<bool>>,
@@ -115,6 +121,13 @@ pub(crate) fn build_app_state(
             .map(crate::config::normalize_thumbnail_chrome_scale)
             .unwrap_or(crate::config::DEFAULT_THUMBNAIL_CHROME_SCALE),
     ));
+    let similar_top_n = Rc::new(Cell::new(
+        app_config
+            .similar_top_n
+            .map(crate::config::normalize_similar_top_n)
+            .map(|n| n as usize)
+            .unwrap_or(crate::similarity::SIMILAR_TOP_N),
+    ));
 
     AppState {
         current_folder,
@@ -127,6 +140,9 @@ pub(crate) fn build_app_state(
         tags_cache: Rc::new(RefCell::new(HashMap::new())),
         prompt_similarity_index: Rc::new(RefCell::new(HashMap::new())),
         similar_paths: Rc::new(RefCell::new(None)),
+        similar_query_path: Rc::new(RefCell::new(None)),
+        similar_top_n,
+        similar_top_n_debounce_gen: Rc::new(Cell::new(0)),
         sort_fields_cache: Rc::new(RefCell::new(HashMap::new())),
         active_scan_generation: Rc::new(Cell::new(0_u64)),
         scan_in_progress: Rc::new(Cell::new(false)),

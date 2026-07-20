@@ -5,9 +5,9 @@ use crate::ui::actions::install_context_menu;
 use crate::ui::center::CenterContentBundle;
 use crate::ui::controls::{
     install_clear_button_handler, install_favorites_only_handler, install_search_entry_handler,
-    install_similar_filter_button_handler, install_sort_dropdown_handler,
-    install_tags_filter_popover_handler, install_thumbnail_size_handlers,
-    refresh_tag_filter_from_folder,
+    install_similar_filter_button_handler, install_similar_top_n_hover_slider,
+    install_sort_dropdown_handler, install_tags_filter_popover_handler,
+    install_thumbnail_size_handlers, refresh_tag_filter_from_folder,
 };
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::list_mutation::ListMutationContext;
@@ -347,6 +347,7 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.active_tag_filters,
         &deps.app_state.tag_filter_debounce_gen,
         &deps.app_state.similar_paths,
+        &deps.app_state.similar_query_path,
         &deps.app_state.sort_key,
         &deps.filter,
         &deps.sorter,
@@ -363,6 +364,17 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
     install_similar_filter_button_handler(
         &deps.chrome.similar_filter_btn,
         &deps.app_state.similar_paths,
+        &deps.app_state.similar_query_path,
+        &deps.filter,
+        &deps.app_state.grid_loading,
+    );
+    install_similar_top_n_hover_slider(
+        &deps.chrome.similar_filter_btn,
+        &deps.app_state.similar_top_n,
+        &deps.app_state.similar_top_n_debounce_gen,
+        &deps.app_state.prompt_similarity_index,
+        &deps.app_state.similar_paths,
+        &deps.app_state.similar_query_path,
         &deps.filter,
         &deps.app_state.grid_loading,
     );

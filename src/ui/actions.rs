@@ -6,11 +6,8 @@ use crate::metadata_view::{
     extract_seed_from_parameters, format_generation_command, format_metadata_text,
     has_generation_command_content,
 };
-use crate::similarity::{
-    find_similar_paths, meta_has_similarity_source, upsert_prompt_index, SIMILAR_MIN_SCORE,
-    SIMILAR_TOP_N,
-};
-use crate::ui::controls::refresh_tag_filter_from_folder;
+use crate::similarity::{meta_has_similarity_source, upsert_prompt_index};
+use crate::ui::controls::{apply_similar_filter_for_query, refresh_tag_filter_from_folder};
 use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::grid::{enter_compare_view_mode, refresh_realized_grid_favourite_icons};
 use crate::ui::preview::{clear_picture, load_picture_async};
@@ -813,6 +810,8 @@ pub fn install_context_menu(
         let selection_for_similar = selection_model.clone();
         let index_for_similar = mutation_ctx.app_state.prompt_similarity_index.clone();
         let similar_paths = mutation_ctx.app_state.similar_paths.clone();
+        let similar_query_path = mutation_ctx.app_state.similar_query_path.clone();
+        let similar_top_n = mutation_ctx.app_state.similar_top_n.clone();
         let filter_for_similar = filter.clone();
         let toast_for_similar = toast_overlay.clone();
         let similar_filter_btn = similar_filter_btn.clone();
@@ -822,23 +821,18 @@ pub fn install_context_menu(
                 return;
             };
             let path_key = path.to_string_lossy().to_string();
-            let Some(matches) = find_similar_paths(
+            let Some(count) = apply_similar_filter_for_query(
                 &index_for_similar.borrow(),
                 &path_key,
-                SIMILAR_TOP_N,
-                SIMILAR_MIN_SCORE,
+                similar_top_n.get(),
+                &similar_paths,
+                &similar_query_path,
+                &similar_filter_btn,
+                &filter_for_similar,
+                &grid_loading_for_similar,
             ) else {
                 return;
             };
-            let count = matches.len();
-            *similar_paths.borrow_mut() = Some(matches);
-            crate::ui::controls::set_similar_filter_chrome(&similar_filter_btn, true);
-            crate::ui::grid_loading::apply_filter_change(
-                &grid_loading_for_similar,
-                &filter_for_similar,
-                gtk4::FilterChange::Different,
-                "Updating filters…",
-            );
 
             let toast = adw::Toast::new(&format!(
                 "Showing {} similar image{}",
@@ -848,12 +842,14 @@ pub fn install_context_menu(
             toast.set_button_label(Some("Clear"));
             toast.set_timeout(4);
             let similar_paths_clear = similar_paths.clone();
+            let similar_query_clear = similar_query_path.clone();
             let filter_clear = filter_for_similar.clone();
             let similar_btn_clear = similar_filter_btn.clone();
             let grid_loading_clear = grid_loading_for_similar.clone();
             toast.connect_button_clicked(move |_| {
                 crate::ui::controls::clear_similar_filter(
                     &similar_paths_clear,
+                    &similar_query_clear,
                     &filter_clear,
                     &similar_btn_clear,
                     &grid_loading_clear,

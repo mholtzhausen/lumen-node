@@ -136,6 +136,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                         &app_state.active_tag_filters,
                         &app_state.tag_filter_debounce_gen,
                         &app_state.similar_paths,
+                        &app_state.similar_query_path,
                         &app_state.sort_key,
                         &filter,
                         &sorter,

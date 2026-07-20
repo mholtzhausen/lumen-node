@@ -5,7 +5,7 @@ use crate::metadata_view::extract_seed_from_parameters;
 use std::collections::{HashMap, HashSet};
 
 /// Max similar paths returned (excluding the query path, which is always included).
-pub const SIMILAR_TOP_N: usize = 50;
+pub const SIMILAR_TOP_N: usize = crate::config::DEFAULT_SIMILAR_TOP_N as usize;
 /// Minimum Jaccard score (before seed boost) to keep a candidate. `> 0` requires overlap.
 pub const SIMILAR_MIN_SCORE: f64 = 0.0;
 /// Added when two images share the same extracted seed.

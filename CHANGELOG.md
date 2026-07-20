@@ -14,7 +14,7 @@
 - Use directional `FilterChange` hints (MoreStrict / LessStrict) for favourites, search, and tag-filter toggles so GTK can avoid full refilters.
 - Vendored `lumen-tag-symbolic` / `lumen-tag-filled-symbolic` icons for tag UI.
 - Preferences → Appearance slider for thumbnail chrome button size (`thumbnail_chrome_scale`, default 60%), updates live.
-- Show header chrome when the similar-only filter is active.
+- Show header chrome when the similar-only filter is active; hover the clear-similar control for a top-N slider (10–100, default 50, persisted as `similar_top_n`, 200ms debounce).
 - Keyboard: `Ctrl+O` Open Folder; accelerators for pin, tag, and similar-in-folder.
 
 ### Bugfixes
@@ -25,6 +25,7 @@
 - Reset immersive views when opening a folder; clear filters without resetting sort.
 - Label trash tooltip as Move to Trash; point About website at `mholtzhausen/lumen-node`.
 - Replace missing `tag-symbolic` glyph with the bundled `lumen-tag-symbolic` icon.
+- Replace missing `view-filter-symbolic` on the similar-clear control with `edit-clear-symbolic`.
 
 ### Deprecations
 - No deprecations were introduced in this release. Legacy `active_tags` JSON arrays remain readable and migrate on save.

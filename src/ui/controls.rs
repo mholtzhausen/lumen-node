@@ -1,5 +1,9 @@
 use crate::core::app_state::AppState;
+use crate::config;
 use crate::db::{self, TagFilterMode};
+use crate::similarity::{
+    find_similar_paths, PromptIndexEntry, SIMILAR_MIN_SCORE,
+};
 use crate::sort::sort_key_for_index;
 use crate::ui::grid::apply_thumbnail_size_change;
 use crate::ui::grid_loading::{
@@ -7,7 +11,7 @@ use crate::ui::grid_loading::{
 };
 use gtk4::prelude::*;
 use gtk4::gio::ListStore;
-use gtk4::{glib, CustomFilter, CustomSorter, Orientation, MultiSelection};
+use gtk4::{glib, CustomFilter, CustomSorter, EventControllerMotion, Orientation, MultiSelection};
 use libadwaita as adw;
 use std::{
     cell::{Cell, RefCell},
@@ -18,6 +22,8 @@ use std::{
 };
 
 const TAG_FILTER_DEBOUNCE_MS: u64 = 200;
+const SIMILAR_TOP_N_DEBOUNCE_MS: u64 = 200;
+const SIMILAR_SLIDER_LEAVE_MS: u64 = 120;
 
 pub(crate) fn sync_tags_filter_button_style(
     tags_filter_btn: &gtk4::MenuButton,
@@ -91,20 +97,20 @@ fn schedule_tag_filter_apply(
 pub(crate) fn set_similar_filter_chrome(similar_filter_btn: &gtk4::Button, active: bool) {
     if active {
         similar_filter_btn.add_css_class("similar-filter-active");
-        similar_filter_btn.set_sensitive(true);
     } else {
         similar_filter_btn.remove_css_class("similar-filter-active");
-        similar_filter_btn.set_sensitive(false);
     }
 }
 
 pub(crate) fn clear_similar_filter(
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
+    similar_query_path: &Rc<RefCell<Option<String>>>,
     filter: &CustomFilter,
     similar_filter_btn: &gtk4::Button,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     *similar_paths.borrow_mut() = None;
+    *similar_query_path.borrow_mut() = None;
     set_similar_filter_chrome(similar_filter_btn, false);
     apply_filter_change(
         grid_loading,
@@ -112,6 +118,189 @@ pub(crate) fn clear_similar_filter(
         gtk4::FilterChange::Different,
         "Updating filters…",
     );
+}
+
+/// Apply similar-in-folder filter for `query_path` using the current top-N.
+/// Returns the match count (including the query) when successful.
+pub(crate) fn apply_similar_filter_for_query(
+    index: &HashMap<String, PromptIndexEntry>,
+    query_path: &str,
+    top_n: usize,
+    similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
+    similar_query_path: &Rc<RefCell<Option<String>>>,
+    similar_filter_btn: &gtk4::Button,
+    filter: &CustomFilter,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
+) -> Option<usize> {
+    let matches = find_similar_paths(index, query_path, top_n, SIMILAR_MIN_SCORE)?;
+    let count = matches.len();
+    *similar_paths.borrow_mut() = Some(matches);
+    *similar_query_path.borrow_mut() = Some(query_path.to_string());
+    set_similar_filter_chrome(similar_filter_btn, true);
+    apply_filter_change(
+        grid_loading,
+        filter,
+        gtk4::FilterChange::Different,
+        "Updating filters…",
+    );
+    Some(count)
+}
+
+fn schedule_similar_top_n_apply(
+    debounce_gen: &Rc<Cell<u64>>,
+    similar_top_n: &Rc<Cell<usize>>,
+    prompt_index: &Rc<RefCell<HashMap<String, PromptIndexEntry>>>,
+    similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
+    similar_query_path: &Rc<RefCell<Option<String>>>,
+    similar_filter_btn: &gtk4::Button,
+    filter: &CustomFilter,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
+) {
+    let gen = debounce_gen.get().wrapping_add(1);
+    debounce_gen.set(gen);
+    let debounce_gen = debounce_gen.clone();
+    let similar_top_n = similar_top_n.clone();
+    let prompt_index = prompt_index.clone();
+    let similar_paths = similar_paths.clone();
+    let similar_query_path = similar_query_path.clone();
+    let similar_filter_btn = similar_filter_btn.clone();
+    let filter = filter.clone();
+    let grid_loading = grid_loading.clone();
+    glib::timeout_add_local_once(Duration::from_millis(SIMILAR_TOP_N_DEBOUNCE_MS), move || {
+        if debounce_gen.get() != gen {
+            return;
+        }
+        let n = config::normalize_similar_top_n(similar_top_n.get() as i32);
+        similar_top_n.set(n as usize);
+        config::save_similar_top_n(n);
+
+        let Some(query) = similar_query_path.borrow().clone() else {
+            return;
+        };
+        if similar_paths.borrow().is_none() {
+            return;
+        }
+        let _ = apply_similar_filter_for_query(
+            &prompt_index.borrow(),
+            &query,
+            n as usize,
+            &similar_paths,
+            &similar_query_path,
+            &similar_filter_btn,
+            &filter,
+            &grid_loading,
+        );
+    });
+}
+
+/// Hover popover with top-N slider under the similar-clear button.
+pub(crate) fn install_similar_top_n_hover_slider(
+    similar_filter_btn: &gtk4::Button,
+    similar_top_n: &Rc<Cell<usize>>,
+    similar_top_n_debounce_gen: &Rc<Cell<u64>>,
+    prompt_similarity_index: &Rc<RefCell<HashMap<String, PromptIndexEntry>>>,
+    similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
+    similar_query_path: &Rc<RefCell<Option<String>>>,
+    filter: &CustomFilter,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
+) {
+    let initial = config::normalize_similar_top_n(similar_top_n.get() as i32) as f64;
+    let adjustment = gtk4::Adjustment::new(initial, 10.0, 100.0, 1.0, 5.0, 0.0);
+    let scale = gtk4::Scale::new(Orientation::Horizontal, Some(&adjustment));
+    scale.set_draw_value(true);
+    scale.set_value_pos(gtk4::PositionType::Right);
+    scale.set_digits(0);
+    scale.set_hexpand(true);
+    scale.set_width_request(160);
+    scale.add_mark(10.0, gtk4::PositionType::Bottom, Some("10"));
+    scale.add_mark(100.0, gtk4::PositionType::Bottom, Some("100"));
+
+    let label = gtk4::Label::new(Some("Similar count"));
+    label.add_css_class("caption");
+    label.set_halign(gtk4::Align::Start);
+
+    let content = gtk4::Box::new(Orientation::Vertical, 6);
+    content.set_margin_top(8);
+    content.set_margin_bottom(8);
+    content.set_margin_start(10);
+    content.set_margin_end(10);
+    content.append(&label);
+    content.append(&scale);
+
+    let popover = gtk4::Popover::new();
+    popover.set_parent(similar_filter_btn);
+    popover.set_child(Some(&content));
+    popover.set_position(gtk4::PositionType::Bottom);
+    popover.set_autohide(false);
+
+    let pointer_inside = Rc::new(Cell::new(false));
+
+    {
+        let pointer_inside_enter = pointer_inside.clone();
+        let popover_enter = popover.clone();
+        let motion = EventControllerMotion::new();
+        motion.connect_enter(move |_, _, _| {
+            pointer_inside_enter.set(true);
+            popover_enter.popup();
+        });
+        let pointer_inside_leave = pointer_inside.clone();
+        let popover_leave = popover.clone();
+        motion.connect_leave(move |_| {
+            pointer_inside_leave.set(false);
+            let popover = popover_leave.clone();
+            let inside = pointer_inside_leave.clone();
+            glib::timeout_add_local_once(Duration::from_millis(SIMILAR_SLIDER_LEAVE_MS), move || {
+                if !inside.get() && popover.is_visible() {
+                    popover.popdown();
+                }
+            });
+        });
+        similar_filter_btn.add_controller(motion);
+    }
+
+    {
+        let pointer_inside_enter = pointer_inside.clone();
+        let popover_leave = popover.clone();
+        let motion = EventControllerMotion::new();
+        motion.connect_enter(move |_, _, _| {
+            pointer_inside_enter.set(true);
+        });
+        let pointer_inside_leave = pointer_inside.clone();
+        motion.connect_leave(move |_| {
+            pointer_inside_leave.set(false);
+            let popover = popover_leave.clone();
+            let inside = pointer_inside_leave.clone();
+            glib::timeout_add_local_once(Duration::from_millis(SIMILAR_SLIDER_LEAVE_MS), move || {
+                if !inside.get() && popover.is_visible() {
+                    popover.popdown();
+                }
+            });
+        });
+        content.add_controller(motion);
+    }
+
+    let similar_top_n = similar_top_n.clone();
+    let debounce_gen = similar_top_n_debounce_gen.clone();
+    let prompt_index = prompt_similarity_index.clone();
+    let similar_paths = similar_paths.clone();
+    let similar_query_path = similar_query_path.clone();
+    let similar_filter_btn = similar_filter_btn.clone();
+    let filter = filter.clone();
+    let grid_loading = grid_loading.clone();
+    scale.connect_value_changed(move |s| {
+        let n = config::normalize_similar_top_n(s.value().round() as i32) as usize;
+        similar_top_n.set(n);
+        schedule_similar_top_n_apply(
+            &debounce_gen,
+            &similar_top_n,
+            &prompt_index,
+            &similar_paths,
+            &similar_query_path,
+            &similar_filter_btn,
+            &filter,
+            &grid_loading,
+        );
+    });
 }
 
 /// Rebuilds the tag-filter popover with three-state polarity controls.
@@ -353,6 +542,7 @@ pub(crate) fn apply_clear_filters(
     active_tag_filters: &Rc<RefCell<HashMap<String, TagFilterMode>>>,
     tag_filter_debounce_gen: &Rc<Cell<u64>>,
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
+    similar_query_path: &Rc<RefCell<Option<String>>>,
     sort_key: &Rc<RefCell<String>>,
     filter: &CustomFilter,
     _sorter: &CustomSorter,
@@ -371,6 +561,7 @@ pub(crate) fn apply_clear_filters(
     tag_filter_debounce_gen.set(tag_filter_debounce_gen.get().wrapping_add(1));
     active_tag_filters.borrow_mut().clear();
     *similar_paths.borrow_mut() = None;
+    *similar_query_path.borrow_mut() = None;
     set_similar_filter_chrome(similar_filter_btn, false);
     favourites_filter_btn.remove_css_class("favorites-filter-active");
     favourites_filter_btn.set_active(false);
@@ -461,6 +652,7 @@ pub(crate) fn install_clear_button_handler(
     active_tag_filters: &Rc<RefCell<HashMap<String, TagFilterMode>>>,
     tag_filter_debounce_gen: &Rc<Cell<u64>>,
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
+    similar_query_path: &Rc<RefCell<Option<String>>>,
     sort_key: &Rc<RefCell<String>>,
     filter: &CustomFilter,
     sorter: &CustomSorter,
@@ -479,6 +671,7 @@ pub(crate) fn install_clear_button_handler(
     let active_tag_filters_clear = active_tag_filters.clone();
     let tag_filter_debounce_gen_clear = tag_filter_debounce_gen.clone();
     let similar_paths_clear = similar_paths.clone();
+    let similar_query_path_clear = similar_query_path.clone();
     let sort_key_clear = sort_key.clone();
     let filter_clear = filter.clone();
     let sorter_clear = sorter.clone();
@@ -498,6 +691,7 @@ pub(crate) fn install_clear_button_handler(
             &active_tag_filters_clear,
             &tag_filter_debounce_gen_clear,
             &similar_paths_clear,
+            &similar_query_path_clear,
             &sort_key_clear,
             &filter_clear,
             &sorter_clear,
@@ -517,15 +711,26 @@ pub(crate) fn install_clear_button_handler(
 pub(crate) fn install_similar_filter_button_handler(
     similar_filter_btn: &gtk4::Button,
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
+    similar_query_path: &Rc<RefCell<Option<String>>>,
     filter: &CustomFilter,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     let similar_paths = similar_paths.clone();
+    let similar_query_path = similar_query_path.clone();
     let filter = filter.clone();
     let btn = similar_filter_btn.clone();
     let grid_loading = grid_loading.clone();
     similar_filter_btn.connect_clicked(move |_| {
-        clear_similar_filter(&similar_paths, &filter, &btn, &grid_loading);
+        if similar_paths.borrow().is_none() {
+            return;
+        }
+        clear_similar_filter(
+            &similar_paths,
+            &similar_query_path,
+            &filter,
+            &btn,
+            &grid_loading,
+        );
     });
 }
 

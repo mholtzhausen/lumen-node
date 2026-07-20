@@ -313,10 +313,9 @@ pub(crate) fn build_header_controls(
     let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
     clear_btn.set_tooltip_text(Some("Clear filters"));
 
-    let similar_filter_btn = gtk4::Button::from_icon_name("view-filter-symbolic");
+    let similar_filter_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
     similar_filter_btn.set_tooltip_text(Some("Clear similar filter"));
     similar_filter_btn.add_css_class("flat");
-    similar_filter_btn.set_sensitive(false);
 
     let controls_row = gtk4::Box::new(Orientation::Horizontal, 6);
     controls_row.set_halign(gtk4::Align::Fill);

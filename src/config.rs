@@ -84,6 +84,9 @@ pub struct AppConfig {
     /// Scale for grid thumbnail chrome buttons (0.4–1.0). Default when unset: 0.6.
     /// Not rewritten by session `save`; updated via Preferences / `save_thumbnail_chrome_scale`.
     pub thumbnail_chrome_scale: Option<f64>,
+    /// Max similar images returned by “Similar in folder” (10–100). Default when unset: 50.
+    /// Not rewritten by session `save`; updated via header hover slider / `save_similar_top_n`.
+    pub similar_top_n: Option<i32>,
 }
 
 /// Loads `~/.lumen-node/config.yml`.  Missing file → empty config.
@@ -110,6 +113,7 @@ pub fn load() -> AppConfig {
     let mut full_view_favourite_icon = None;
     let mut full_view_favourite_icon_seconds = None;
     let mut thumbnail_chrome_scale = None;
+    let mut similar_top_n = None;
     if let Ok(content) = std::fs::read_to_string(config_path()) {
         for line in content.lines() {
             if let Some(val) = line.strip_prefix("last_folder: ") {
@@ -173,6 +177,8 @@ pub fn load() -> AppConfig {
                     .parse::<f64>()
                     .ok()
                     .map(normalize_thumbnail_chrome_scale);
+            } else if let Some(val) = line.strip_prefix("similar_top_n: ") {
+                similar_top_n = val.trim().parse::<i32>().ok().map(normalize_similar_top_n);
             }
         }
     }
@@ -199,6 +205,7 @@ pub fn load() -> AppConfig {
         full_view_favourite_icon,
         full_view_favourite_icon_seconds,
         thumbnail_chrome_scale,
+        similar_top_n,
     }
 }
 
@@ -335,6 +342,20 @@ pub fn save_thumbnail_chrome_scale(scale: f64) {
         "thumbnail_chrome_scale",
         Some(format_config_f64(scale)),
     )]);
+}
+
+/// Default top-N for “Similar in folder” browse.
+pub const DEFAULT_SIMILAR_TOP_N: i32 = 50;
+
+/// Clamps similar top-N to the supported hover-slider range (10–100).
+pub fn normalize_similar_top_n(n: i32) -> i32 {
+    n.clamp(10, 100)
+}
+
+/// Updates `similar_top_n`, preserving other config lines.
+pub fn save_similar_top_n(n: i32) {
+    let n = normalize_similar_top_n(n);
+    update_config_keys(&[("similar_top_n", Some(n.to_string()))]);
 }
 
 /// Updates global startup defaults (`sort_key`, `search_text`, `thumbnail_size`).
