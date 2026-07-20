@@ -651,6 +651,7 @@ pub fn install_context_menu(
                     &tags_filter_list,
                     &tags_filter_btn,
                     &app_state.active_tags,
+                    &app_state.tags_filter_dirty,
                     &filter,
                     &app_state.current_folder,
                 );
@@ -712,6 +713,7 @@ pub fn install_context_menu(
                     &tags_filter_list_for_remove,
                     &tags_filter_btn_for_remove,
                     &mutation_for_remove_tag.app_state.active_tags,
+                    &mutation_for_remove_tag.app_state.tags_filter_dirty,
                     &filter_for_remove_tag,
                     &mutation_for_remove_tag.app_state.current_folder,
                 );

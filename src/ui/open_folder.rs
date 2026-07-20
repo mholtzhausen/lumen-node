@@ -26,6 +26,7 @@ pub(crate) struct OpenFolderActionDeps {
     pub(crate) search_text: Rc<RefCell<String>>,
     pub(crate) favorites_only: Rc<Cell<bool>>,
     pub(crate) active_tags: Rc<RefCell<HashSet<String>>>,
+    pub(crate) tags_filter_dirty: Rc<Cell<bool>>,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) sort_dropdown: gtk4::DropDown,
     pub(crate) favourites_filter_btn: gtk4::ToggleButton,
@@ -51,6 +52,7 @@ pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(
             *deps.search_text.borrow_mut() = saved_ui_state.search_text.clone();
             deps.favorites_only.set(saved_ui_state.favorites_only);
             *deps.active_tags.borrow_mut() = saved_ui_state.active_tags.iter().cloned().collect();
+            deps.tags_filter_dirty.set(false);
             *deps.thumbnail_size.borrow_mut() =
                 normalize_thumbnail_size(saved_ui_state.thumbnail_size);
 
@@ -73,6 +75,7 @@ pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(
             }
         } else {
             deps.active_tags.borrow_mut().clear();
+            deps.tags_filter_dirty.set(false);
             let seeded_state = db::UiState {
                 sort_key: deps.sort_key.borrow().clone(),
                 search_text: deps.search_text.borrow().clone(),
@@ -94,6 +97,7 @@ pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(
             &deps.tags_filter_list,
             &deps.tags_filter_btn,
             &deps.active_tags,
+            &deps.tags_filter_dirty,
             &deps.filter,
             &deps.current_folder,
         );

@@ -443,6 +443,7 @@ fn build_ui(app: &adw::Application) {
         let tags_filter_list = chrome.tags_filter_list.clone();
         let tags_filter_btn = chrome.tags_filter_btn.clone();
         let active_tags = app_state.active_tags.clone();
+        let tags_filter_dirty = app_state.tags_filter_dirty.clone();
         let filter = filter.clone();
         let current_folder = app_state.current_folder.clone();
         Rc::new(move || {
@@ -450,6 +451,7 @@ fn build_ui(app: &adw::Application) {
                 &tags_filter_list,
                 &tags_filter_btn,
                 &active_tags,
+                &tags_filter_dirty,
                 &filter,
                 &current_folder,
             );

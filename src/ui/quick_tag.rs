@@ -248,6 +248,7 @@ fn notify_tags_changed(
         tags_filter_list,
         tags_filter_btn,
         &app_state.active_tags,
+        &app_state.tags_filter_dirty,
         filter,
         &app_state.current_folder,
     );

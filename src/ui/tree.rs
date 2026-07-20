@@ -159,6 +159,7 @@ struct BrowseFolderCtx {
     search_text: Rc<RefCell<String>>,
     favorites_only: Rc<Cell<bool>>,
     active_tags: Rc<RefCell<std::collections::HashSet<String>>>,
+    tags_filter_dirty: Rc<Cell<bool>>,
     thumbnail_size: Rc<RefCell<i32>>,
     sort_dropdown: gtk4::DropDown,
     favourites_filter_btn: gtk4::ToggleButton,
@@ -182,6 +183,7 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
         *ctx.search_text.borrow_mut() = saved_ui_state.search_text.clone();
         ctx.favorites_only.set(saved_ui_state.favorites_only);
         *ctx.active_tags.borrow_mut() = saved_ui_state.active_tags.iter().cloned().collect();
+        ctx.tags_filter_dirty.set(false);
         *ctx.thumbnail_size.borrow_mut() = normalize_thumbnail_size(saved_ui_state.thumbnail_size);
 
         if ctx.sort_dropdown.selected() != selected_sort {
@@ -202,6 +204,7 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
         }
     } else {
         ctx.active_tags.borrow_mut().clear();
+        ctx.tags_filter_dirty.set(false);
         let seeded_state = db::UiState {
             sort_key: ctx.sort_key.borrow().clone(),
             search_text: ctx.search_text.borrow().clone(),
@@ -229,6 +232,7 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
         &ctx.tags_filter_list,
         &ctx.tags_filter_btn,
         &ctx.active_tags,
+        &ctx.tags_filter_dirty,
         &ctx.filter,
         &ctx.current_folder,
     );
@@ -245,6 +249,7 @@ pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
         search_text: deps.app_state.search_text.clone(),
         favorites_only: deps.app_state.favorites_only.clone(),
         active_tags: deps.app_state.active_tags.clone(),
+        tags_filter_dirty: deps.app_state.tags_filter_dirty.clone(),
         thumbnail_size: deps.app_state.thumbnail_size.clone(),
         sort_dropdown: deps.chrome.sort_dropdown.clone(),
         favourites_filter_btn: deps.chrome.favourites_filter_btn.clone(),

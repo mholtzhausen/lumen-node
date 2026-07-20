@@ -120,6 +120,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                 EmptyAction::ClearTagFilter => {
                     deactivate_tag_filter(
                         &app_state.active_tags,
+                        &app_state.tags_filter_dirty,
                         &filter,
                         &tags_filter_btn,
                         &tags_filter_list,
@@ -131,6 +132,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                         &app_state.search_text,
                         &app_state.favorites_only,
                         &app_state.active_tags,
+                        &app_state.tags_filter_dirty,
                         &app_state.similar_paths,
                         &app_state.sort_key,
                         &filter,

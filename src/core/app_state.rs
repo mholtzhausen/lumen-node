@@ -36,6 +36,8 @@ pub(crate) struct AppState {
     pub(crate) favorites_only: Rc<Cell<bool>>,
     /// Active tag filter (AND): image must have every selected tag.
     pub(crate) active_tags: Rc<RefCell<HashSet<String>>>,
+    /// Tag-filter popover has uncommitted checkbox edits (apply on popover close).
+    pub(crate) tags_filter_dirty: Rc<Cell<bool>>,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     pub(crate) realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
@@ -92,6 +94,7 @@ pub(crate) fn build_app_state(
     ));
     let favorites_only: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let active_tags: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::new()));
+    let tags_filter_dirty: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let initial_thumbnail_size =
         normalize_thumbnail_size(app_config.thumbnail_size.unwrap_or(default_thumbnail_size));
     let thumbnail_size: Rc<RefCell<i32>> = Rc::new(RefCell::new(initial_thumbnail_size));
@@ -120,6 +123,7 @@ pub(crate) fn build_app_state(
         search_text,
         favorites_only,
         active_tags,
+        tags_filter_dirty,
         thumbnail_size,
         realized_thumb_images: Rc::new(RefCell::new(Vec::new())),
         realized_cell_boxes: Rc::new(RefCell::new(Vec::new())),

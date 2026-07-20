@@ -6,7 +6,7 @@ use crate::ui::center::CenterContentBundle;
 use crate::ui::controls::{
     install_clear_button_handler, install_favorites_only_handler, install_search_entry_handler,
     install_similar_filter_button_handler, install_sort_dropdown_handler,
-    install_thumbnail_size_handlers,
+    install_tags_filter_popover_handler, install_thumbnail_size_handlers,
 };
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::list_mutation::ListMutationContext;
@@ -235,6 +235,7 @@ pub(crate) fn install_open_folder_wiring(deps: OpenFolderWiringDeps) -> Rc<dyn F
         search_text: deps.app_state.search_text.clone(),
         favorites_only: deps.app_state.favorites_only.clone(),
         active_tags: deps.app_state.active_tags.clone(),
+        tags_filter_dirty: deps.app_state.tags_filter_dirty.clone(),
         thumbnail_size: deps.app_state.thumbnail_size.clone(),
         sort_dropdown: deps.chrome.sort_dropdown,
         favourites_filter_btn: deps.chrome.favourites_filter_btn,
@@ -293,11 +294,19 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.filter,
         &deps.app_state.current_folder,
     );
+    install_tags_filter_popover_handler(
+        &deps.chrome.tags_filter_btn,
+        &deps.app_state.active_tags,
+        &deps.app_state.tags_filter_dirty,
+        &deps.filter,
+        &deps.app_state.current_folder,
+    );
     install_clear_button_handler(
         &deps.chrome.clear_btn,
         &deps.app_state.search_text,
         &deps.app_state.favorites_only,
         &deps.app_state.active_tags,
+        &deps.app_state.tags_filter_dirty,
         &deps.app_state.similar_paths,
         &deps.app_state.sort_key,
         &deps.filter,
