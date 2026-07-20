@@ -90,6 +90,20 @@ pub fn upsert_prompt_index(
     }
 }
 
+/// Move an index entry from `old_path` to `new_path` (no-op if missing).
+pub fn rekey_prompt_index(
+    index: &mut HashMap<String, PromptIndexEntry>,
+    old_path: &str,
+    new_path: &str,
+) {
+    if old_path == new_path {
+        return;
+    }
+    if let Some(entry) = index.remove(old_path) {
+        index.insert(new_path.to_string(), entry);
+    }
+}
+
 /// Rank other indexed images by Jaccard token overlap (plus seed boost).
 /// Always includes `query_path` in the result set when the query is indexed.
 pub fn find_similar_paths(
@@ -193,5 +207,39 @@ mod tests {
         let entry2 = entry_from_meta(&params_only).unwrap();
         assert!(entry2.tokens.contains("seed"));
         assert_eq!(entry2.seed.as_deref(), Some("99"));
+    }
+
+    #[test]
+    fn rekey_prompt_index_moves_entry() {
+        let mut index = HashMap::new();
+        index.insert(
+            "old.png".into(),
+            PromptIndexEntry {
+                tokens: ["red", "apple"].into_iter().map(String::from).collect(),
+                seed: Some("7".into()),
+            },
+        );
+        rekey_prompt_index(&mut index, "old.png", "new.png");
+        assert!(!index.contains_key("old.png"));
+        let entry = index.get("new.png").expect("rekeyed");
+        assert!(entry.tokens.contains("red"));
+        assert_eq!(entry.seed.as_deref(), Some("7"));
+
+        rekey_prompt_index(&mut index, "missing.png", "other.png");
+        assert!(!index.contains_key("other.png"));
+        assert!(index.contains_key("new.png"));
+    }
+
+    #[test]
+    fn upsert_prompt_index_inserts_and_removes() {
+        let mut index = HashMap::new();
+        let mut meta = ImageMetadata::default();
+        meta.prompt = Some("cyberpunk city street".into());
+        upsert_prompt_index(&mut index, "a.png", &meta);
+        assert!(index.contains_key("a.png"));
+
+        let empty = ImageMetadata::default();
+        upsert_prompt_index(&mut index, "a.png", &empty);
+        assert!(!index.contains_key("a.png"));
     }
 }
