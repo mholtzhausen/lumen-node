@@ -220,7 +220,7 @@ With two or more images selected (`Ctrl+click` toggle, `Shift+click` range, `Ctr
 
 - Stats table: file count, total size, extension counts, date range
 - Icon actions for copy paths / filenames and tri-state favourite
-- Sortable list of selected images (name / date / size)
+- Sortable list of selected images (name / date / size; shows up to 10 rows, scroll for more)
 - Collapsed **Batch rename** expander (`{index}` / `{index:N}`, live preview when open, collision gating)
 - Multi-column tri-state tags plus **Add tag to all** entry
 

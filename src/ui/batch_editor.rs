@@ -28,6 +28,10 @@ use std::rc::Rc;
 use std::time::SystemTime;
 
 const TAG_COLUMNS: i32 = 3;
+/// Max selection rows shown without scrolling in the batch list.
+const BATCH_LIST_VISIBLE_ROWS: i32 = 10;
+/// Approximate row height: 40px thumb + vertical margins/padding in boxed-list.
+const BATCH_LIST_ROW_HEIGHT_PX: i32 = 56;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TriState {
@@ -123,7 +127,15 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
     let selection_list = ListBox::new();
     selection_list.add_css_class("boxed-list");
     selection_list.set_selection_mode(gtk4::SelectionMode::Browse);
-    content.append(&selection_list);
+    let list_scroll = ScrolledWindow::builder()
+        .hscrollbar_policy(PolicyType::Never)
+        .vscrollbar_policy(PolicyType::Automatic)
+        .hexpand(true)
+        .build();
+    list_scroll.set_max_content_height(BATCH_LIST_VISIBLE_ROWS * BATCH_LIST_ROW_HEIGHT_PX);
+    list_scroll.set_propagate_natural_height(true);
+    list_scroll.set_child(Some(&selection_list));
+    content.append(&list_scroll);
 
     content.append(&Separator::new(Orientation::Horizontal));
 

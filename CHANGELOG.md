@@ -1,7 +1,7 @@
 ## 2.0.0 (6e71ac9) — 2026-07-20
 ### Features and Improvements
 - Grid multiselect via `MultiSelection` (Ctrl/Shift click, Ctrl+A for filtered); right sidebar batch editor for tags, favourites, rename, and copy paths/filenames.
-- Batch editor polish: stats table (count, size, extensions, date range), icon actions, collapsed rename expander, multi-column tags with add-to-all.
+- Batch editor polish: stats table (count, size, extensions, date range), icon actions, collapsed rename expander, multi-column tags with add-to-all; selection list shows at most 10 rows (scroll for more).
 - Batch rename with `{index}` / `{index:N}`, live preview, and Apply disabled on collisions.
 - Dual context menus: selection management when multi-selected; single-item menu when right-clicking outside the set.
 - Preferences opens as an in-window modal dialog that dims the background, with a left-hand page sidebar (General / Appearance / Startup / Tags).
