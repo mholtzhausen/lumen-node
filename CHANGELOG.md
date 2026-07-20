@@ -3,6 +3,7 @@
 - Grid thumbnails show a right-hand chrome pane (favourite + tags) on hover/selection; tags open a filterable multi-select checklist with **Add `foo`** for new tags.
 - Vendored `lumen-tag-symbolic` price-tag icon for tag UI (works without Adwaita `tag-symbolic`).
 - Preferences → Appearance slider for thumbnail chrome button size (`thumbnail_chrome_scale`, default 60%), updates live.
+- Quick-tag popover closes on pointer leave / Escape; Enter creates when only **Add** is shown; tagged images use a filled tag icon.
 
 ### Bugfixes
 - Replace missing `tag-symbolic` glyph with the bundled `lumen-tag-symbolic` icon.

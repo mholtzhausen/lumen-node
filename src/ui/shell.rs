@@ -24,10 +24,18 @@ const THUMBNAIL_CHROME_BASE_PX: f64 = 28.0;
 const THUMBNAIL_CHROME_PAD_BASE_PX: f64 = 2.0;
 const THUMBNAIL_CHROME_MARGIN_BASE_PX: f64 = 4.0;
 
+/// Pixel size for grid chrome buttons at the given scale.
+pub(crate) fn thumbnail_chrome_button_px(scale: f64) -> i32 {
+    let scale = crate::config::normalize_thumbnail_chrome_scale(scale);
+    ((THUMBNAIL_CHROME_BASE_PX * scale).round() as i32).clamp(12, 28)
+}
+
 /// Updates the live CSS metrics for grid thumbnail chrome (favourite + tag buttons).
+/// GTK CSS does not support max-width/max-height or logical margin-end — keep buttons
+/// square with widget `set_size_request` instead (see `thumbnail_chrome_button_px`).
 pub(crate) fn apply_thumbnail_chrome_scale(provider: &gtk4::CssProvider, scale: f64) {
     let scale = crate::config::normalize_thumbnail_chrome_scale(scale);
-    let btn_px = ((THUMBNAIL_CHROME_BASE_PX * scale).round() as i32).clamp(12, 28);
+    let btn_px = thumbnail_chrome_button_px(scale);
     let pad_px = ((THUMBNAIL_CHROME_PAD_BASE_PX * scale).round() as i32).max(1);
     let margin_px = ((THUMBNAIL_CHROME_MARGIN_BASE_PX * scale).round() as i32).max(1);
     provider.load_from_string(&format!(
@@ -39,7 +47,10 @@ pub(crate) fn apply_thumbnail_chrome_scale(provider: &gtk4::CssProvider, scale: 
         }}
         .thumbnail-chrome-pane {{
             margin-top: {margin_px}px;
-            margin-end: {margin_px}px;
+            margin-right: {margin_px}px;
+        }}
+        .thumbnail-chrome-button.thumbnail-tag-active {{
+            color: @accent_color;
         }}
         "
     ));
@@ -94,7 +105,7 @@ pub(crate) fn build_header_controls(
     initial_thumbnail_size: i32,
     window: &adw::ApplicationWindow,
     runtime_report: String,
-    thumbnail_chrome_scale: Rc<Cell<f64>>,
+    app_state: crate::core::app_state::AppState,
     thumbnail_chrome_css: gtk4::CssProvider,
 ) -> HeaderControls {
     let header_bar = adw::HeaderBar::new();
@@ -375,8 +386,9 @@ pub(crate) fn build_header_controls(
     let window_for_prefs = window.clone();
     let color_scheme_prefs = color_scheme.clone();
     let theme_btn_prefs = theme_btn.clone();
-    let chrome_scale_prefs = thumbnail_chrome_scale.clone();
+    let chrome_scale_prefs = app_state.thumbnail_chrome_scale.clone();
     let chrome_css_prefs = thumbnail_chrome_css.clone();
+    let app_state_prefs = app_state.clone();
     preferences_action.connect_activate(move |_, _| {
         crate::ui::preferences::present_preferences_window(
             &window_for_prefs,
@@ -385,6 +397,7 @@ pub(crate) fn build_header_controls(
                 theme_btn: theme_btn_prefs.clone(),
                 thumbnail_chrome_scale: chrome_scale_prefs.clone(),
                 thumbnail_chrome_css: chrome_css_prefs.clone(),
+                app_state: app_state_prefs.clone(),
             },
         );
     });

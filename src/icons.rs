@@ -2,10 +2,12 @@
 
 use std::path::PathBuf;
 
-/// Icon name for free-form tags (vendored price-tag; not present in Adwaita).
+/// Outline price-tag (image has no tags yet).
 pub const TAG_ICON_NAME: &str = "lumen-tag-symbolic";
+/// Filled price-tag (image has one or more tags).
+pub const TAG_ICON_FILLED_NAME: &str = "lumen-tag-filled-symbolic";
 
-/// Adds search paths so `lumen-tag-symbolic` resolves in dev, install, and AppImage.
+/// Adds search paths so bundled tag icons resolve in dev, install, and AppImage.
 pub fn register_bundled_icons() {
     let Some(display) = gtk4::gdk::Display::default() else {
         return;

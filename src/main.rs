@@ -368,7 +368,7 @@ fn build_ui(app: &adw::Application) {
         initial_thumbnail_size,
         &window,
         runtime_report,
-        app_state.thumbnail_chrome_scale.clone(),
+        app_state.clone(),
         thumbnail_chrome_css,
     );
     let chrome = left_chrome.wiring_handles();

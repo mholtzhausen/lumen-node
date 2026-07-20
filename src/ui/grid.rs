@@ -19,7 +19,7 @@ use crate::{
     sort_flags::sort_flag_text_for_path,
     ui::list_mutation::ListMutationContext,
     ui::preview::ACTIVE_PREVIEW_TASKS,
-    ui::quick_tag::{attach_quick_tag_popover, QuickTagAttachDeps},
+    ui::quick_tag::{attach_quick_tag_popover, sync_tags_button_icon, QuickTagAttachDeps},
     thumbnails,
     PREVIEW_REQUEST_PENDING,
 };
@@ -103,6 +103,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let fast_scroll_active_bind = deps.fast_scroll_active.clone();
     let thumb_generations_bind = deps.thumb_generations.clone();
     let bound_paths_bind = deps.bound_paths.clone();
+    let app_state_bind = deps.app_state.clone();
     factory.connect_bind(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
@@ -116,6 +117,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             selected_path_bind.clone(),
             &thumb_generations_bind,
             &bound_paths_bind,
+            &app_state_bind,
         );
     });
 
@@ -560,6 +562,27 @@ pub fn refresh_realized_grid_favourite_icons(app_state: &AppState) {
     }
 }
 
+/// Applies the current chrome scale to all realized grid favourite/tag buttons.
+pub fn refresh_realized_grid_chrome_sizes(app_state: &AppState) {
+    let chrome_px =
+        crate::ui::shell::thumbnail_chrome_button_px(app_state.thumbnail_chrome_scale.get());
+    let mut boxes = app_state.realized_cell_boxes.borrow_mut();
+    boxes.retain(|weak| weak.upgrade().is_some());
+    for weak in boxes.iter() {
+        let Some(cell_box) = weak.upgrade() else {
+            continue;
+        };
+        let Some(overlay) = cell_box.first_child().and_downcast::<Overlay>() else {
+            continue;
+        };
+        let Some((_pane, favourite_btn, tags_btn)) = chrome_widgets_from_overlay(&overlay) else {
+            continue;
+        };
+        favourite_btn.set_size_request(chrome_px, chrome_px);
+        tags_btn.set_size_request(chrome_px, chrome_px);
+    }
+}
+
 fn toggle_grid_favourite(
     app_state: &AppState,
     toast_overlay: &adw::ToastOverlay,
@@ -694,12 +717,18 @@ pub fn setup_grid_list_item(
 
     let tags_btn = MenuButton::new();
     tags_btn.set_icon_name(crate::icons::TAG_ICON_NAME);
+    tags_btn.set_always_show_arrow(false);
     tags_btn.add_css_class("flat");
     tags_btn.add_css_class("circular");
     tags_btn.add_css_class("thumbnail-favourite-button");
     tags_btn.add_css_class("thumbnail-chrome-button");
     tags_btn.set_tooltip_text(Some("Tags"));
     tags_btn.set_focus_on_click(false);
+
+    let chrome_px =
+        crate::ui::shell::thumbnail_chrome_button_px(app_state.thumbnail_chrome_scale.get());
+    favourite_btn.set_size_request(chrome_px, chrome_px);
+    tags_btn.set_size_request(chrome_px, chrome_px);
 
     chrome_pane.append(&favourite_btn);
     chrome_pane.append(&tags_btn);
@@ -865,6 +894,7 @@ pub fn bind_grid_list_item(
     selected_path: Rc<RefCell<Option<String>>>,
     thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
+    app_state: &AppState,
 ) {
     let path_str = list_item
         .item()
@@ -939,6 +969,11 @@ pub fn bind_grid_list_item(
         &selected_path,
         tag_popover_is_open(&tags_btn),
     );
+    sync_tags_button_icon(&tags_btn, app_state, &path_str);
+    let chrome_px =
+        crate::ui::shell::thumbnail_chrome_button_px(app_state.thumbnail_chrome_scale.get());
+    favourite_btn.set_size_request(chrome_px, chrome_px);
+    tags_btn.set_size_request(chrome_px, chrome_px);
     let thumb_key = thumb_image.as_ptr() as usize;
     let generation_token = thumb_generations
         .borrow()

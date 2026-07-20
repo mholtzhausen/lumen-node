@@ -2,17 +2,18 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, CheckButton, Label, MenuButton, Orientation, Popover, ScrolledWindow,
-    SearchEntry,
+    gdk, glib, Box as GtkBox, Button, CheckButton, EventControllerKey, EventControllerMotion,
+    Label, MenuButton, Orientation, Popover, PropagationPhase, ScrolledWindow, SearchEntry,
 };
 use libadwaita as adw;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 
 use crate::core::app_state::AppState;
 use crate::db;
+use crate::icons::{TAG_ICON_FILLED_NAME, TAG_ICON_NAME};
 use crate::ui::controls::refresh_tag_filter_from_folder;
 
 pub(crate) struct QuickTagAttachDeps {
@@ -22,6 +23,27 @@ pub(crate) struct QuickTagAttachDeps {
     pub(crate) tags_filter_btn: MenuButton,
     pub(crate) tags_filter_list: gtk4::Box,
     pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
+}
+
+/// Syncs outline vs filled tag icon from whether the image has any tags.
+pub(crate) fn sync_tags_button_icon(
+    tags_btn: &MenuButton,
+    app_state: &AppState,
+    path_str: &str,
+) {
+    let has_tags = app_state
+        .tags_cache
+        .borrow()
+        .get(path_str)
+        .map(|t| !t.is_empty())
+        .unwrap_or(false);
+    if has_tags {
+        tags_btn.set_icon_name(TAG_ICON_FILLED_NAME);
+        tags_btn.add_css_class("thumbnail-tag-active");
+    } else {
+        tags_btn.set_icon_name(TAG_ICON_NAME);
+        tags_btn.remove_css_class("thumbnail-tag-active");
+    }
 }
 
 /// Builds the popover UI, attaches it to `tags_btn`, and wires open/search/toggle handlers.
@@ -54,6 +76,9 @@ pub(crate) fn attach_quick_tag_popover(
     popover.set_child(Some(&root));
     tags_btn.set_popover(Some(&popover));
 
+    // When the filtered list is empty and an Add row is shown, Enter adds that tag.
+    let pending_add = Rc::new(Cell::new(None::<String>));
+
     let rebuild = {
         let tags_list = tags_list.clone();
         let search = search.clone();
@@ -64,10 +89,13 @@ pub(crate) fn attach_quick_tag_popover(
         let tags_filter_btn = deps.tags_filter_btn.clone();
         let tags_filter_list = deps.tags_filter_list.clone();
         let bound_paths = deps.bound_paths.clone();
+        let pending_add = pending_add.clone();
+        let popover = popover.clone();
         Rc::new(move || {
             let key = tags_btn.as_ptr() as usize;
             let Some(path_str) = bound_paths.borrow().get(&key).cloned() else {
                 clear_box(&tags_list);
+                pending_add.set(None);
                 let hint = Label::new(Some("No image bound."));
                 hint.add_css_class("caption");
                 hint.set_halign(gtk4::Align::Start);
@@ -84,19 +112,100 @@ pub(crate) fn attach_quick_tag_popover(
                 &tags_filter_btn,
                 &tags_filter_list,
                 &search,
+                &tags_btn,
+                &popover,
+                &pending_add,
             );
         })
     };
 
     let rebuild_on_show = rebuild.clone();
+    let search_focus = search.clone();
     popover.connect_show(move |_| {
         rebuild_on_show();
+        search_focus.grab_focus();
     });
 
     let rebuild_on_search = rebuild.clone();
     search.connect_search_changed(move |_| {
         rebuild_on_search();
     });
+
+    // Enter: if only the Add action is available, create + select + close.
+    {
+        let pending_add = pending_add.clone();
+        let tags_btn = tags_btn.clone();
+        let app_state = deps.app_state.clone();
+        let toast_overlay = deps.toast_overlay.clone();
+        let filter = deps.filter.clone();
+        let tags_filter_btn = deps.tags_filter_btn.clone();
+        let tags_filter_list = deps.tags_filter_list.clone();
+        let bound_paths = deps.bound_paths.clone();
+        let popover = popover.clone();
+        search.connect_activate(move |_| {
+            let Some(name) = pending_add.take() else {
+                return;
+            };
+            let key = tags_btn.as_ptr() as usize;
+            let Some(path_str) = bound_paths.borrow().get(&key).cloned() else {
+                return;
+            };
+            if toggle_tag_on_image(
+                &app_state,
+                &toast_overlay,
+                &filter,
+                &tags_filter_btn,
+                &tags_filter_list,
+                &path_str,
+                &name,
+                true,
+            ) {
+                sync_tags_button_icon(&tags_btn, &app_state, &path_str);
+                popover.popdown();
+            } else {
+                // Restore pending so another Enter can retry after a transient failure.
+                pending_add.set(Some(name));
+            }
+        });
+    }
+
+    // Close when the pointer leaves the popover (debounced so open/enter is stable).
+    {
+        let pointer_inside = Rc::new(Cell::new(false));
+        let popover_leave = popover.clone();
+        let inside_enter = pointer_inside.clone();
+        let inside_leave = pointer_inside.clone();
+        let motion = EventControllerMotion::new();
+        motion.connect_enter(move |_, _, _| {
+            inside_enter.set(true);
+        });
+        motion.connect_leave(move |_| {
+            inside_leave.set(false);
+            let popover = popover_leave.clone();
+            let inside = inside_leave.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(120), move || {
+                if !inside.get() && popover.is_visible() {
+                    popover.popdown();
+                }
+            });
+        });
+        root.add_controller(motion);
+    }
+
+    // Escape closes without bubbling to window/grid handlers.
+    {
+        let popover_esc = popover.clone();
+        let key = EventControllerKey::new();
+        key.set_propagation_phase(PropagationPhase::Capture);
+        key.connect_key_pressed(move |_, keyval, _, _| {
+            if keyval == gdk::Key::Escape {
+                popover_esc.popdown();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        popover.add_controller(key);
+    }
 
     popover
 }
@@ -154,8 +263,12 @@ fn rebuild_quick_tag_list(
     tags_filter_btn: &MenuButton,
     tags_filter_list: &gtk4::Box,
     search_entry: &SearchEntry,
+    tags_btn: &MenuButton,
+    popover: &Popover,
+    pending_add: &Rc<Cell<Option<String>>>,
 ) {
     clear_box(tags_list);
+    pending_add.set(None);
 
     let Some(folder) = app_state.current_folder.borrow().as_ref().cloned() else {
         let hint = Label::new(Some("Open a folder to tag images."));
@@ -173,7 +286,6 @@ fn rebuild_quick_tag_list(
     };
 
     let known = db::list_all_tags_in_folder(&conn).unwrap_or_default();
-    // Prefer DB for the bound path so checks stay accurate if cache is stale.
     let path = Path::new(path_str);
     let on_image: HashSet<String> = db::list_tags_for_path(&conn, path)
         .ok()
@@ -208,8 +320,9 @@ fn rebuild_quick_tag_list(
         let filter_cb = filter.clone();
         let tags_filter_btn_cb = tags_filter_btn.clone();
         let tags_filter_list_cb = tags_filter_list.clone();
+        let tags_btn_cb = tags_btn.clone();
         check.connect_toggled(move |btn| {
-            toggle_tag_on_image(
+            if toggle_tag_on_image(
                 &app_state_cb,
                 &toast_cb,
                 &filter_cb,
@@ -218,7 +331,9 @@ fn rebuild_quick_tag_list(
                 &path_owned,
                 &tag_owned,
                 btn.is_active(),
-            );
+            ) {
+                sync_tags_button_icon(&tags_btn_cb, &app_state_cb, &path_owned);
+            }
         });
         tags_list.append(&check);
     }
@@ -229,6 +344,10 @@ fn rebuild_quick_tag_list(
         None => false,
     };
     if let (true, Some(name)) = (show_add, add_candidate) {
+        // Enter creates when there are no matching existing tags to pick from.
+        if filtered.is_empty() {
+            pending_add.set(Some(name.clone()));
+        }
         let add_btn = Button::with_label(&format!("Add `{name}`"));
         add_btn.add_css_class("flat");
         add_btn.set_halign(gtk4::Align::Start);
@@ -240,7 +359,10 @@ fn rebuild_quick_tag_list(
         let tags_filter_list_cb = tags_filter_list.clone();
         let tags_list_cb = tags_list.clone();
         let search_cb = search_entry.clone();
-        let tags_btn_for_rebuild = tags_filter_btn.clone();
+        let tags_btn_cb = tags_btn.clone();
+        let popover_cb = popover.clone();
+        let pending_add_cb = pending_add.clone();
+        let only_add = filtered.is_empty();
         add_btn.connect_clicked(move |_| {
             if !toggle_tag_on_image(
                 &app_state_cb,
@@ -254,8 +376,13 @@ fn rebuild_quick_tag_list(
             ) {
                 return;
             }
+            sync_tags_button_icon(&tags_btn_cb, &app_state_cb, &path_owned);
+            if only_add {
+                pending_add_cb.set(None);
+                popover_cb.popdown();
+                return;
+            }
             search_cb.set_text("");
-            // Rebuild with empty search so the new tag appears checked in the full list.
             rebuild_quick_tag_list(
                 &tags_list_cb,
                 "",
@@ -263,9 +390,12 @@ fn rebuild_quick_tag_list(
                 &app_state_cb,
                 &toast_cb,
                 &filter_cb,
-                &tags_btn_for_rebuild,
+                &tags_filter_btn_cb,
                 &tags_filter_list_cb,
                 &search_cb,
+                &tags_btn_cb,
+                &popover_cb,
+                &pending_add_cb,
             );
         });
         tags_list.append(&add_btn);
@@ -294,7 +424,6 @@ fn toggle_tag_on_image(
     let result = if want_on {
         db::add_tag(&conn, path, tag)
     } else {
-        // Treat missing tag as success so the checkbox can stay unchecked.
         db::remove_tag(&conn, path, tag).map(|_| true)
     };
     match result {

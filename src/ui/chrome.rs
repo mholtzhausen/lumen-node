@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::core::app_state::AppState;
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::shell::{build_header_controls, HeaderControls};
 use crate::ui::tree::{build_tree_widgets, TreeWidgets};
@@ -15,7 +16,7 @@ pub(crate) fn build_left_chrome(
     initial_thumbnail_size: i32,
     window: &adw::ApplicationWindow,
     runtime_report: String,
-    thumbnail_chrome_scale: std::rc::Rc<std::cell::Cell<f64>>,
+    app_state: AppState,
     thumbnail_chrome_css: gtk4::CssProvider,
 ) -> LeftChrome {
     let header = build_header_controls(
@@ -23,7 +24,7 @@ pub(crate) fn build_left_chrome(
         initial_thumbnail_size,
         window,
         runtime_report,
-        thumbnail_chrome_scale,
+        app_state,
         thumbnail_chrome_css,
     );
     let tree = build_tree_widgets(

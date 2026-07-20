@@ -1,8 +1,10 @@
 //! Tabbed preferences dialog (`adw::PreferencesWindow`) for `~/.lumen-node/config.yml`.
 
 use crate::config::{self, ColorSchemePref};
+use crate::core::app_state::AppState;
 use crate::sort::{normalize_sort_key, sort_index_for_key, sort_key_for_index};
 use crate::thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
+use crate::ui::grid::refresh_realized_grid_chrome_sizes;
 use crate::ui::shell::{
     apply_color_scheme_pref, apply_thumbnail_chrome_scale, sync_theme_button,
 };
@@ -18,6 +20,7 @@ pub(crate) struct PreferencesDeps {
     pub(crate) theme_btn: gtk4::Button,
     pub(crate) thumbnail_chrome_scale: Rc<Cell<f64>>,
     pub(crate) thumbnail_chrome_css: gtk4::CssProvider,
+    pub(crate) app_state: AppState,
 }
 
 pub(crate) fn present_preferences_window(parent: &adw::ApplicationWindow, deps: PreferencesDeps) {
@@ -173,10 +176,12 @@ fn build_appearance_page(cfg: &config::AppConfig, deps: &PreferencesDeps) -> adw
 
     let chrome_scale_cell = deps.thumbnail_chrome_scale.clone();
     let chrome_css = deps.thumbnail_chrome_css.clone();
+    let app_state = deps.app_state.clone();
     scale.connect_value_changed(move |s| {
         let value = config::normalize_thumbnail_chrome_scale(s.value());
         chrome_scale_cell.set(value);
         apply_thumbnail_chrome_scale(&chrome_css, value);
+        refresh_realized_grid_chrome_sizes(&app_state);
         config::save_thumbnail_chrome_scale(value);
     });
 
