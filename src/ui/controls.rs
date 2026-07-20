@@ -129,7 +129,7 @@ pub(crate) fn rebuild_tag_filter_list(
                 &folder_clear,
                 &known_clear,
             );
-            filter_clear.changed(gtk4::FilterChange::Different);
+            filter_clear.changed(gtk4::FilterChange::LessStrict);
         });
         tags_filter_list.append(&clear);
     }
@@ -164,6 +164,7 @@ pub(crate) fn refresh_tag_filter_from_folder(
 }
 
 /// Once-only: on tags popover close, persist + refilter if checkboxes marked dirty.
+/// Snapshots committed tags on open so close can emit a directional [`FilterChange`].
 pub(crate) fn install_tags_filter_popover_handler(
     tags_filter_btn: &gtk4::MenuButton,
     active_tags: &Rc<RefCell<HashSet<String>>>,
@@ -178,6 +179,16 @@ pub(crate) fn install_tags_filter_popover_handler(
     let dirty = tags_filter_dirty.clone();
     let filter = filter.clone();
     let current_folder = current_folder.clone();
+    let committed_on_open = Rc::new(RefCell::new(HashSet::<String>::new()));
+
+    {
+        let active_tags = active_tags.clone();
+        let committed_on_open = committed_on_open.clone();
+        popover.connect_show(move |_| {
+            *committed_on_open.borrow_mut() = active_tags.borrow().clone();
+        });
+    }
+
     popover.connect_closed(move |_| {
         if !dirty.get() {
             return;
@@ -189,7 +200,16 @@ pub(crate) fn install_tags_filter_popover_handler(
                 &db::encode_active_tags(&active_tags_vec(&active_tags)),
             );
         }
-        filter.changed(gtk4::FilterChange::Different);
+        let before = committed_on_open.borrow();
+        let after = active_tags.borrow();
+        let added = after.difference(&before).next().is_some();
+        let removed = before.difference(&after).next().is_some();
+        let change = match (added, removed) {
+            (true, false) => gtk4::FilterChange::MoreStrict,
+            (false, true) => gtk4::FilterChange::LessStrict,
+            _ => gtk4::FilterChange::Different,
+        };
+        filter.changed(change);
         dirty.set(false);
     });
 }
@@ -239,7 +259,10 @@ pub(crate) fn install_search_entry_handler(
     let filter_entry = filter.clone();
     let current_folder_search = current_folder.clone();
     search_entry.connect_search_changed(move |entry| {
-        *search_text_entry.borrow_mut() = entry.text().to_lowercase();
+        let prev_empty = search_text_entry.borrow().is_empty();
+        let new_text = entry.text().to_lowercase();
+        let new_empty = new_text.is_empty();
+        *search_text_entry.borrow_mut() = new_text;
         if let Some(folder) = current_folder_search.borrow().as_ref() {
             let _ = db::set_ui_state_value(
                 folder.as_path(),
@@ -247,7 +270,14 @@ pub(crate) fn install_search_entry_handler(
                 &search_text_entry.borrow(),
             );
         }
-        filter_entry.changed(gtk4::FilterChange::Different);
+        let change = if new_empty {
+            gtk4::FilterChange::LessStrict
+        } else if prev_empty {
+            gtk4::FilterChange::MoreStrict
+        } else {
+            gtk4::FilterChange::Different
+        };
+        filter_entry.changed(change);
     });
 }
 
@@ -322,7 +352,7 @@ pub(crate) fn deactivate_tag_filter(
         filter,
         current_folder,
     );
-    filter.changed(gtk4::FilterChange::Different);
+    filter.changed(gtk4::FilterChange::LessStrict);
 }
 
 pub(crate) fn deactivate_favorites_filter(
@@ -337,7 +367,7 @@ pub(crate) fn deactivate_favorites_filter(
     if let Some(folder) = current_folder.borrow().as_ref() {
         let _ = db::set_ui_state_value(folder.as_path(), "favorites_only", "0");
     }
-    filter.changed(gtk4::FilterChange::Different);
+    filter.changed(gtk4::FilterChange::LessStrict);
 }
 
 pub(crate) fn install_clear_button_handler(
@@ -441,7 +471,11 @@ pub(crate) fn install_favorites_only_handler(
                 if active { "1" } else { "0" },
             );
         }
-        filter_toggle.changed(gtk4::FilterChange::Different);
+        filter_toggle.changed(if active {
+            gtk4::FilterChange::MoreStrict
+        } else {
+            gtk4::FilterChange::LessStrict
+        });
         if active
             && list_store_toggle.n_items() > 0
             && selection_model_toggle.n_items() == 0
