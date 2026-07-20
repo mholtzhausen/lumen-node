@@ -1,0 +1,18 @@
+[Icon Theme]
+Name=Hicolor
+Comment=LumenNode bundled icon theme (apps + actions)
+Directories=scalable/apps,scalable/actions
+
+[scalable/apps]
+Size=128
+Context=Applications
+Type=Scalable
+MinSize=16
+MaxSize=512
+
+[scalable/actions]
+Size=16
+Context=Actions
+Type=Scalable
+MinSize=8
+MaxSize=512

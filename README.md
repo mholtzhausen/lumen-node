@@ -589,6 +589,8 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 
 UI chrome icons are bundled as GTK symbolic SVGs under `data/icons/hicolor/scalable/actions/` (`lumen-*-symbolic`) so the app does not depend on a host Adwaita/Yaru icon theme. Glyphs were adapted from Freepik / Flaticon icon packs (free license with attribution).
 
+The application icon (`com.lumennode.app`) uses a stacked gallery glyph from Flaticon pack [4211557 photo-editing](https://www.flaticon.com/) (`032-gallery.svg`), on a navy plate (`#253b56`).
+
 ---
 
 <div align="center">
