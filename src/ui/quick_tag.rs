@@ -247,8 +247,8 @@ fn notify_tags_changed(
     refresh_tag_filter_from_folder(
         tags_filter_list,
         tags_filter_btn,
-        &app_state.active_tags,
-        &app_state.tags_filter_dirty,
+        &app_state.active_tag_filters,
+        &app_state.tag_filter_debounce_gen,
         filter,
         &app_state.current_folder,
         &app_state.grid_loading,

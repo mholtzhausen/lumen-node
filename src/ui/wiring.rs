@@ -234,8 +234,8 @@ pub(crate) fn install_open_folder_wiring(deps: OpenFolderWiringDeps) -> Rc<dyn F
         sort_key: deps.app_state.sort_key.clone(),
         search_text: deps.app_state.search_text.clone(),
         favorites_only: deps.app_state.favorites_only.clone(),
-        active_tags: deps.app_state.active_tags.clone(),
-        tags_filter_dirty: deps.app_state.tags_filter_dirty.clone(),
+        active_tag_filters: deps.app_state.active_tag_filters.clone(),
+        tag_filter_debounce_gen: deps.app_state.tag_filter_debounce_gen.clone(),
         thumbnail_size: deps.app_state.thumbnail_size.clone(),
         sort_dropdown: deps.chrome.sort_dropdown,
         favourites_filter_btn: deps.chrome.favourites_filter_btn,
@@ -296,20 +296,13 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.current_folder,
         &deps.app_state.grid_loading,
     );
-    install_tags_filter_popover_handler(
-        &deps.chrome.tags_filter_btn,
-        &deps.app_state.active_tags,
-        &deps.app_state.tags_filter_dirty,
-        &deps.filter,
-        &deps.app_state.current_folder,
-        &deps.app_state.grid_loading,
-    );
+    install_tags_filter_popover_handler(&deps.chrome.tags_filter_btn);
     install_clear_button_handler(
         &deps.chrome.clear_btn,
         &deps.app_state.search_text,
         &deps.app_state.favorites_only,
-        &deps.app_state.active_tags,
-        &deps.app_state.tags_filter_dirty,
+        &deps.app_state.active_tag_filters,
+        &deps.app_state.tag_filter_debounce_gen,
         &deps.app_state.similar_paths,
         &deps.app_state.sort_key,
         &deps.filter,

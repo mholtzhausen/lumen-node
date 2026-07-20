@@ -26,7 +26,7 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
     let tags_cache_filter = deps.app_state.tags_cache.clone();
     let search_text_filter = deps.app_state.search_text.clone();
     let favorites_only_filter = deps.app_state.favorites_only.clone();
-    let active_tags_filter = deps.app_state.active_tags.clone();
+    let active_tags_filter = deps.app_state.active_tag_filters.clone();
     let similar_paths_filter = deps.app_state.similar_paths.clone();
     let filter = CustomFilter::new(move |obj| {
         let path_str = obj
@@ -55,12 +55,21 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
             if !active.is_empty() {
                 let tags = tags_cache_filter.borrow();
                 let image_tags = tags.get(&path_str);
-                let Some(image_tags) = image_tags else {
-                    return false;
-                };
-                for required in active.iter() {
-                    if !image_tags.iter().any(|t| t == required) {
-                        return false;
+                for (required_tag, mode) in active.iter() {
+                    let has_tag = image_tags
+                        .map(|t| t.iter().any(|x| x == required_tag))
+                        .unwrap_or(false);
+                    match mode {
+                        crate::db::TagFilterMode::Require => {
+                            if !has_tag {
+                                return false;
+                            }
+                        }
+                        crate::db::TagFilterMode::Exclude => {
+                            if has_tag {
+                                return false;
+                            }
+                        }
                     }
                 }
             }

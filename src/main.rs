@@ -442,8 +442,8 @@ fn build_ui(app: &adw::Application) {
         let refresh_empty_state = refresh_empty_state.clone();
         let tags_filter_list = chrome.tags_filter_list.clone();
         let tags_filter_btn = chrome.tags_filter_btn.clone();
-        let active_tags = app_state.active_tags.clone();
-        let tags_filter_dirty = app_state.tags_filter_dirty.clone();
+        let active_tag_filters = app_state.active_tag_filters.clone();
+        let tag_filter_debounce_gen = app_state.tag_filter_debounce_gen.clone();
         let filter = filter.clone();
         let current_folder = app_state.current_folder.clone();
         let grid_loading = app_state.grid_loading.clone();
@@ -451,8 +451,8 @@ fn build_ui(app: &adw::Application) {
             ui::controls::refresh_tag_filter_from_folder(
                 &tags_filter_list,
                 &tags_filter_btn,
-                &active_tags,
-                &tags_filter_dirty,
+                &active_tag_filters,
+                &tag_filter_debounce_gen,
                 &filter,
                 &current_folder,
                 &grid_loading,
@@ -666,7 +666,7 @@ fn build_ui(app: &adw::Application) {
         sort_key: sort_key.clone(),
         search_text: search_text.clone(),
         favorites_only: app_state.favorites_only.clone(),
-        active_tags: app_state.active_tags.clone(),
+        active_tags: app_state.active_tag_filters.clone(),
         recent_folders: recent_folders.clone(),
         outer_split_dirty: outer_split_dirty.clone(),
         inner_split_dirty: inner_split_dirty.clone(),

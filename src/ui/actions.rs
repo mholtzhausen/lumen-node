@@ -650,8 +650,8 @@ pub fn install_context_menu(
                 refresh_tag_filter_from_folder(
                     &tags_filter_list,
                     &tags_filter_btn,
-                    &app_state.active_tags,
-                    &app_state.tags_filter_dirty,
+                    &app_state.active_tag_filters,
+                    &app_state.tag_filter_debounce_gen,
                     &filter,
                     &app_state.current_folder,
                     &app_state.grid_loading,
@@ -713,8 +713,8 @@ pub fn install_context_menu(
                 refresh_tag_filter_from_folder(
                     &tags_filter_list_for_remove,
                     &tags_filter_btn_for_remove,
-                    &mutation_for_remove_tag.app_state.active_tags,
-                    &mutation_for_remove_tag.app_state.tags_filter_dirty,
+                    &mutation_for_remove_tag.app_state.active_tag_filters,
+                    &mutation_for_remove_tag.app_state.tag_filter_debounce_gen,
                     &filter_for_remove_tag,
                     &mutation_for_remove_tag.app_state.current_folder,
                     &mutation_for_remove_tag.app_state.grid_loading,

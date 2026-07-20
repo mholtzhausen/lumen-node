@@ -1,5 +1,5 @@
 use crate::core::app_state::AppState;
-use crate::db;
+use crate::db::{self, TagFilterMode};
 use crate::sort::sort_key_for_index;
 use crate::ui::grid::apply_thumbnail_size_change;
 use crate::ui::grid_loading::{
@@ -7,31 +7,85 @@ use crate::ui::grid_loading::{
 };
 use gtk4::prelude::*;
 use gtk4::gio::ListStore;
-use gtk4::{CustomFilter, CustomSorter, SingleSelection};
+use gtk4::{glib, CustomFilter, CustomSorter, Orientation, SingleSelection};
 use libadwaita as adw;
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     rc::Rc,
+    time::Duration,
 };
 
-/// Snapshot active tag filter as a sorted Vec for persistence / UiState.
-pub(crate) fn active_tags_vec(active_tags: &Rc<RefCell<HashSet<String>>>) -> Vec<String> {
-    let mut tags: Vec<String> = active_tags.borrow().iter().cloned().collect();
-    tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-    tags
-}
+const TAG_FILTER_DEBOUNCE_MS: u64 = 200;
 
 pub(crate) fn sync_tags_filter_button_style(
     tags_filter_btn: &gtk4::MenuButton,
-    active_tags: &Rc<RefCell<HashSet<String>>>,
+    active_tag_filters: &Rc<RefCell<HashMap<String, TagFilterMode>>>,
 ) {
-    if active_tags.borrow().is_empty() {
+    if active_tag_filters.borrow().is_empty() {
         tags_filter_btn.remove_css_class("tags-filter-active");
     } else {
         tags_filter_btn.add_css_class("tags-filter-active");
     }
+}
+
+fn tag_filter_mode_icon(mode: Option<TagFilterMode>) -> &'static str {
+    match mode {
+        Some(TagFilterMode::Require) => "object-select-symbolic",
+        Some(TagFilterMode::Exclude) => "window-close-symbolic",
+        None => "checkbox-symbolic",
+    }
+}
+
+fn tag_filter_mode_tooltip(mode: Option<TagFilterMode>) -> &'static str {
+    match mode {
+        Some(TagFilterMode::Require) => "Must have this tag (click to exclude)",
+        Some(TagFilterMode::Exclude) => "Must not have this tag (click to clear)",
+        None => "Ignore this tag (click to require)",
+    }
+}
+
+fn persist_tag_filters(
+    current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    filters: &HashMap<String, TagFilterMode>,
+) {
+    if let Some(folder) = current_folder.borrow().as_ref() {
+        let _ = db::set_ui_state_value(
+            folder.as_path(),
+            "active_tags",
+            &db::encode_active_tag_filters(filters),
+        );
+    }
+}
+
+/// Schedule a debounced tag-filter apply. Newer schedules cancel pending ones.
+fn schedule_tag_filter_apply(
+    debounce_gen: &Rc<Cell<u64>>,
+    active_tag_filters: &Rc<RefCell<HashMap<String, TagFilterMode>>>,
+    filter: &CustomFilter,
+    current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
+) {
+    let gen = debounce_gen.get().wrapping_add(1);
+    debounce_gen.set(gen);
+    let debounce_gen = debounce_gen.clone();
+    let active_tag_filters = active_tag_filters.clone();
+    let filter = filter.clone();
+    let current_folder = current_folder.clone();
+    let grid_loading = grid_loading.clone();
+    glib::timeout_add_local_once(Duration::from_millis(TAG_FILTER_DEBOUNCE_MS), move || {
+        if debounce_gen.get() != gen {
+            return;
+        }
+        persist_tag_filters(&current_folder, &active_tag_filters.borrow());
+        apply_filter_change(
+            &grid_loading,
+            &filter,
+            gtk4::FilterChange::Different,
+            "Updating filters…",
+        );
+    });
 }
 
 pub(crate) fn set_similar_filter_chrome(similar_filter_btn: &gtk4::Button, active: bool) {
@@ -60,14 +114,13 @@ pub(crate) fn clear_similar_filter(
     );
 }
 
-/// Rebuilds the tag-filter popover checkboxes from folder tags + active set.
-/// Checkbox toggles update `active_tags` + button style and mark dirty; grid/DB
-/// apply is deferred to [`install_tags_filter_popover_handler`] on popover close.
+/// Rebuilds the tag-filter popover with three-state polarity controls.
+/// Clicks update state immediately and schedule a 200ms debounced apply.
 pub(crate) fn rebuild_tag_filter_list(
     tags_filter_list: &gtk4::Box,
     tags_filter_btn: &gtk4::MenuButton,
-    active_tags: &Rc<RefCell<HashSet<String>>>,
-    tags_filter_dirty: &Rc<Cell<bool>>,
+    active_tag_filters: &Rc<RefCell<HashMap<String, TagFilterMode>>>,
+    tag_filter_debounce_gen: &Rc<Cell<u64>>,
     filter: &CustomFilter,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     known_tags: &[String],
@@ -77,48 +130,87 @@ pub(crate) fn rebuild_tag_filter_list(
         tags_filter_list.remove(&child);
     }
 
-    let heading = gtk4::Label::new(Some("Filter by tags (AND)"));
+    let heading = gtk4::Label::new(Some("Filter by tags"));
     heading.add_css_class("caption-heading");
     heading.set_halign(gtk4::Align::Start);
     tags_filter_list.append(&heading);
+
+    let legend = gtk4::Label::new(Some(
+        "✓ require · empty ignore · ✕ exclude",
+    ));
+    legend.add_css_class("caption");
+    legend.set_halign(gtk4::Align::Start);
+    tags_filter_list.append(&legend);
 
     if known_tags.is_empty() {
         let empty = gtk4::Label::new(Some("No tags in this folder yet."));
         empty.add_css_class("caption");
         empty.set_halign(gtk4::Align::Start);
         tags_filter_list.append(&empty);
-        sync_tags_filter_button_style(tags_filter_btn, active_tags);
+        sync_tags_filter_button_style(tags_filter_btn, active_tag_filters);
         return;
     }
 
-    let active_snapshot = active_tags.borrow().clone();
+    let active_snapshot = active_tag_filters.borrow().clone();
     for tag in known_tags {
-        let check = gtk4::CheckButton::with_label(tag);
-        check.set_active(active_snapshot.contains(tag));
+        let mode = active_snapshot.get(tag).copied();
+        let row = gtk4::Box::new(Orientation::Horizontal, 6);
+        row.set_halign(gtk4::Align::Fill);
+
+        let mode_btn = gtk4::Button::from_icon_name(tag_filter_mode_icon(mode));
+        mode_btn.add_css_class("flat");
+        mode_btn.set_tooltip_text(Some(tag_filter_mode_tooltip(mode)));
+        mode_btn.set_focus_on_click(false);
+
+        let label = gtk4::Label::new(Some(tag));
+        label.set_halign(gtk4::Align::Start);
+        label.set_hexpand(true);
+
         let tag_owned = tag.clone();
-        let active_tags_cb = active_tags.clone();
-        let dirty_cb = tags_filter_dirty.clone();
+        let filters_cb = active_tag_filters.clone();
+        let debounce_cb = tag_filter_debounce_gen.clone();
+        let filter_cb = filter.clone();
+        let folder_cb = current_folder.clone();
         let btn_cb = tags_filter_btn.clone();
-        check.connect_toggled(move |btn| {
-            {
-                let mut active = active_tags_cb.borrow_mut();
-                if btn.is_active() {
-                    active.insert(tag_owned.clone());
-                } else {
-                    active.remove(&tag_owned);
+        let grid_loading_cb = grid_loading.clone();
+        let mode_btn_ui = mode_btn.clone();
+        mode_btn.connect_clicked(move |_| {
+            let next = {
+                let mut filters = filters_cb.borrow_mut();
+                let current = filters.get(&tag_owned).copied();
+                let next = TagFilterMode::next_from(current);
+                match next {
+                    Some(mode) => {
+                        filters.insert(tag_owned.clone(), mode);
+                    }
+                    None => {
+                        filters.remove(&tag_owned);
+                    }
                 }
-            }
-            sync_tags_filter_button_style(&btn_cb, &active_tags_cb);
-            dirty_cb.set(true);
+                next
+            };
+            mode_btn_ui.set_icon_name(tag_filter_mode_icon(next));
+            mode_btn_ui.set_tooltip_text(Some(tag_filter_mode_tooltip(next)));
+            sync_tags_filter_button_style(&btn_cb, &filters_cb);
+            schedule_tag_filter_apply(
+                &debounce_cb,
+                &filters_cb,
+                &filter_cb,
+                &folder_cb,
+                &grid_loading_cb,
+            );
         });
-        tags_filter_list.append(&check);
+
+        row.append(&mode_btn);
+        row.append(&label);
+        tags_filter_list.append(&row);
     }
 
     if !active_snapshot.is_empty() {
         let clear = gtk4::Button::with_label("Clear tag filter");
         clear.add_css_class("flat");
-        let active_tags_clear = active_tags.clone();
-        let dirty_clear = tags_filter_dirty.clone();
+        let filters_clear = active_tag_filters.clone();
+        let debounce_clear = tag_filter_debounce_gen.clone();
         let filter_clear = filter.clone();
         let folder_clear = current_folder.clone();
         let btn_clear = tags_filter_btn.clone();
@@ -126,16 +218,15 @@ pub(crate) fn rebuild_tag_filter_list(
         let known_clear: Vec<String> = known_tags.to_vec();
         let grid_loading_clear = grid_loading.clone();
         clear.connect_clicked(move |_| {
-            active_tags_clear.borrow_mut().clear();
-            if let Some(folder) = folder_clear.borrow().as_ref() {
-                let _ = db::set_ui_state_value(folder.as_path(), "active_tags", "[]");
-            }
-            dirty_clear.set(false);
+            // Cancel any pending debounced apply.
+            debounce_clear.set(debounce_clear.get().wrapping_add(1));
+            filters_clear.borrow_mut().clear();
+            persist_tag_filters(&folder_clear, &filters_clear.borrow());
             rebuild_tag_filter_list(
                 &list_clear,
                 &btn_clear,
-                &active_tags_clear,
-                &dirty_clear,
+                &filters_clear,
+                &debounce_clear,
                 &filter_clear,
                 &folder_clear,
                 &known_clear,
@@ -151,15 +242,15 @@ pub(crate) fn rebuild_tag_filter_list(
         tags_filter_list.append(&clear);
     }
 
-    sync_tags_filter_button_style(tags_filter_btn, active_tags);
+    sync_tags_filter_button_style(tags_filter_btn, active_tag_filters);
 }
 
 /// Refresh tag filter UI from the current folder DB (known tags).
 pub(crate) fn refresh_tag_filter_from_folder(
     tags_filter_list: &gtk4::Box,
     tags_filter_btn: &gtk4::MenuButton,
-    active_tags: &Rc<RefCell<HashSet<String>>>,
-    tags_filter_dirty: &Rc<Cell<bool>>,
+    active_tag_filters: &Rc<RefCell<HashMap<String, TagFilterMode>>>,
+    tag_filter_debounce_gen: &Rc<Cell<u64>>,
     filter: &CustomFilter,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
@@ -173,8 +264,8 @@ pub(crate) fn refresh_tag_filter_from_folder(
     rebuild_tag_filter_list(
         tags_filter_list,
         tags_filter_btn,
-        active_tags,
-        tags_filter_dirty,
+        active_tag_filters,
+        tag_filter_debounce_gen,
         filter,
         current_folder,
         &known,
@@ -182,57 +273,9 @@ pub(crate) fn refresh_tag_filter_from_folder(
     );
 }
 
-/// Once-only: on tags popover close, persist + refilter if checkboxes marked dirty.
-/// Snapshots committed tags on open so close can emit a directional [`FilterChange`].
-pub(crate) fn install_tags_filter_popover_handler(
-    tags_filter_btn: &gtk4::MenuButton,
-    active_tags: &Rc<RefCell<HashSet<String>>>,
-    tags_filter_dirty: &Rc<Cell<bool>>,
-    filter: &CustomFilter,
-    current_folder: &Rc<RefCell<Option<PathBuf>>>,
-    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
-) {
-    let Some(popover) = tags_filter_btn.popover() else {
-        return;
-    };
-    let active_tags = active_tags.clone();
-    let dirty = tags_filter_dirty.clone();
-    let filter = filter.clone();
-    let current_folder = current_folder.clone();
-    let grid_loading = grid_loading.clone();
-    let committed_on_open = Rc::new(RefCell::new(HashSet::<String>::new()));
-
-    {
-        let active_tags = active_tags.clone();
-        let committed_on_open = committed_on_open.clone();
-        popover.connect_show(move |_| {
-            *committed_on_open.borrow_mut() = active_tags.borrow().clone();
-        });
-    }
-
-    popover.connect_closed(move |_| {
-        if !dirty.get() {
-            return;
-        }
-        if let Some(folder) = current_folder.borrow().as_ref() {
-            let _ = db::set_ui_state_value(
-                folder.as_path(),
-                "active_tags",
-                &db::encode_active_tags(&active_tags_vec(&active_tags)),
-            );
-        }
-        let before = committed_on_open.borrow();
-        let after = active_tags.borrow();
-        let added = after.difference(&before).next().is_some();
-        let removed = before.difference(&after).next().is_some();
-        let change = match (added, removed) {
-            (true, false) => gtk4::FilterChange::MoreStrict,
-            (false, true) => gtk4::FilterChange::LessStrict,
-            _ => gtk4::FilterChange::Different,
-        };
-        apply_filter_change(&grid_loading, &filter, change, "Updating filters…");
-        dirty.set(false);
-    });
+/// Retained for wiring symmetry; live apply is scheduled from polarity clicks.
+pub(crate) fn install_tags_filter_popover_handler(_tags_filter_btn: &gtk4::MenuButton) {
+    // No close-time apply — tag filter updates are debounced while the popover is open.
 }
 
 pub(crate) fn install_sort_dropdown_handler(
@@ -307,8 +350,8 @@ pub(crate) fn install_search_entry_handler(
 pub(crate) fn apply_clear_filters(
     search_text: &Rc<RefCell<String>>,
     favorites_only: &Rc<Cell<bool>>,
-    active_tags: &Rc<RefCell<HashSet<String>>>,
-    tags_filter_dirty: &Rc<Cell<bool>>,
+    active_tag_filters: &Rc<RefCell<HashMap<String, TagFilterMode>>>,
+    tag_filter_debounce_gen: &Rc<Cell<u64>>,
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     sort_key: &Rc<RefCell<String>>,
     filter: &CustomFilter,
@@ -325,8 +368,8 @@ pub(crate) fn apply_clear_filters(
 ) {
     *search_text.borrow_mut() = String::new();
     favorites_only.set(false);
-    active_tags.borrow_mut().clear();
-    tags_filter_dirty.set(false);
+    tag_filter_debounce_gen.set(tag_filter_debounce_gen.get().wrapping_add(1));
+    active_tag_filters.borrow_mut().clear();
     *similar_paths.borrow_mut() = None;
     set_similar_filter_chrome(similar_filter_btn, false);
     favourites_filter_btn.remove_css_class("favorites-filter-active");
@@ -339,7 +382,7 @@ pub(crate) fn apply_clear_filters(
                 sort_key: sort_key.borrow().clone(),
                 search_text: search_text.borrow().clone(),
                 favorites_only: favorites_only.get(),
-                active_tags: Vec::new(),
+                active_tag_filters: HashMap::new(),
                 thumbnail_size: *thumbnail_size.borrow(),
             },
         );
@@ -347,8 +390,8 @@ pub(crate) fn apply_clear_filters(
     refresh_tag_filter_from_folder(
         tags_filter_list,
         tags_filter_btn,
-        active_tags,
-        tags_filter_dirty,
+        active_tag_filters,
+        tag_filter_debounce_gen,
         filter,
         current_folder,
         grid_loading,
@@ -362,24 +405,22 @@ pub(crate) fn apply_clear_filters(
 }
 
 pub(crate) fn deactivate_tag_filter(
-    active_tags: &Rc<RefCell<HashSet<String>>>,
-    tags_filter_dirty: &Rc<Cell<bool>>,
+    active_tag_filters: &Rc<RefCell<HashMap<String, TagFilterMode>>>,
+    tag_filter_debounce_gen: &Rc<Cell<u64>>,
     filter: &CustomFilter,
     tags_filter_btn: &gtk4::MenuButton,
     tags_filter_list: &gtk4::Box,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
-    active_tags.borrow_mut().clear();
-    tags_filter_dirty.set(false);
-    if let Some(folder) = current_folder.borrow().as_ref() {
-        let _ = db::set_ui_state_value(folder.as_path(), "active_tags", "[]");
-    }
+    tag_filter_debounce_gen.set(tag_filter_debounce_gen.get().wrapping_add(1));
+    active_tag_filters.borrow_mut().clear();
+    persist_tag_filters(current_folder, &active_tag_filters.borrow());
     refresh_tag_filter_from_folder(
         tags_filter_list,
         tags_filter_btn,
-        active_tags,
-        tags_filter_dirty,
+        active_tag_filters,
+        tag_filter_debounce_gen,
         filter,
         current_folder,
         grid_loading,
@@ -417,8 +458,8 @@ pub(crate) fn install_clear_button_handler(
     clear_btn: &gtk4::Button,
     search_text: &Rc<RefCell<String>>,
     favorites_only: &Rc<Cell<bool>>,
-    active_tags: &Rc<RefCell<HashSet<String>>>,
-    tags_filter_dirty: &Rc<Cell<bool>>,
+    active_tag_filters: &Rc<RefCell<HashMap<String, TagFilterMode>>>,
+    tag_filter_debounce_gen: &Rc<Cell<u64>>,
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     sort_key: &Rc<RefCell<String>>,
     filter: &CustomFilter,
@@ -435,8 +476,8 @@ pub(crate) fn install_clear_button_handler(
 ) {
     let search_text_clear = search_text.clone();
     let favorites_only_clear = favorites_only.clone();
-    let active_tags_clear = active_tags.clone();
-    let tags_filter_dirty_clear = tags_filter_dirty.clone();
+    let active_tag_filters_clear = active_tag_filters.clone();
+    let tag_filter_debounce_gen_clear = tag_filter_debounce_gen.clone();
     let similar_paths_clear = similar_paths.clone();
     let sort_key_clear = sort_key.clone();
     let filter_clear = filter.clone();
@@ -454,8 +495,8 @@ pub(crate) fn install_clear_button_handler(
         apply_clear_filters(
             &search_text_clear,
             &favorites_only_clear,
-            &active_tags_clear,
-            &tags_filter_dirty_clear,
+            &active_tag_filters_clear,
+            &tag_filter_debounce_gen_clear,
             &similar_paths_clear,
             &sort_key_clear,
             &filter_clear,

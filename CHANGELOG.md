@@ -1,8 +1,10 @@
 ## Unreleased
 ### Features and Improvements
+- Grid loading spinner is opaque and full-bleed so thumbnails stay hidden while busy.
+- Tag filter applies live while the popover is open (200ms debounce; newer clicks cancel pending applies).
+- Tag filter is three-state per tag: require (✓), ignore (empty), or exclude (✕); polarity persists in the folder DB.
 - Show a centered spinner overlay on the thumbnail grid while a folder scan has no items yet and during user-initiated filter/search updates.
 - Use directional `FilterChange` hints (MoreStrict / LessStrict) for favourites, search, and tag-filter toggles so GTK can avoid full refilters.
-- Tag filter checkboxes apply once when the popover closes (avoids per-toggle grid rebuilds).
 - Grid thumbnails show a right-hand chrome pane (favourite + tags) on hover/selection; tags open a filterable multi-select checklist with **Add `foo`** for new tags.
 - Vendored `lumen-tag-symbolic` price-tag icon for tag UI (works without Adwaita `tag-symbolic`).
 - Preferences → Appearance slider for thumbnail chrome button size (`thumbnail_chrome_scale`, default 60%), updates live.

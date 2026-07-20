@@ -18,13 +18,20 @@ pub(crate) struct GridLoadingOverlay {
 }
 
 pub(crate) fn create_grid_loading_overlay() -> GridLoadingOverlay {
-    let root = gtk4::Box::new(Orientation::Vertical, 12);
-    root.set_halign(Align::Center);
-    root.set_valign(Align::Center);
+    // Full-bleed root so CSS background covers the grid underneath.
+    let root = gtk4::Box::new(Orientation::Vertical, 0);
+    root.set_halign(Align::Fill);
+    root.set_valign(Align::Fill);
     root.set_hexpand(true);
     root.set_vexpand(true);
     root.set_visible(false);
     root.add_css_class("grid-loading-overlay");
+
+    let content = gtk4::Box::new(Orientation::Vertical, 12);
+    content.set_halign(Align::Center);
+    content.set_valign(Align::Center);
+    content.set_hexpand(true);
+    content.set_vexpand(true);
 
     let spinner = Spinner::new();
     spinner.set_halign(Align::Center);
@@ -34,8 +41,9 @@ pub(crate) fn create_grid_loading_overlay() -> GridLoadingOverlay {
     label.add_css_class("caption");
     label.set_halign(Align::Center);
 
-    root.append(&spinner);
-    root.append(&label);
+    content.append(&spinner);
+    content.append(&label);
+    root.append(&content);
 
     GridLoadingOverlay {
         root,

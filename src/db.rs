@@ -33,13 +33,48 @@ pub enum IndexOutcome {
     Generated,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagFilterMode {
+    /// Image must have this tag.
+    Require,
+    /// Image must not have this tag.
+    Exclude,
+}
+
+impl TagFilterMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Require => "require",
+            Self::Exclude => "exclude",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "require" | "include" | "+" => Some(Self::Require),
+            "exclude" | "-" => Some(Self::Exclude),
+            _ => None,
+        }
+    }
+
+    /// Cycle Neutral→Require→Exclude→Neutral (caller removes on Neutral).
+    pub fn next_from(current: Option<Self>) -> Option<Self> {
+        match current {
+            None => Some(Self::Require),
+            Some(Self::Require) => Some(Self::Exclude),
+            Some(Self::Exclude) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UiState {
     pub sort_key: String,
     pub search_text: String,
     pub favorites_only: bool,
-    /// Active tag filter (AND). Persisted as JSON array under `active_tags`.
-    pub active_tags: Vec<String>,
+    /// Active tag filters (require / exclude). Neutral tags are omitted.
+    /// Persisted as JSON object under `active_tags`; legacy arrays decode as all-require.
+    pub active_tag_filters: std::collections::HashMap<String, TagFilterMode>,
     pub thumbnail_size: i32,
 }
 
@@ -49,7 +84,7 @@ impl Default for UiState {
             sort_key: "name_asc".to_string(),
             search_text: String::new(),
             favorites_only: false,
-            active_tags: Vec::new(),
+            active_tag_filters: std::collections::HashMap::new(),
             thumbnail_size: crate::thumbnails::THUMB_NORMAL_SIZE,
         }
     }
@@ -71,27 +106,76 @@ pub fn normalize_tag(tag: &str) -> Option<String> {
     }
 }
 
-/// Serializes active tags for `ui_state` (JSON array).
-pub fn encode_active_tags(tags: &[String]) -> String {
-    serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string())
+/// Serializes tag filters for `ui_state` (JSON object `{"tag":"require"|"exclude"}`).
+pub fn encode_active_tag_filters(
+    filters: &std::collections::HashMap<String, TagFilterMode>,
+) -> String {
+    let mut map = serde_json::Map::new();
+    let mut keys: Vec<&String> = filters.keys().collect();
+    keys.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    for key in keys {
+        if let Some(mode) = filters.get(key) {
+            map.insert(
+                (*key).clone(),
+                serde_json::Value::String(mode.as_str().to_string()),
+            );
+        }
+    }
+    serde_json::Value::Object(map).to_string()
 }
 
-/// Parses `active_tags` from `ui_state` (JSON array, or comma-separated fallback).
-pub fn decode_active_tags(value: &str) -> Vec<String> {
+/// Parses `active_tags` from `ui_state`.
+/// Supports JSON object (new), JSON array / comma-separated (legacy → all require).
+pub fn decode_active_tag_filters(
+    value: &str,
+) -> std::collections::HashMap<String, TagFilterMode> {
     let trimmed = value.trim();
+    let mut out = std::collections::HashMap::new();
     if trimmed.is_empty() {
-        return Vec::new();
+        return out;
     }
-    if let Ok(parsed) = serde_json::from_str::<Vec<String>>(trimmed) {
-        return parsed
+    if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        for (tag, mode_val) in map {
+            let Some(tag) = normalize_tag(&tag) else {
+                continue;
+            };
+            let mode = match mode_val.as_str().and_then(TagFilterMode::parse) {
+                Some(m) => m,
+                None => continue,
+            };
+            out.insert(tag, mode);
+        }
+        return out;
+    }
+    // Legacy: JSON array or comma-separated → all Require.
+    let tags = if let Ok(parsed) = serde_json::from_str::<Vec<String>>(trimmed) {
+        parsed
             .into_iter()
             .filter_map(|t| normalize_tag(&t))
-            .collect();
+            .collect::<Vec<_>>()
+    } else {
+        trimmed
+            .split(',')
+            .filter_map(normalize_tag)
+            .collect::<Vec<_>>()
+    };
+    for tag in tags {
+        out.insert(tag, TagFilterMode::Require);
     }
-    trimmed
-        .split(',')
-        .filter_map(normalize_tag)
-        .collect()
+    out
+}
+
+/// Legacy helper returning require-only tag names (tests / migration helpers).
+#[cfg(test)]
+pub fn decode_active_tags(value: &str) -> Vec<String> {
+    let filters = decode_active_tag_filters(value);
+    let mut tags: Vec<String> = filters
+        .into_iter()
+        .filter(|(_, mode)| *mode == TagFilterMode::Require)
+        .map(|(tag, _)| tag)
+        .collect();
+    tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    tags
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +285,7 @@ pub fn load_ui_state(folder: &Path) -> Option<UiState> {
                 state.favorites_only = normalized == "1" || normalized == "true";
             }
             UI_STATE_ACTIVE_TAGS => {
-                state.active_tags = decode_active_tags(&value);
+                state.active_tag_filters = decode_active_tag_filters(&value);
             }
             UI_STATE_THUMBNAIL_SIZE => {
                 if let Ok(parsed) = value.trim().parse::<i32>() {
@@ -245,7 +329,7 @@ pub fn save_ui_state(folder: &Path, state: &UiState) -> rusqlite::Result<()> {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![
             UI_STATE_ACTIVE_TAGS,
-            encode_active_tags(&state.active_tags)
+            encode_active_tag_filters(&state.active_tag_filters)
         ],
     )?;
     tx.execute(
@@ -1021,11 +1105,14 @@ mod tests {
     #[test]
     fn test_ui_state_roundtrip() {
         let dir = temp_dir();
+        let mut filters = std::collections::HashMap::new();
+        filters.insert("keep".to_string(), TagFilterMode::Require);
+        filters.insert("archive".to_string(), TagFilterMode::Exclude);
         let state = UiState {
             sort_key: "date_desc".to_string(),
             search_text: "sunset".to_string(),
             favorites_only: true,
-            active_tags: vec!["keep".to_string(), "archive".to_string()],
+            active_tag_filters: filters,
             thumbnail_size: 256,
         };
         save_ui_state(&dir, &state).unwrap();
@@ -1035,22 +1122,34 @@ mod tests {
         assert_eq!(loaded.search_text, "sunset");
         assert!(loaded.favorites_only);
         assert_eq!(
-            loaded.active_tags,
-            vec!["keep".to_string(), "archive".to_string()]
+            loaded.active_tag_filters.get("keep"),
+            Some(&TagFilterMode::Require)
+        );
+        assert_eq!(
+            loaded.active_tag_filters.get("archive"),
+            Some(&TagFilterMode::Exclude)
         );
         assert_eq!(loaded.thumbnail_size, 256);
     }
 
     #[test]
-    fn test_decode_active_tags_formats() {
+    fn test_decode_active_tag_filters_formats() {
+        let legacy = decode_active_tag_filters(r#"["a","b"]"#);
+        assert_eq!(legacy.get("a"), Some(&TagFilterMode::Require));
+        assert_eq!(legacy.get("b"), Some(&TagFilterMode::Require));
+
+        let csv = decode_active_tag_filters("keep, archive");
+        assert_eq!(csv.get("keep"), Some(&TagFilterMode::Require));
+        assert_eq!(csv.get("archive"), Some(&TagFilterMode::Require));
+
+        let obj = decode_active_tag_filters(r#"{"foo":"require","bar":"exclude"}"#);
+        assert_eq!(obj.get("foo"), Some(&TagFilterMode::Require));
+        assert_eq!(obj.get("bar"), Some(&TagFilterMode::Exclude));
+
+        assert!(decode_active_tag_filters("").is_empty());
         assert_eq!(
             decode_active_tags(r#"["a","b"]"#),
             vec!["a".to_string(), "b".to_string()]
         );
-        assert_eq!(
-            decode_active_tags("keep, archive"),
-            vec!["keep".to_string(), "archive".to_string()]
-        );
-        assert!(decode_active_tags("").is_empty());
     }
 }

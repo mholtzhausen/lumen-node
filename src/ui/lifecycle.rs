@@ -46,7 +46,8 @@ pub(crate) struct LifecycleDeps {
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
     pub(crate) favorites_only: Rc<Cell<bool>>,
-    pub(crate) active_tags: Rc<RefCell<std::collections::HashSet<String>>>,
+    pub(crate) active_tags:
+        Rc<RefCell<std::collections::HashMap<String, crate::db::TagFilterMode>>>,
     pub(crate) recent_folders: Rc<RefCell<Vec<PathBuf>>>,
     pub(crate) outer_split_dirty: Rc<Cell<bool>>,
     pub(crate) inner_split_dirty: Rc<Cell<bool>>,

@@ -158,8 +158,8 @@ struct BrowseFolderCtx {
     sort_key: Rc<RefCell<String>>,
     search_text: Rc<RefCell<String>>,
     favorites_only: Rc<Cell<bool>>,
-    active_tags: Rc<RefCell<std::collections::HashSet<String>>>,
-    tags_filter_dirty: Rc<Cell<bool>>,
+    active_tag_filters: Rc<RefCell<std::collections::HashMap<String, crate::db::TagFilterMode>>>,
+    tag_filter_debounce_gen: Rc<Cell<u64>>,
     thumbnail_size: Rc<RefCell<i32>>,
     sort_dropdown: gtk4::DropDown,
     favourites_filter_btn: gtk4::ToggleButton,
@@ -183,8 +183,8 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
         *ctx.sort_key.borrow_mut() = saved_ui_state.sort_key;
         *ctx.search_text.borrow_mut() = saved_ui_state.search_text.clone();
         ctx.favorites_only.set(saved_ui_state.favorites_only);
-        *ctx.active_tags.borrow_mut() = saved_ui_state.active_tags.iter().cloned().collect();
-        ctx.tags_filter_dirty.set(false);
+        *ctx.active_tag_filters.borrow_mut() = saved_ui_state.active_tag_filters.clone();
+        ctx.tag_filter_debounce_gen.set(0);
         *ctx.thumbnail_size.borrow_mut() = normalize_thumbnail_size(saved_ui_state.thumbnail_size);
 
         if ctx.sort_dropdown.selected() != selected_sort {
@@ -204,13 +204,13 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
             btn.set_active(thumbnail_size_options()[i] == *ctx.thumbnail_size.borrow());
         }
     } else {
-        ctx.active_tags.borrow_mut().clear();
-        ctx.tags_filter_dirty.set(false);
+        ctx.active_tag_filters.borrow_mut().clear();
+        ctx.tag_filter_debounce_gen.set(0);
         let seeded_state = db::UiState {
             sort_key: ctx.sort_key.borrow().clone(),
             search_text: ctx.search_text.borrow().clone(),
             favorites_only: ctx.favorites_only.get(),
-            active_tags: Vec::new(),
+            active_tag_filters: std::collections::HashMap::new(),
             thumbnail_size: *ctx.thumbnail_size.borrow(),
         };
         let _ = db::save_ui_state(path, &seeded_state);
@@ -232,8 +232,8 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
     crate::ui::controls::refresh_tag_filter_from_folder(
         &ctx.tags_filter_list,
         &ctx.tags_filter_btn,
-        &ctx.active_tags,
-        &ctx.tags_filter_dirty,
+        &ctx.active_tag_filters,
+        &ctx.tag_filter_debounce_gen,
         &ctx.filter,
         &ctx.current_folder,
         &ctx.grid_loading,
@@ -250,8 +250,8 @@ pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
         sort_key: deps.app_state.sort_key.clone(),
         search_text: deps.app_state.search_text.clone(),
         favorites_only: deps.app_state.favorites_only.clone(),
-        active_tags: deps.app_state.active_tags.clone(),
-        tags_filter_dirty: deps.app_state.tags_filter_dirty.clone(),
+        active_tag_filters: deps.app_state.active_tag_filters.clone(),
+        tag_filter_debounce_gen: deps.app_state.tag_filter_debounce_gen.clone(),
         thumbnail_size: deps.app_state.thumbnail_size.clone(),
         sort_dropdown: deps.chrome.sort_dropdown.clone(),
         favourites_filter_btn: deps.chrome.favourites_filter_btn.clone(),

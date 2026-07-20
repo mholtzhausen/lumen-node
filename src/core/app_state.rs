@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::db::TagFilterMode;
 use crate::similarity::PromptIndexEntry;
 use crate::sort_flags::SortFields;
 use crate::thumbnail_sizing::normalize_thumbnail_size;
@@ -35,10 +36,10 @@ pub(crate) struct AppState {
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
     pub(crate) favorites_only: Rc<Cell<bool>>,
-    /// Active tag filter (AND): image must have every selected tag.
-    pub(crate) active_tags: Rc<RefCell<HashSet<String>>>,
-    /// Tag-filter popover has uncommitted checkbox edits (apply on popover close).
-    pub(crate) tags_filter_dirty: Rc<Cell<bool>>,
+    /// Active tag filters: Require / Exclude (neutral tags omitted).
+    pub(crate) active_tag_filters: Rc<RefCell<HashMap<String, TagFilterMode>>>,
+    /// Debounce generation for live tag-filter applies (pending cancel).
+    pub(crate) tag_filter_debounce_gen: Rc<Cell<u64>>,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<Image>>>>,
     pub(crate) realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
@@ -96,8 +97,9 @@ pub(crate) fn build_app_state(
         app_config.search_text.clone().unwrap_or_default(),
     ));
     let favorites_only: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-    let active_tags: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::new()));
-    let tags_filter_dirty: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let active_tag_filters: Rc<RefCell<HashMap<String, TagFilterMode>>> =
+        Rc::new(RefCell::new(HashMap::new()));
+    let tag_filter_debounce_gen: Rc<Cell<u64>> = Rc::new(Cell::new(0));
     let initial_thumbnail_size =
         normalize_thumbnail_size(app_config.thumbnail_size.unwrap_or(default_thumbnail_size));
     let thumbnail_size: Rc<RefCell<i32>> = Rc::new(RefCell::new(initial_thumbnail_size));
@@ -125,8 +127,8 @@ pub(crate) fn build_app_state(
         sort_key,
         search_text,
         favorites_only,
-        active_tags,
-        tags_filter_dirty,
+        active_tag_filters,
+        tag_filter_debounce_gen,
         thumbnail_size,
         realized_thumb_images: Rc::new(RefCell::new(Vec::new())),
         realized_cell_boxes: Rc::new(RefCell::new(Vec::new())),

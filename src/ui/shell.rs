@@ -470,6 +470,9 @@ pub(crate) fn create_window_with_defaults(
             border-radius: 8px;
             padding: 6px 12px;
         }
+        .grid-loading-overlay {
+            background-color: @window_bg_color;
+        }
         .thumbnail-card {
             background-color: alpha(@theme_fg_color, 0.04);
             border-radius: 8px;

@@ -120,8 +120,8 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                 }
                 EmptyAction::ClearTagFilter => {
                     deactivate_tag_filter(
-                        &app_state.active_tags,
-                        &app_state.tags_filter_dirty,
+                        &app_state.active_tag_filters,
+                        &app_state.tag_filter_debounce_gen,
                         &filter,
                         &tags_filter_btn,
                         &tags_filter_list,
@@ -133,8 +133,8 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                     apply_clear_filters(
                         &app_state.search_text,
                         &app_state.favorites_only,
-                        &app_state.active_tags,
-                        &app_state.tags_filter_dirty,
+                        &app_state.active_tag_filters,
+                        &app_state.tag_filter_debounce_gen,
                         &app_state.similar_paths,
                         &app_state.sort_key,
                         &filter,
@@ -201,10 +201,10 @@ fn compute_variant(app_state: &AppState, selection_model: &SingleSelection) -> E
     if visible > 0 {
         return EmptyStateVariant::Hidden;
     }
-    if app_state.favorites_only.get() && app_state.active_tags.borrow().is_empty() {
+    if app_state.favorites_only.get() && app_state.active_tag_filters.borrow().is_empty() {
         return EmptyStateVariant::NoFavourites;
     }
-    if !app_state.active_tags.borrow().is_empty()
+    if !app_state.active_tag_filters.borrow().is_empty()
         && app_state.search_text.borrow().is_empty()
         && !app_state.favorites_only.get()
     {
