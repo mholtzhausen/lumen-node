@@ -654,6 +654,7 @@ pub fn install_context_menu(
                     &app_state.tags_filter_dirty,
                     &filter,
                     &app_state.current_folder,
+                    &app_state.grid_loading,
                 );
                 if let Some(sync) = sync_slot.borrow().as_ref() {
                     sync();
@@ -716,6 +717,7 @@ pub fn install_context_menu(
                     &mutation_for_remove_tag.app_state.tags_filter_dirty,
                     &filter_for_remove_tag,
                     &mutation_for_remove_tag.app_state.current_folder,
+                    &mutation_for_remove_tag.app_state.grid_loading,
                 );
                 if let Some(sync) = sync_slot_for_remove.borrow().as_ref() {
                     sync();
@@ -825,6 +827,7 @@ pub fn install_context_menu(
         let filter_for_similar = filter.clone();
         let toast_for_similar = toast_overlay.clone();
         let similar_filter_btn = similar_filter_btn.clone();
+        let grid_loading_for_similar = mutation_ctx.app_state.grid_loading.clone();
         show_similar_action.connect_activate(move |_, _| {
             let Some(path) = selected_image_path(&selection_for_similar) else {
                 return;
@@ -841,7 +844,12 @@ pub fn install_context_menu(
             let count = matches.len();
             *similar_paths.borrow_mut() = Some(matches);
             crate::ui::controls::set_similar_filter_chrome(&similar_filter_btn, true);
-            filter_for_similar.changed(gtk4::FilterChange::Different);
+            crate::ui::grid_loading::apply_filter_change(
+                &grid_loading_for_similar,
+                &filter_for_similar,
+                gtk4::FilterChange::Different,
+                "Updating filters…",
+            );
 
             let toast = adw::Toast::new(&format!(
                 "Showing {} similar image{}",
@@ -853,11 +861,13 @@ pub fn install_context_menu(
             let similar_paths_clear = similar_paths.clone();
             let filter_clear = filter_for_similar.clone();
             let similar_btn_clear = similar_filter_btn.clone();
+            let grid_loading_clear = grid_loading_for_similar.clone();
             toast.connect_button_clicked(move |_| {
                 crate::ui::controls::clear_similar_filter(
                     &similar_paths_clear,
                     &filter_clear,
                     &similar_btn_clear,
+                    &grid_loading_clear,
                 );
             });
             toast_for_similar.add_toast(toast);

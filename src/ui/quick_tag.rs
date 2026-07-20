@@ -251,6 +251,7 @@ fn notify_tags_changed(
         &app_state.tags_filter_dirty,
         filter,
         &app_state.current_folder,
+        &app_state.grid_loading,
     );
 }
 

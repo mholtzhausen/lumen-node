@@ -446,6 +446,7 @@ fn build_ui(app: &adw::Application) {
         let tags_filter_dirty = app_state.tags_filter_dirty.clone();
         let filter = filter.clone();
         let current_folder = app_state.current_folder.clone();
+        let grid_loading = app_state.grid_loading.clone();
         Rc::new(move || {
             ui::controls::refresh_tag_filter_from_folder(
                 &tags_filter_list,
@@ -454,6 +455,7 @@ fn build_ui(app: &adw::Application) {
                 &tags_filter_dirty,
                 &filter,
                 &current_folder,
+                &grid_loading,
             );
             refresh_empty_state();
         })

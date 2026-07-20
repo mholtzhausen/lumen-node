@@ -4,6 +4,7 @@ pub mod chrome;
 pub mod controls;
 pub mod empty_state;
 pub mod grid;
+pub mod grid_loading;
 pub mod keyboard;
 pub mod layout;
 pub mod left_chrome_wiring;

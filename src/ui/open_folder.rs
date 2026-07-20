@@ -38,6 +38,7 @@ pub(crate) struct OpenFolderActionDeps {
     pub(crate) size_buttons: Rc<Vec<gtk4::ToggleButton>>,
     pub(crate) progress_state: Rc<RefCell<ScanProgressState>>,
     pub(crate) recent_folders_limit: usize,
+    pub(crate) grid_loading: Rc<RefCell<Option<crate::ui::grid_loading::GridLoadingOverlay>>>,
 }
 
 pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(PathBuf, bool)> {
@@ -100,6 +101,7 @@ pub(crate) fn build_open_folder_action(deps: OpenFolderActionDeps) -> Rc<dyn Fn(
             &deps.tags_filter_dirty,
             &deps.filter,
             &deps.current_folder,
+            &deps.grid_loading,
         );
         reset_tree_root(&deps.tree_root, path.as_path());
         (deps.start_scan_for_folder)(path.clone());

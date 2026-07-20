@@ -1,5 +1,6 @@
 ## Unreleased
 ### Features and Improvements
+- Show a centered spinner overlay on the thumbnail grid while a folder scan has no items yet and during user-initiated filter/search updates.
 - Use directional `FilterChange` hints (MoreStrict / LessStrict) for favourites, search, and tag-filter toggles so GTK can avoid full refilters.
 - Tag filter checkboxes apply once when the popover closes (avoids per-toggle grid rebuilds).
 - Grid thumbnails show a right-hand chrome pane (favourite + tags) on hover/selection; tags open a filterable multi-select checklist with **Add `foo`** for new tags.

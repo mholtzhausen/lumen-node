@@ -6,6 +6,7 @@ use crate::ui::grid::{
     refresh_realized_grid_favourite_icons, refresh_realized_grid_thumbnails,
     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE,
 };
+use crate::ui::grid_loading::hide_grid_loading;
 use crate::{
     sync_progress_widgets, SCAN_BUFFER_DEPTH, SCAN_DRAIN_BATCH_SIZE, SCAN_DRAIN_SCHEDULED,
 };
@@ -228,6 +229,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
                 // Batch-insert enumerated paths via splice (single model notification).
                 if !new_paths.is_empty() {
                     list_store_recv.splice(list_store_recv.n_items(), 0, &new_paths);
+                    hide_grid_loading(&app_state_recv.grid_loading);
                 }
 
                 if unlock_thumbnail_dispatch {
@@ -237,6 +239,7 @@ pub(crate) fn install_scan_runtime(deps: ScanRuntimeDeps) {
 
                 if scan_complete {
                     DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE.store(0, AtomicOrdering::Relaxed);
+                    hide_grid_loading(&app_state_recv.grid_loading);
                     scan_in_progress_recv.set(false);
                     if let Some(on_complete) = on_scan_complete_recv.as_ref() {
                         on_complete();

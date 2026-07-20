@@ -247,6 +247,7 @@ pub(crate) fn install_open_folder_wiring(deps: OpenFolderWiringDeps) -> Rc<dyn F
         size_buttons: deps.chrome.size_buttons,
         progress_state: deps.app_state.progress_state.clone(),
         recent_folders_limit: deps.recent_folders_limit,
+        grid_loading: deps.app_state.grid_loading.clone(),
     });
 
     install_history_popover_handler(
@@ -293,6 +294,7 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.search_text,
         &deps.filter,
         &deps.app_state.current_folder,
+        &deps.app_state.grid_loading,
     );
     install_tags_filter_popover_handler(
         &deps.chrome.tags_filter_btn,
@@ -300,6 +302,7 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.tags_filter_dirty,
         &deps.filter,
         &deps.app_state.current_folder,
+        &deps.app_state.grid_loading,
     );
     install_clear_button_handler(
         &deps.chrome.clear_btn,
@@ -319,11 +322,13 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.thumbnail_size,
         &deps.app_state.current_folder,
         &deps.chrome.similar_filter_btn,
+        &deps.app_state.grid_loading,
     );
     install_similar_filter_button_handler(
         &deps.chrome.similar_filter_btn,
         &deps.app_state.similar_paths,
         &deps.filter,
+        &deps.app_state.grid_loading,
     );
     install_favorites_only_handler(
         &deps.chrome.favourites_filter_btn,
@@ -333,6 +338,7 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.toast_overlay,
         &deps.selection_model,
         &deps.app_state.list_store,
+        &deps.app_state.grid_loading,
     );
     install_thumbnail_size_handlers(
         &deps.chrome.size_buttons,

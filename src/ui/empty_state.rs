@@ -115,6 +115,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                         &filter,
                         &favourites_filter_btn,
                         &app_state.current_folder,
+                        &app_state.grid_loading,
                     );
                 }
                 EmptyAction::ClearTagFilter => {
@@ -125,6 +126,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                         &tags_filter_btn,
                         &tags_filter_list,
                         &app_state.current_folder,
+                        &app_state.grid_loading,
                     );
                 }
                 EmptyAction::ClearFilters => {
@@ -145,6 +147,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                         &app_state.thumbnail_size,
                         &app_state.current_folder,
                         &similar_filter_btn,
+                        &app_state.grid_loading,
                     );
                 }
                 EmptyAction::None => {}
@@ -184,7 +187,12 @@ fn compute_variant(app_state: &AppState, selection_model: &SingleSelection) -> E
     let total = app_state.list_store.n_items();
     let visible = selection_model.n_items();
 
-    if app_state.scan_in_progress.get() && total == 0 {
+    let loading_visible = app_state
+        .grid_loading
+        .borrow()
+        .as_ref()
+        .is_some_and(|loading| loading.is_visible());
+    if loading_visible || (app_state.scan_in_progress.get() && total == 0) {
         return EmptyStateVariant::Hidden;
     }
     if total == 0 {

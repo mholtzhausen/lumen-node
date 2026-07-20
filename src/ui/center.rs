@@ -1,5 +1,6 @@
 use crate::core::app_state::AppState;
 use crate::ui::empty_state::{add_empty_status_overlay, create_empty_status_page};
+use crate::ui::grid_loading::{add_grid_loading_overlay, create_grid_loading_overlay};
 use crate::ui::grid::{
     add_scroll_flag_overlay, attach_compare_page, attach_grid_page, attach_single_page,
     build_scroll_flag_overlay, create_center_box, create_compare_view, create_grid_overlay,
@@ -84,6 +85,10 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
 
     let empty_state = create_empty_status_page();
     add_empty_status_overlay(&grid_overlay, &empty_state.page);
+
+    let grid_loading = create_grid_loading_overlay();
+    add_grid_loading_overlay(&grid_overlay, &grid_loading);
+    *deps.app_state.grid_loading.borrow_mut() = Some(grid_loading.clone());
 
     install_grid_scroll_speed_gate(
         &grid_scroll,

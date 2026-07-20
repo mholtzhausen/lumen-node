@@ -4,6 +4,7 @@ use crate::scanner::scan_directory;
 use crate::sync_progress_widgets;
 use crate::ui::controls::set_similar_filter_chrome;
 use crate::ui::grid::{set_default_grid_page, DEFER_GRID_THUMBNAILS_UNTIL_ENUM_COMPLETE};
+use crate::ui::grid_loading::show_grid_loading;
 use crate::ui::preview::clear_picture;
 use gtk4::{Label, Picture, ProgressBar};
 use libadwaita as adw;
@@ -56,6 +57,7 @@ pub(crate) fn build_start_scan_for_folder(deps: ScanCoordinatorDeps) -> Rc<dyn F
         set_similar_filter_chrome(&deps.similar_filter_btn, false);
         deps.app_state.sort_fields_cache.borrow_mut().clear();
         *deps.app_state.pinned_compare_path.borrow_mut() = None;
+        show_grid_loading(&deps.app_state.grid_loading, "Loading…");
         {
             let mut progress = deps.app_state.progress_state.borrow_mut();
             progress.start_pending(generation);

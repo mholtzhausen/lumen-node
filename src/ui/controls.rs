@@ -2,6 +2,9 @@ use crate::core::app_state::AppState;
 use crate::db;
 use crate::sort::sort_key_for_index;
 use crate::ui::grid::apply_thumbnail_size_change;
+use crate::ui::grid_loading::{
+    apply_filter_change, apply_filter_change_then, GridLoadingOverlay,
+};
 use gtk4::prelude::*;
 use gtk4::gio::ListStore;
 use gtk4::{CustomFilter, CustomSorter, SingleSelection};
@@ -45,10 +48,16 @@ pub(crate) fn clear_similar_filter(
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     filter: &CustomFilter,
     similar_filter_btn: &gtk4::Button,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     *similar_paths.borrow_mut() = None;
     set_similar_filter_chrome(similar_filter_btn, false);
-    filter.changed(gtk4::FilterChange::Different);
+    apply_filter_change(
+        grid_loading,
+        filter,
+        gtk4::FilterChange::Different,
+        "Updating filters…",
+    );
 }
 
 /// Rebuilds the tag-filter popover checkboxes from folder tags + active set.
@@ -62,6 +71,7 @@ pub(crate) fn rebuild_tag_filter_list(
     filter: &CustomFilter,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     known_tags: &[String],
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     while let Some(child) = tags_filter_list.first_child() {
         tags_filter_list.remove(&child);
@@ -114,6 +124,7 @@ pub(crate) fn rebuild_tag_filter_list(
         let btn_clear = tags_filter_btn.clone();
         let list_clear = tags_filter_list.clone();
         let known_clear: Vec<String> = known_tags.to_vec();
+        let grid_loading_clear = grid_loading.clone();
         clear.connect_clicked(move |_| {
             active_tags_clear.borrow_mut().clear();
             if let Some(folder) = folder_clear.borrow().as_ref() {
@@ -128,8 +139,14 @@ pub(crate) fn rebuild_tag_filter_list(
                 &filter_clear,
                 &folder_clear,
                 &known_clear,
+                &grid_loading_clear,
             );
-            filter_clear.changed(gtk4::FilterChange::LessStrict);
+            apply_filter_change(
+                &grid_loading_clear,
+                &filter_clear,
+                gtk4::FilterChange::LessStrict,
+                "Updating filters…",
+            );
         });
         tags_filter_list.append(&clear);
     }
@@ -145,6 +162,7 @@ pub(crate) fn refresh_tag_filter_from_folder(
     tags_filter_dirty: &Rc<Cell<bool>>,
     filter: &CustomFilter,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     let known = current_folder
         .borrow()
@@ -160,6 +178,7 @@ pub(crate) fn refresh_tag_filter_from_folder(
         filter,
         current_folder,
         &known,
+        grid_loading,
     );
 }
 
@@ -171,6 +190,7 @@ pub(crate) fn install_tags_filter_popover_handler(
     tags_filter_dirty: &Rc<Cell<bool>>,
     filter: &CustomFilter,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     let Some(popover) = tags_filter_btn.popover() else {
         return;
@@ -179,6 +199,7 @@ pub(crate) fn install_tags_filter_popover_handler(
     let dirty = tags_filter_dirty.clone();
     let filter = filter.clone();
     let current_folder = current_folder.clone();
+    let grid_loading = grid_loading.clone();
     let committed_on_open = Rc::new(RefCell::new(HashSet::<String>::new()));
 
     {
@@ -209,7 +230,7 @@ pub(crate) fn install_tags_filter_popover_handler(
             (false, true) => gtk4::FilterChange::LessStrict,
             _ => gtk4::FilterChange::Different,
         };
-        filter.changed(change);
+        apply_filter_change(&grid_loading, &filter, change, "Updating filters…");
         dirty.set(false);
     });
 }
@@ -254,10 +275,12 @@ pub(crate) fn install_search_entry_handler(
     search_text: &Rc<RefCell<String>>,
     filter: &CustomFilter,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     let search_text_entry = search_text.clone();
     let filter_entry = filter.clone();
     let current_folder_search = current_folder.clone();
+    let grid_loading = grid_loading.clone();
     search_entry.connect_search_changed(move |entry| {
         let prev_empty = search_text_entry.borrow().is_empty();
         let new_text = entry.text().to_lowercase();
@@ -277,7 +300,7 @@ pub(crate) fn install_search_entry_handler(
         } else {
             gtk4::FilterChange::Different
         };
-        filter_entry.changed(change);
+        apply_filter_change(&grid_loading, &filter_entry, change, "Updating filters…");
     });
 }
 
@@ -298,6 +321,7 @@ pub(crate) fn apply_clear_filters(
     thumbnail_size: &Rc<RefCell<i32>>,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     similar_filter_btn: &gtk4::Button,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     *search_text.borrow_mut() = String::new();
     favorites_only.set(false);
@@ -327,8 +351,14 @@ pub(crate) fn apply_clear_filters(
         tags_filter_dirty,
         filter,
         current_folder,
+        grid_loading,
     );
-    filter.changed(gtk4::FilterChange::LessStrict);
+    apply_filter_change(
+        grid_loading,
+        filter,
+        gtk4::FilterChange::LessStrict,
+        "Updating filters…",
+    );
 }
 
 pub(crate) fn deactivate_tag_filter(
@@ -338,6 +368,7 @@ pub(crate) fn deactivate_tag_filter(
     tags_filter_btn: &gtk4::MenuButton,
     tags_filter_list: &gtk4::Box,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     active_tags.borrow_mut().clear();
     tags_filter_dirty.set(false);
@@ -351,8 +382,14 @@ pub(crate) fn deactivate_tag_filter(
         tags_filter_dirty,
         filter,
         current_folder,
+        grid_loading,
     );
-    filter.changed(gtk4::FilterChange::LessStrict);
+    apply_filter_change(
+        grid_loading,
+        filter,
+        gtk4::FilterChange::LessStrict,
+        "Updating filters…",
+    );
 }
 
 pub(crate) fn deactivate_favorites_filter(
@@ -360,6 +397,7 @@ pub(crate) fn deactivate_favorites_filter(
     filter: &CustomFilter,
     favourites_filter_btn: &gtk4::ToggleButton,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     favorites_only.set(false);
     favourites_filter_btn.remove_css_class("favorites-filter-active");
@@ -367,7 +405,12 @@ pub(crate) fn deactivate_favorites_filter(
     if let Some(folder) = current_folder.borrow().as_ref() {
         let _ = db::set_ui_state_value(folder.as_path(), "favorites_only", "0");
     }
-    filter.changed(gtk4::FilterChange::LessStrict);
+    apply_filter_change(
+        grid_loading,
+        filter,
+        gtk4::FilterChange::LessStrict,
+        "Updating filters…",
+    );
 }
 
 pub(crate) fn install_clear_button_handler(
@@ -388,6 +431,7 @@ pub(crate) fn install_clear_button_handler(
     thumbnail_size: &Rc<RefCell<i32>>,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     similar_filter_btn: &gtk4::Button,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     let search_text_clear = search_text.clone();
     let favorites_only_clear = favorites_only.clone();
@@ -405,6 +449,7 @@ pub(crate) fn install_clear_button_handler(
     let thumbnail_size_clear = thumbnail_size.clone();
     let current_folder_clear = current_folder.clone();
     let similar_filter_btn_clear = similar_filter_btn.clone();
+    let grid_loading_clear = grid_loading.clone();
     clear_btn.connect_clicked(move |_| {
         apply_clear_filters(
             &search_text_clear,
@@ -423,6 +468,7 @@ pub(crate) fn install_clear_button_handler(
             &thumbnail_size_clear,
             &current_folder_clear,
             &similar_filter_btn_clear,
+            &grid_loading_clear,
         );
     });
 }
@@ -431,12 +477,14 @@ pub(crate) fn install_similar_filter_button_handler(
     similar_filter_btn: &gtk4::Button,
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     filter: &CustomFilter,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     let similar_paths = similar_paths.clone();
     let filter = filter.clone();
     let btn = similar_filter_btn.clone();
+    let grid_loading = grid_loading.clone();
     similar_filter_btn.connect_clicked(move |_| {
-        clear_similar_filter(&similar_paths, &filter, &btn);
+        clear_similar_filter(&similar_paths, &filter, &btn, &grid_loading);
     });
 }
 
@@ -448,6 +496,7 @@ pub(crate) fn install_favorites_only_handler(
     toast_overlay: &adw::ToastOverlay,
     selection_model: &SingleSelection,
     list_store: &ListStore,
+    grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     let favourites_filter_btn_toggle = favourites_filter_btn.clone();
     let favorites_only_toggle = favorites_only.clone();
@@ -456,6 +505,7 @@ pub(crate) fn install_favorites_only_handler(
     let toast_overlay_toggle = toast_overlay.clone();
     let selection_model_toggle = selection_model.clone();
     let list_store_toggle = list_store.clone();
+    let grid_loading = grid_loading.clone();
     favourites_filter_btn.connect_toggled(move |btn| {
         let active = btn.is_active();
         favorites_only_toggle.set(active);
@@ -471,21 +521,32 @@ pub(crate) fn install_favorites_only_handler(
                 if active { "1" } else { "0" },
             );
         }
-        filter_toggle.changed(if active {
+        let change = if active {
             gtk4::FilterChange::MoreStrict
         } else {
             gtk4::FilterChange::LessStrict
-        });
-        if active
-            && list_store_toggle.n_items() > 0
-            && selection_model_toggle.n_items() == 0
-        {
-            let toast = adw::Toast::new(
-                "No favourites match — turn off the favourites filter to see all images.",
-            );
-            toast.set_timeout(2);
-            toast_overlay_toggle.add_toast(toast);
-        }
+        };
+        let toast_overlay_toggle = toast_overlay_toggle.clone();
+        let selection_model_toggle = selection_model_toggle.clone();
+        let list_store_toggle = list_store_toggle.clone();
+        apply_filter_change_then(
+            &grid_loading,
+            &filter_toggle,
+            change,
+            "Updating filters…",
+            move || {
+                if active
+                    && list_store_toggle.n_items() > 0
+                    && selection_model_toggle.n_items() == 0
+                {
+                    let toast = adw::Toast::new(
+                        "No favourites match — turn off the favourites filter to see all images.",
+                    );
+                    toast.set_timeout(2);
+                    toast_overlay_toggle.add_toast(toast);
+                }
+            },
+        );
     });
 }
 

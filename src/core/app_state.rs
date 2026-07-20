@@ -2,6 +2,7 @@ use crate::config::AppConfig;
 use crate::similarity::PromptIndexEntry;
 use crate::sort_flags::SortFields;
 use crate::thumbnail_sizing::normalize_thumbnail_size;
+use crate::ui::grid_loading::GridLoadingOverlay;
 use crate::ImageMetadata;
 use crate::ScanProgressState;
 use gtk4::{gio, glib, Image, StringObject};
@@ -58,6 +59,8 @@ pub(crate) struct AppState {
     pub(crate) on_favourite_changed: Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
     /// Live scale for grid thumbnail chrome buttons (0.4–1.0).
     pub(crate) thumbnail_chrome_scale: Rc<Cell<f64>>,
+    /// Centered spinner overlay on the thumbnail grid (set after center build).
+    pub(crate) grid_loading: Rc<RefCell<Option<GridLoadingOverlay>>>,
 }
 
 pub(crate) fn build_app_state(
@@ -138,5 +141,6 @@ pub(crate) fn build_app_state(
         pinned_compare_path: Rc::new(RefCell::new(None)),
         on_favourite_changed: Rc::new(RefCell::new(None)),
         thumbnail_chrome_scale,
+        grid_loading: Rc::new(RefCell::new(None)),
     }
 }

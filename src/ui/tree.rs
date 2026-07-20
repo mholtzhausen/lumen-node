@@ -171,6 +171,7 @@ struct BrowseFolderCtx {
     progress_state: Rc<RefCell<crate::ScanProgressState>>,
     start_scan: Rc<dyn Fn(PathBuf)>,
     recent_limit: usize,
+    grid_loading: Rc<RefCell<Option<crate::ui::grid_loading::GridLoadingOverlay>>>,
 }
 
 /// Restore/seed per-folder UI state, set current folder, update recent list, and scan.
@@ -235,6 +236,7 @@ fn browse_folder(ctx: &BrowseFolderCtx, path: &Path, persist_as_root: bool) {
         &ctx.tags_filter_dirty,
         &ctx.filter,
         &ctx.current_folder,
+        &ctx.grid_loading,
     );
     (ctx.start_scan)(path.to_path_buf());
 }
@@ -261,6 +263,7 @@ pub(crate) fn install_tree_folder_selection(deps: TreeFolderSelectionDeps) {
         progress_state: deps.app_state.progress_state.clone(),
         start_scan: deps.start_scan_for_folder.clone(),
         recent_limit: deps.recent_folders_limit,
+        grid_loading: deps.app_state.grid_loading.clone(),
     });
 
     let browse_ctx = ctx.clone();
