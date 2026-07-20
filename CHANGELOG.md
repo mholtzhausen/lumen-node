@@ -1,6 +1,7 @@
 ## Unreleased
 ### Features and Improvements
 - Grid loading spinner is opaque and full-bleed so thumbnails stay hidden while busy.
+- Quick-tag popover lists tags alphabetically with a letter header for each group when more than 10 tags are shown.
 - Tag filter applies live while the popover is open (200ms debounce; newer clicks cancel pending applies).
 - Tag filter is three-state per tag: require (✓), ignore (empty), or exclude (✕); polarity persists in the folder DB.
 - Show a centered spinner overlay on the thumbnail grid while a folder scan has no items yet and during user-initiated filter/search updates.
@@ -12,6 +13,7 @@
 
 ### Bugfixes
 - When a filter change removes the selected thumbnail, select the next/previous neighbor instead of jumping to the top of the grid.
+- Selecting a tag on an unselected thumbnail selects that image first so filter eviction keeps place.
 - Skip O(N) selection path scan on model `items-changed` when the current selection already matches `selected_path_hint` (reduces filter/search UI freezes).
 - Replace missing `tag-symbolic` glyph with the bundled `lumen-tag-symbolic` icon.
 

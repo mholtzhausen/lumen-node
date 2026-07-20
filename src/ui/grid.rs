@@ -75,6 +75,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let filter_setup = deps.filter.clone();
     let tags_filter_btn_setup = deps.tags_filter_btn.clone();
     let tags_filter_list_setup = deps.tags_filter_list.clone();
+    let selection_model_setup = deps.mutation_ctx.selection_model.clone();
     factory.connect_setup(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
@@ -91,6 +92,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             app_state_setup.clone(),
             toast_overlay_setup.clone(),
             filter_setup.clone(),
+            selection_model_setup.clone(),
             tags_filter_btn_setup.clone(),
             tags_filter_list_setup.clone(),
         );
@@ -683,6 +685,7 @@ pub fn setup_grid_list_item(
     app_state: AppState,
     toast_overlay: adw::ToastOverlay,
     filter: gtk4::CustomFilter,
+    selection_model: SingleSelection,
     tags_filter_btn: MenuButton,
     tags_filter_list: gtk4::Box,
 ) {
@@ -741,6 +744,7 @@ pub fn setup_grid_list_item(
             app_state: app_state.clone(),
             toast_overlay: toast_overlay.clone(),
             filter: filter.clone(),
+            selection_model,
             tags_filter_btn,
             tags_filter_list,
             bound_paths: bound_paths.clone(),

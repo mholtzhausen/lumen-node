@@ -4,6 +4,7 @@ use gtk4::prelude::*;
 use gtk4::{
     gdk, glib, Box as GtkBox, Button, CheckButton, EventControllerKey, EventControllerMotion,
     Label, MenuButton, Orientation, Popover, PropagationPhase, ScrolledWindow, SearchEntry,
+    SingleSelection, StringObject,
 };
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
@@ -20,6 +21,7 @@ pub(crate) struct QuickTagAttachDeps {
     pub(crate) app_state: AppState,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) filter: gtk4::CustomFilter,
+    pub(crate) selection_model: SingleSelection,
     pub(crate) tags_filter_btn: MenuButton,
     pub(crate) tags_filter_list: gtk4::Box,
     pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
@@ -86,6 +88,7 @@ pub(crate) fn attach_quick_tag_popover(
         let app_state = deps.app_state.clone();
         let toast_overlay = deps.toast_overlay.clone();
         let filter = deps.filter.clone();
+        let selection_model = deps.selection_model.clone();
         let tags_filter_btn = deps.tags_filter_btn.clone();
         let tags_filter_list = deps.tags_filter_list.clone();
         let bound_paths = deps.bound_paths.clone();
@@ -109,6 +112,7 @@ pub(crate) fn attach_quick_tag_popover(
                 &app_state,
                 &toast_overlay,
                 &filter,
+                &selection_model,
                 &tags_filter_btn,
                 &tags_filter_list,
                 &search,
@@ -138,6 +142,7 @@ pub(crate) fn attach_quick_tag_popover(
         let app_state = deps.app_state.clone();
         let toast_overlay = deps.toast_overlay.clone();
         let filter = deps.filter.clone();
+        let selection_model = deps.selection_model.clone();
         let tags_filter_btn = deps.tags_filter_btn.clone();
         let tags_filter_list = deps.tags_filter_list.clone();
         let bound_paths = deps.bound_paths.clone();
@@ -154,6 +159,7 @@ pub(crate) fn attach_quick_tag_popover(
                 &app_state,
                 &toast_overlay,
                 &filter,
+                &selection_model,
                 &tags_filter_btn,
                 &tags_filter_list,
                 &path_str,
@@ -262,6 +268,7 @@ fn rebuild_quick_tag_list(
     app_state: &AppState,
     toast_overlay: &adw::ToastOverlay,
     filter: &gtk4::CustomFilter,
+    selection_model: &SingleSelection,
     tags_filter_btn: &MenuButton,
     tags_filter_list: &gtk4::Box,
     search_entry: &SearchEntry,
@@ -295,7 +302,7 @@ fn rebuild_quick_tag_list(
         .unwrap_or_else(|| image_tags_set(app_state, path_str));
 
     let query = search_text.trim().to_lowercase();
-    let filtered: Vec<String> = if query.is_empty() {
+    let mut filtered: Vec<String> = if query.is_empty() {
         known.clone()
     } else {
         known
@@ -304,6 +311,8 @@ fn rebuild_quick_tag_list(
             .cloned()
             .collect()
     };
+    // Stable alphabetical order (DB is NOCASE-sorted; re-sort after filter just in case).
+    filtered.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
 
     if known.is_empty() && query.is_empty() {
         let hint = Label::new(Some("No tags yet — type to add."));
@@ -312,7 +321,24 @@ fn rebuild_quick_tag_list(
         tags_list.append(&hint);
     }
 
+    let mut last_letter: Option<char> = None;
+    let show_letter_headers = filtered.len() > 10;
     for tag in &filtered {
+        if show_letter_headers {
+            let letter = tag_section_letter(tag);
+            if last_letter != Some(letter) {
+                let header = Label::new(Some(&letter.to_string()));
+                header.add_css_class("caption-heading");
+                header.set_halign(gtk4::Align::End);
+                header.set_hexpand(true);
+                if last_letter.is_some() {
+                    header.set_margin_top(6);
+                }
+                tags_list.append(&header);
+                last_letter = Some(letter);
+            }
+        }
+
         let check = CheckButton::with_label(tag);
         check.set_active(on_image.contains(tag));
         let tag_owned = tag.clone();
@@ -320,6 +346,7 @@ fn rebuild_quick_tag_list(
         let app_state_cb = app_state.clone();
         let toast_cb = toast_overlay.clone();
         let filter_cb = filter.clone();
+        let selection_cb = selection_model.clone();
         let tags_filter_btn_cb = tags_filter_btn.clone();
         let tags_filter_list_cb = tags_filter_list.clone();
         let tags_btn_cb = tags_btn.clone();
@@ -328,6 +355,7 @@ fn rebuild_quick_tag_list(
                 &app_state_cb,
                 &toast_cb,
                 &filter_cb,
+                &selection_cb,
                 &tags_filter_btn_cb,
                 &tags_filter_list_cb,
                 &path_owned,
@@ -357,6 +385,7 @@ fn rebuild_quick_tag_list(
         let app_state_cb = app_state.clone();
         let toast_cb = toast_overlay.clone();
         let filter_cb = filter.clone();
+        let selection_cb = selection_model.clone();
         let tags_filter_btn_cb = tags_filter_btn.clone();
         let tags_filter_list_cb = tags_filter_list.clone();
         let tags_list_cb = tags_list.clone();
@@ -370,6 +399,7 @@ fn rebuild_quick_tag_list(
                 &app_state_cb,
                 &toast_cb,
                 &filter_cb,
+                &selection_cb,
                 &tags_filter_btn_cb,
                 &tags_filter_list_cb,
                 &path_owned,
@@ -392,6 +422,7 @@ fn rebuild_quick_tag_list(
                 &app_state_cb,
                 &toast_cb,
                 &filter_cb,
+                &selection_cb,
                 &tags_filter_btn_cb,
                 &tags_filter_list_cb,
                 &search_cb,
@@ -404,17 +435,52 @@ fn rebuild_quick_tag_list(
     }
 }
 
+/// Section letter for alphabetical headers (`A`–`Z`, or `#` for non-letters).
+fn tag_section_letter(tag: &str) -> char {
+    match tag.chars().next() {
+        Some(c) if c.is_alphabetic() => c.to_uppercase().next().unwrap_or('#'),
+        _ => '#',
+    }
+}
+
+/// Select `path` in the grid if it is not already the current selection.
+fn ensure_path_selected(selection_model: &SingleSelection, path: &str) {
+    let already = selection_model
+        .selected_item()
+        .and_downcast::<StringObject>()
+        .map(|obj| obj.string().as_str() == path)
+        .unwrap_or(false);
+    if already {
+        return;
+    }
+    for idx in 0..selection_model.n_items() {
+        let is_match = selection_model
+            .item(idx)
+            .and_downcast::<StringObject>()
+            .map(|obj| obj.string().as_str() == path)
+            .unwrap_or(false);
+        if is_match {
+            selection_model.set_selected(idx);
+            return;
+        }
+    }
+}
+
 /// Returns `true` when the DB mutation succeeded.
 fn toggle_tag_on_image(
     app_state: &AppState,
     toast_overlay: &adw::ToastOverlay,
     filter: &gtk4::CustomFilter,
+    selection_model: &SingleSelection,
     tags_filter_btn: &MenuButton,
     tags_filter_list: &gtk4::Box,
     path_str: &str,
     tag: &str,
     want_on: bool,
 ) -> bool {
+    // Select first so filter eviction can keep place on the neighbor of *this* image.
+    ensure_path_selected(selection_model, path_str);
+
     let Some(folder) = app_state.current_folder.borrow().as_ref().cloned() else {
         return false;
     };
