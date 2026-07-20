@@ -18,7 +18,8 @@ use crate::ui::selection::{handle_selection_change_event, ClickTrace};
 use crate::ui::shell::{install_history_popover_handler, install_open_button_handler};
 use crate::ui::grid::show_full_view_favourite_hud;
 use crate::ui::sidebar::{
-    clear_metadata_sidebar, populate_metadata_sidebar, update_preview_favourite_indicator,
+    clear_metadata_sidebar, populate_metadata_sidebar, set_preview_similar_active,
+    update_preview_favourite_indicator, update_preview_similar_button,
 };
 use crate::view_helpers::{
     primary_image_path, primary_selected_index, selected_count,
@@ -67,7 +68,16 @@ pub(crate) struct ContextMenuWiringDeps {
 pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn Fn()> {
     let refresh_metadata_sidebar: Rc<dyn Fn(&ImageMetadata)> = Rc::new({
         let meta_listbox = deps.right.meta_listbox.clone();
-        move |meta: &ImageMetadata| populate_metadata_sidebar(&meta_listbox, meta)
+        let preview_favourite = deps.right.preview_favourite.clone();
+        let similar_paths = deps.app_state.similar_paths.clone();
+        move |meta: &ImageMetadata| {
+            populate_metadata_sidebar(
+                &meta_listbox,
+                meta,
+                &preview_favourite,
+                similar_paths.borrow().is_some(),
+            )
+        }
     });
     let start_scan_for_folder: Rc<dyn Fn(PathBuf)> = deps.start_scan_for_folder.clone();
 
@@ -85,6 +95,14 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
     *deps.app_state.on_favourite_changed.borrow_mut() = Some(on_favourite_changed.clone());
 
     {
+        let preview_favourite = deps.right.preview_favourite.clone();
+        *deps.app_state.on_similar_filter_changed.borrow_mut() =
+            Some(Rc::new(move |active: bool| {
+                set_preview_similar_active(&preview_favourite, active);
+            }));
+    }
+
+    {
         let window = deps.window.clone();
         deps.right.preview_favourite.button.connect_clicked(move |_| {
             let _ = gtk4::prelude::WidgetExt::activate_action(
@@ -93,6 +111,32 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
                 None,
             );
         });
+    }
+    {
+        let similar_paths = deps.app_state.similar_paths.clone();
+        let similar_query_path = deps.app_state.similar_query_path.clone();
+        let on_similar = deps.app_state.on_similar_filter_changed.clone();
+        let filter = deps.filter.clone();
+        let grid_loading = deps.app_state.grid_loading.clone();
+        let header_btn = deps.similar_filter_btn.clone();
+        deps.right
+            .preview_favourite
+            .similar_button
+            .connect_clicked(move |btn| {
+                if similar_paths.borrow().is_some() {
+                    crate::ui::controls::clear_similar_filter(
+                        &similar_paths,
+                        &similar_query_path,
+                        &filter,
+                        &header_btn,
+                        &on_similar,
+                        &grid_loading,
+                    );
+                } else {
+                    let _ =
+                        gtk4::prelude::WidgetExt::activate_action(btn, "ctx.show-similar", None);
+                }
+            });
     }
     {
         let window = deps.window.clone();
@@ -182,6 +226,7 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                 clear_picture(&meta_preview_sel);
                 clear_metadata_sidebar(&meta_listbox_sel);
                 update_preview_favourite_indicator(&preview_favourite_sel, None);
+                update_preview_similar_button(&preview_favourite_sel, false);
                 return;
             }
             crate::ui::batch_editor::set_batch_mode_visible(&sidebar_stack_sel, false);
@@ -189,6 +234,7 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                 clear_picture(&meta_preview_sel);
                 clear_metadata_sidebar(&meta_listbox_sel);
                 update_preview_favourite_indicator(&preview_favourite_sel, None);
+                update_preview_similar_button(&preview_favourite_sel, false);
                 if view_stack_sel.visible_child_name().as_deref() == Some("compare") {
                     clear_picture(&compare_right_sel);
                 }
@@ -220,6 +266,7 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                 &meta_position_programmatic_sel,
                 &meta_section_expanded_pref_sel,
                 &meta_preview_sel,
+                &preview_favourite_sel,
                 &app_state_sel,
             );
             let is_favourite = favourite_for_selected(&app_state_sel);
@@ -359,12 +406,14 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.thumbnail_size,
         &deps.app_state.current_folder,
         &deps.chrome.similar_filter_btn,
+        &deps.app_state.on_similar_filter_changed,
         &deps.app_state.grid_loading,
     );
     install_similar_filter_button_handler(
         &deps.chrome.similar_filter_btn,
         &deps.app_state.similar_paths,
         &deps.app_state.similar_query_path,
+        &deps.app_state.on_similar_filter_changed,
         &deps.filter,
         &deps.app_state.grid_loading,
     );
@@ -375,6 +424,7 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.app_state.prompt_similarity_index,
         &deps.app_state.similar_paths,
         &deps.app_state.similar_query_path,
+        &deps.app_state.on_similar_filter_changed,
         &deps.filter,
         &deps.app_state.grid_loading,
     );

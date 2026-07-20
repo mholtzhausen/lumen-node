@@ -94,11 +94,20 @@ fn schedule_tag_filter_apply(
     });
 }
 
-pub(crate) fn set_similar_filter_chrome(similar_filter_btn: &gtk4::Button, active: bool) {
+pub(crate) fn set_similar_filter_chrome(
+    similar_filter_btn: &gtk4::Button,
+    on_similar_filter_changed: &Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
+    active: bool,
+) {
     if active {
         similar_filter_btn.add_css_class("similar-filter-active");
+        similar_filter_btn.set_tooltip_text(Some("Clear similar filter"));
     } else {
         similar_filter_btn.remove_css_class("similar-filter-active");
+        similar_filter_btn.set_tooltip_text(Some("Similar in folder"));
+    }
+    if let Some(cb) = on_similar_filter_changed.borrow().as_ref() {
+        cb(active);
     }
 }
 
@@ -107,11 +116,12 @@ pub(crate) fn clear_similar_filter(
     similar_query_path: &Rc<RefCell<Option<String>>>,
     filter: &CustomFilter,
     similar_filter_btn: &gtk4::Button,
+    on_similar_filter_changed: &Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     *similar_paths.borrow_mut() = None;
     *similar_query_path.borrow_mut() = None;
-    set_similar_filter_chrome(similar_filter_btn, false);
+    set_similar_filter_chrome(similar_filter_btn, on_similar_filter_changed, false);
     apply_filter_change(
         grid_loading,
         filter,
@@ -129,6 +139,7 @@ pub(crate) fn apply_similar_filter_for_query(
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     similar_query_path: &Rc<RefCell<Option<String>>>,
     similar_filter_btn: &gtk4::Button,
+    on_similar_filter_changed: &Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
     filter: &CustomFilter,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) -> Option<usize> {
@@ -136,7 +147,7 @@ pub(crate) fn apply_similar_filter_for_query(
     let count = matches.len();
     *similar_paths.borrow_mut() = Some(matches);
     *similar_query_path.borrow_mut() = Some(query_path.to_string());
-    set_similar_filter_chrome(similar_filter_btn, true);
+    set_similar_filter_chrome(similar_filter_btn, on_similar_filter_changed, true);
     apply_filter_change(
         grid_loading,
         filter,
@@ -153,6 +164,7 @@ fn schedule_similar_top_n_apply(
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     similar_query_path: &Rc<RefCell<Option<String>>>,
     similar_filter_btn: &gtk4::Button,
+    on_similar_filter_changed: &Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
     filter: &CustomFilter,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
@@ -164,6 +176,7 @@ fn schedule_similar_top_n_apply(
     let similar_paths = similar_paths.clone();
     let similar_query_path = similar_query_path.clone();
     let similar_filter_btn = similar_filter_btn.clone();
+    let on_similar_filter_changed = on_similar_filter_changed.clone();
     let filter = filter.clone();
     let grid_loading = grid_loading.clone();
     glib::timeout_add_local_once(Duration::from_millis(SIMILAR_TOP_N_DEBOUNCE_MS), move || {
@@ -187,6 +200,7 @@ fn schedule_similar_top_n_apply(
             &similar_paths,
             &similar_query_path,
             &similar_filter_btn,
+            &on_similar_filter_changed,
             &filter,
             &grid_loading,
         );
@@ -201,6 +215,7 @@ pub(crate) fn install_similar_top_n_hover_slider(
     prompt_similarity_index: &Rc<RefCell<HashMap<String, PromptIndexEntry>>>,
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     similar_query_path: &Rc<RefCell<Option<String>>>,
+    on_similar_filter_changed: &Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
     filter: &CustomFilter,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
@@ -285,6 +300,7 @@ pub(crate) fn install_similar_top_n_hover_slider(
     let similar_paths = similar_paths.clone();
     let similar_query_path = similar_query_path.clone();
     let similar_filter_btn = similar_filter_btn.clone();
+    let on_similar_filter_changed = on_similar_filter_changed.clone();
     let filter = filter.clone();
     let grid_loading = grid_loading.clone();
     scale.connect_value_changed(move |s| {
@@ -297,6 +313,7 @@ pub(crate) fn install_similar_top_n_hover_slider(
             &similar_paths,
             &similar_query_path,
             &similar_filter_btn,
+            &on_similar_filter_changed,
             &filter,
             &grid_loading,
         );
@@ -554,6 +571,7 @@ pub(crate) fn apply_clear_filters(
     thumbnail_size: &Rc<RefCell<i32>>,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     similar_filter_btn: &gtk4::Button,
+    on_similar_filter_changed: &Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     *search_text.borrow_mut() = String::new();
@@ -562,7 +580,7 @@ pub(crate) fn apply_clear_filters(
     active_tag_filters.borrow_mut().clear();
     *similar_paths.borrow_mut() = None;
     *similar_query_path.borrow_mut() = None;
-    set_similar_filter_chrome(similar_filter_btn, false);
+    set_similar_filter_chrome(similar_filter_btn, on_similar_filter_changed, false);
     favourites_filter_btn.remove_css_class("favorites-filter-active");
     favourites_filter_btn.set_active(false);
     search_entry.set_text("");
@@ -664,6 +682,7 @@ pub(crate) fn install_clear_button_handler(
     thumbnail_size: &Rc<RefCell<i32>>,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     similar_filter_btn: &gtk4::Button,
+    on_similar_filter_changed: &Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     let search_text_clear = search_text.clone();
@@ -683,6 +702,7 @@ pub(crate) fn install_clear_button_handler(
     let thumbnail_size_clear = thumbnail_size.clone();
     let current_folder_clear = current_folder.clone();
     let similar_filter_btn_clear = similar_filter_btn.clone();
+    let on_similar_filter_changed_clear = on_similar_filter_changed.clone();
     let grid_loading_clear = grid_loading.clone();
     clear_btn.connect_clicked(move |_| {
         apply_clear_filters(
@@ -703,6 +723,7 @@ pub(crate) fn install_clear_button_handler(
             &thumbnail_size_clear,
             &current_folder_clear,
             &similar_filter_btn_clear,
+            &on_similar_filter_changed_clear,
             &grid_loading_clear,
         );
     });
@@ -712,11 +733,13 @@ pub(crate) fn install_similar_filter_button_handler(
     similar_filter_btn: &gtk4::Button,
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     similar_query_path: &Rc<RefCell<Option<String>>>,
+    on_similar_filter_changed: &Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
     filter: &CustomFilter,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {
     let similar_paths = similar_paths.clone();
     let similar_query_path = similar_query_path.clone();
+    let on_similar_filter_changed = on_similar_filter_changed.clone();
     let filter = filter.clone();
     let btn = similar_filter_btn.clone();
     let grid_loading = grid_loading.clone();
@@ -729,6 +752,7 @@ pub(crate) fn install_similar_filter_button_handler(
             &similar_query_path,
             &filter,
             &btn,
+            &on_similar_filter_changed,
             &grid_loading,
         );
     });

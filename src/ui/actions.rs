@@ -815,6 +815,7 @@ pub fn install_context_menu(
         let filter_for_similar = filter.clone();
         let toast_for_similar = toast_overlay.clone();
         let similar_filter_btn = similar_filter_btn.clone();
+        let on_similar_changed = mutation_ctx.app_state.on_similar_filter_changed.clone();
         let grid_loading_for_similar = mutation_ctx.app_state.grid_loading.clone();
         show_similar_action.connect_activate(move |_, _| {
             let Some(path) = selected_image_path(&selection_for_similar) else {
@@ -828,6 +829,7 @@ pub fn install_context_menu(
                 &similar_paths,
                 &similar_query_path,
                 &similar_filter_btn,
+                &on_similar_changed,
                 &filter_for_similar,
                 &grid_loading_for_similar,
             ) else {
@@ -845,6 +847,7 @@ pub fn install_context_menu(
             let similar_query_clear = similar_query_path.clone();
             let filter_clear = filter_for_similar.clone();
             let similar_btn_clear = similar_filter_btn.clone();
+            let on_similar_clear = on_similar_changed.clone();
             let grid_loading_clear = grid_loading_for_similar.clone();
             toast.connect_button_clicked(move |_| {
                 crate::ui::controls::clear_similar_filter(
@@ -852,6 +855,7 @@ pub fn install_context_menu(
                     &similar_query_clear,
                     &filter_clear,
                     &similar_btn_clear,
+                    &on_similar_clear,
                     &grid_loading_clear,
                 );
             });

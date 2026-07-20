@@ -4,7 +4,7 @@ use crate::metadata_section::apply_metadata_section_state;
 use crate::timing_report::write_timing_report;
 use crate::ui::grid::{refresh_realized_grid_thumbnails, THUMB_UI_CALLBACKS_TOTAL};
 use crate::ui::preview::{load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome};
-use crate::ui::sidebar::populate_metadata_sidebar;
+use crate::ui::sidebar::{populate_metadata_sidebar, PreviewFavouriteIndicator};
 use crate::{
     CLICK_TRACE_COUNTER, MIN_META_SPLIT_PX, PREVIEW_REQUEST_PENDING, SCAN_BUFFER_DEPTH,
     SCAN_DRAIN_BATCH_SIZE, SCAN_DRAIN_SCHEDULED, SUPPRESS_SIDEBAR_DURING_PREVIEW,
@@ -368,6 +368,8 @@ fn dispatch_selection_metadata_load(
     meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
     meta_position_programmatic: Rc<Cell<u32>>,
     meta_section_expanded_pref: Rc<Cell<bool>>,
+    preview_favourite: PreviewFavouriteIndicator,
+    similar_filter_active: bool,
     trace_state: Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
 ) {
@@ -379,6 +381,8 @@ fn dispatch_selection_metadata_load(
         meta_split_before_auto_collapse,
         meta_position_programmatic,
         meta_section_expanded_pref,
+        preview_favourite,
+        similar_filter_active,
         trace_state,
         click_id,
     );
@@ -395,6 +399,7 @@ pub(crate) fn handle_selection_change_event(
     meta_position_programmatic: &Rc<Cell<u32>>,
     meta_section_expanded_pref: &Rc<Cell<bool>>,
     meta_preview: &gtk4::Picture,
+    preview_favourite: &PreviewFavouriteIndicator,
     app_state: &AppState,
 ) {
     let path_str = item.string().to_string();
@@ -423,6 +428,8 @@ pub(crate) fn handle_selection_change_event(
         meta_split_before_auto_collapse.clone(),
         meta_position_programmatic.clone(),
         meta_section_expanded_pref.clone(),
+        preview_favourite.clone(),
+        app_state.similar_paths.borrow().is_some(),
         click_trace_state.clone(),
         click_id,
     );
@@ -499,12 +506,19 @@ fn load_metadata_async(
     meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
     meta_position_programmatic: Rc<Cell<u32>>,
     meta_section_expanded_pref: Rc<Cell<bool>>,
+    preview_favourite: PreviewFavouriteIndicator,
+    similar_filter_active: bool,
     trace_state: Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
 ) {
     glib::MainContext::default().spawn_local(async move {
         // Populate the sidebar (this is fast, all UI calls).
-        populate_metadata_sidebar(&listbox, &metadata);
+        populate_metadata_sidebar(
+            &listbox,
+            &metadata,
+            &preview_favourite,
+            similar_filter_active,
+        );
         meta_position_programmatic.set(meta_position_programmatic.get().saturating_add(1));
         apply_metadata_section_state(
             &metadata,

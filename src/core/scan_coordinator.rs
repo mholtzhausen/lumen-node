@@ -55,7 +55,11 @@ pub(crate) fn build_start_scan_for_folder(deps: ScanCoordinatorDeps) -> Rc<dyn F
         deps.app_state.prompt_similarity_index.borrow_mut().clear();
         *deps.app_state.similar_paths.borrow_mut() = None;
         *deps.app_state.similar_query_path.borrow_mut() = None;
-        set_similar_filter_chrome(&deps.similar_filter_btn, false);
+        set_similar_filter_chrome(
+            &deps.similar_filter_btn,
+            &deps.app_state.on_similar_filter_changed,
+            false,
+        );
         deps.app_state.sort_fields_cache.borrow_mut().clear();
         *deps.app_state.pinned_compare_path.borrow_mut() = None;
         show_grid_loading(&deps.app_state.grid_loading, "Loading…");

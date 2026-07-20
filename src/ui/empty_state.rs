@@ -148,6 +148,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                         &app_state.thumbnail_size,
                         &app_state.current_folder,
                         &similar_filter_btn,
+                        &app_state.on_similar_filter_changed,
                         &app_state.grid_loading,
                     );
                 }

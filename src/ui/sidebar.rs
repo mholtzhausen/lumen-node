@@ -58,11 +58,11 @@ pub fn create_meta_scroll_list() -> (gtk4::ScrolledWindow, gtk4::ListBox) {
     (meta_scroll, meta_listbox)
 }
 
-/// Favourite indicator on the Metadata expander header (right side).
+/// Favourite + Similar controls on the Metadata expander header (right side).
 #[derive(Clone)]
 pub struct PreviewFavouriteIndicator {
     pub button: gtk4::Button,
-    pub label: gtk4::Label,
+    pub similar_button: gtk4::Button,
 }
 
 pub fn create_meta_expander(
@@ -77,8 +77,8 @@ pub fn create_meta_expander(
     title.set_hexpand(true);
     header.append(&title);
 
-    let fav_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
-    fav_box.set_halign(Align::End);
+    let actions = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    actions.set_halign(Align::End);
 
     let button = gtk4::Button::from_icon_name(crate::icons::NON_STARRED);
     button.add_css_class("flat");
@@ -88,13 +88,17 @@ pub fn create_meta_expander(
     button.set_focus_on_click(false);
     button.set_sensitive(false);
 
-    let label = gtk4::Label::new(None);
-    label.add_css_class("caption");
-    label.set_visible(false);
+    let similar_button = gtk4::Button::from_icon_name(crate::icons::SIMILAR);
+    similar_button.add_css_class("flat");
+    similar_button.add_css_class("circular");
+    similar_button.add_css_class("thumbnail-favourite-button");
+    similar_button.set_tooltip_text(Some("Similar in folder"));
+    similar_button.set_focus_on_click(false);
+    similar_button.set_visible(false);
 
-    fav_box.append(&label);
-    fav_box.append(&button);
-    header.append(&fav_box);
+    actions.append(&button);
+    actions.append(&similar_button);
+    header.append(&actions);
 
     let meta_expander = gtk4::Expander::new(None);
     meta_expander.set_label_widget(Some(&header));
@@ -103,7 +107,10 @@ pub fn create_meta_expander(
 
     (
         meta_expander,
-        PreviewFavouriteIndicator { button, label },
+        PreviewFavouriteIndicator {
+            button,
+            similar_button,
+        },
     )
 }
 
@@ -116,23 +123,46 @@ pub fn update_preview_favourite_indicator(
             indicator.button.set_sensitive(true);
             indicator.button.set_icon_name(crate::icons::STARRED);
             indicator.button.add_css_class("thumbnail-favourite-active");
-            indicator.label.set_text("Favourite");
-            indicator.label.set_visible(true);
         }
         Some(false) => {
             indicator.button.set_sensitive(true);
             indicator.button.set_icon_name(crate::icons::NON_STARRED);
             indicator.button.remove_css_class("thumbnail-favourite-active");
-            indicator.label.set_text("");
-            indicator.label.set_visible(false);
         }
         None => {
             indicator.button.set_sensitive(false);
             indicator.button.set_icon_name(crate::icons::NON_STARRED);
             indicator.button.remove_css_class("thumbnail-favourite-active");
-            indicator.label.set_text("");
-            indicator.label.set_visible(false);
+            indicator.similar_button.set_visible(false);
         }
+    }
+}
+
+pub fn update_preview_similar_button(indicator: &PreviewFavouriteIndicator, visible: bool) {
+    indicator.similar_button.set_visible(visible);
+}
+
+pub fn set_preview_similar_active(indicator: &PreviewFavouriteIndicator, active: bool) {
+    if active {
+        indicator
+            .similar_button
+            .add_css_class("similar-filter-active");
+        indicator
+            .similar_button
+            .add_css_class("thumbnail-favourite-active");
+        indicator
+            .similar_button
+            .set_tooltip_text(Some("Clear similar filter"));
+    } else {
+        indicator
+            .similar_button
+            .remove_css_class("similar-filter-active");
+        indicator
+            .similar_button
+            .remove_css_class("thumbnail-favourite-active");
+        indicator
+            .similar_button
+            .set_tooltip_text(Some("Similar in folder"));
     }
 }
 
@@ -224,8 +254,18 @@ pub fn clear_metadata_sidebar(listbox: &gtk4::ListBox) {
     }
 }
 
-pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) {
+pub fn populate_metadata_sidebar(
+    listbox: &gtk4::ListBox,
+    meta: &ImageMetadata,
+    preview_favourite: &PreviewFavouriteIndicator,
+    similar_filter_active: bool,
+) {
     clear_metadata_sidebar(listbox);
+    update_preview_similar_button(
+        preview_favourite,
+        crate::similarity::meta_has_similarity_source(meta),
+    );
+    set_preview_similar_active(preview_favourite, similar_filter_active);
 
     let short_rows: &[(&str, Option<&str>)] = &[
         ("Make", meta.camera_make.as_deref()),
@@ -261,9 +301,6 @@ pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) 
         ("Workflow", meta.workflow_json.as_deref()),
     ];
 
-    let can_show_similar = crate::similarity::meta_has_similarity_source(meta);
-    let mut similar_button_placed = false;
-
     for (key, maybe_val) in long_rows {
         let Some(val) = maybe_val else { continue };
         let display_val = val.to_string();
@@ -282,20 +319,6 @@ pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) 
         key_label.set_halign(Align::Start);
         key_label.set_hexpand(true);
         header_box.append(&key_label);
-
-        let place_similar = can_show_similar
-            && !similar_button_placed
-            && (*key == "Prompt" || *key == "Parameters");
-        if place_similar {
-            let similar_btn = gtk4::Button::with_label("Similar");
-            similar_btn.add_css_class("flat");
-            similar_btn.set_tooltip_text(Some("Similar in folder"));
-            similar_btn.connect_clicked(move |btn| {
-                let _ = gtk4::prelude::WidgetExt::activate_action(btn, "ctx.show-similar", None);
-            });
-            header_box.append(&similar_btn);
-            similar_button_placed = true;
-        }
 
         let copy_text = display_val.clone();
         let copy_button = gtk4::Button::from_icon_name(crate::icons::COPY);

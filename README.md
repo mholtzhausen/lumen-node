@@ -228,7 +228,7 @@ Plain click on a thumbnail exits batch mode (selection becomes that image only).
 
 While in batch mode, similar-in-folder, single/full view, and compare entry are disabled. Thumbnail chrome edits are suppressed — use the batch pane. The grid context menu on a selected item shows selection management (remove / select all / clear / copy paths & filenames); right-clicking an unselected thumb exits batch and shows the normal single-item menu.
 
-**Similar in folder** is enabled when the selection has a prompt or raw parameters. The metadata pane shows a **Similar** button next to the Prompt (or Parameters) row. The filter ANDs with search / favourites / tags; clear it via the header clear button (hover for a top-N slider), the toast’s Clear action, or the empty-state “Clear filters” CTA.
+**Similar in folder** is enabled when the selection has a prompt or raw parameters. The metadata pane header shows a stacked-photos **Similar** icon next to the favourite star (toggle: click again to clear). The same icon appears in the top bar while the filter is active. The filter ANDs with search / favourites / tags; clear it via the header similar control (hover for a top-N slider), the toast’s Clear action, or the empty-state “Clear filters” CTA.
 
 ### Pane layout
 
@@ -587,7 +587,7 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 
 ## Credits
 
-UI chrome icons are bundled as GTK symbolic SVGs under `data/icons/hicolor/scalable/actions/` (`lumen-*-symbolic`) so the app does not depend on a host Adwaita/Yaru icon theme. Glyphs were adapted from Freepik / Flaticon icon packs (free license with attribution).
+UI chrome icons are bundled as GTK symbolic SVGs under `data/icons/hicolor/scalable/actions/` (`lumen-*-symbolic`) so the app does not depend on a host Adwaita/Yaru icon theme. Glyphs were adapted from Freepik / Flaticon icon packs (free license with attribution). The Similar control uses `139-photo.svg` from Flaticon pack [111012 photography](https://www.flaticon.com/).
 
 The application icon (`com.lumennode.app`) uses a stacked gallery glyph from Flaticon pack [4211557 photo-editing](https://www.flaticon.com/) (`032-gallery.svg`), on a navy plate (`#253b56`).
 

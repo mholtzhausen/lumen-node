@@ -39,6 +39,8 @@ pub const TRASH: &str = "lumen-trash-symbolic";
 pub const MISSING: &str = "lumen-missing-symbolic";
 pub const SETTINGS: &str = "lumen-settings-symbolic";
 pub const APPEARANCE: &str = "lumen-appearance-symbolic";
+/// Stacked photos — Similar in folder (toggle / clear chrome).
+pub const SIMILAR: &str = "lumen-similar-symbolic";
 
 /// Adds search paths so bundled icons resolve in dev, install, and AppImage.
 pub fn register_bundled_icons() {

@@ -313,8 +313,8 @@ pub(crate) fn build_header_controls(
     let clear_btn = gtk4::Button::from_icon_name(crate::icons::CLEAR);
     clear_btn.set_tooltip_text(Some("Clear filters"));
 
-    let similar_filter_btn = gtk4::Button::from_icon_name(crate::icons::CLEAR);
-    similar_filter_btn.set_tooltip_text(Some("Clear similar filter"));
+    let similar_filter_btn = gtk4::Button::from_icon_name(crate::icons::SIMILAR);
+    similar_filter_btn.set_tooltip_text(Some("Similar in folder"));
     similar_filter_btn.add_css_class("flat");
 
     let controls_row = gtk4::Box::new(Orientation::Horizontal, 6);
