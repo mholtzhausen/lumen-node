@@ -1,7 +1,18 @@
+## 2.0.1 (82f7dcb) — 2026-07-20
+### Features and Improvements
+- Similar in folder: hover the clear-similar control for a top-N slider (10–100, default 50, persisted as `similar_top_n`, 200ms debounce).
+- Batch editor selection list shows at most 10 rows (scroll for more).
+
+### Bugfixes
+- Replace missing `view-filter-symbolic` on the similar-clear control with `edit-clear-symbolic`.
+
+### Deprecations
+- No deprecations were introduced in this release.
+
 ## 2.0.0 (6e71ac9) — 2026-07-20
 ### Features and Improvements
 - Grid multiselect via `MultiSelection` (Ctrl/Shift click, Ctrl+A for filtered); right sidebar batch editor for tags, favourites, rename, and copy paths/filenames.
-- Batch editor polish: stats table (count, size, extensions, date range), icon actions, collapsed rename expander, multi-column tags with add-to-all; selection list shows at most 10 rows (scroll for more).
+- Batch editor polish: stats table (count, size, extensions, date range), icon actions, collapsed rename expander, multi-column tags with add-to-all.
 - Batch rename with `{index}` / `{index:N}`, live preview, and Apply disabled on collisions.
 - Dual context menus: selection management when multi-selected; single-item menu when right-clicking outside the set.
 - Preferences opens as an in-window modal dialog that dims the background, with a left-hand page sidebar (General / Appearance / Startup / Tags).
@@ -14,7 +25,7 @@
 - Use directional `FilterChange` hints (MoreStrict / LessStrict) for favourites, search, and tag-filter toggles so GTK can avoid full refilters.
 - Vendored `lumen-tag-symbolic` / `lumen-tag-filled-symbolic` icons for tag UI.
 - Preferences → Appearance slider for thumbnail chrome button size (`thumbnail_chrome_scale`, default 60%), updates live.
-- Show header chrome when the similar-only filter is active; hover the clear-similar control for a top-N slider (10–100, default 50, persisted as `similar_top_n`, 200ms debounce).
+- Show header chrome when the similar-only filter is active.
 - Keyboard: `Ctrl+O` Open Folder; accelerators for pin, tag, and similar-in-folder.
 
 ### Bugfixes
@@ -25,7 +36,6 @@
 - Reset immersive views when opening a folder; clear filters without resetting sort.
 - Label trash tooltip as Move to Trash; point About website at `mholtzhausen/lumen-node`.
 - Replace missing `tag-symbolic` glyph with the bundled `lumen-tag-symbolic` icon.
-- Replace missing `view-filter-symbolic` on the similar-clear control with `edit-clear-symbolic`.
 
 ### Deprecations
 - No deprecations were introduced in this release. Legacy `active_tags` JSON arrays remain readable and migrate on save.
