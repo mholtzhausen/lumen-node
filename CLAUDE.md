@@ -99,10 +99,11 @@ The `PKG_CONFIG_PATH` in the Makefile is required for GTK4/libadwaita linking on
 | Module | Role |
 |---|---|
 | [src/main.rs](src/main.rs) | Composition root: assembles `ui::` / `core::`, owns `ScanProgressState` and shared flags, wires receivers. |
-| [src/ui/](src/ui/) | Shell/chrome, grid/preview/compare, actions/menus, keyboard, layout, scan runtime drain, navigation, selection, session. Center `ViewStack`: `grid` / `single` / `compare` (pin left, selection right, lock-left nav). |
-| [src/core/](src/core/) | `app_state` (includes `pinned_compare_path`), `scan_coordinator` (folder switches, generation IDs; clears compare pin). |
+| [src/ui/](src/ui/) | Shell/chrome, grid/preview/compare, actions/menus, keyboard, layout, zoom, preferences, empty_state, shortcuts, scan runtime drain, navigation, selection, session. Center `ViewStack`: `grid` / `single` / `compare` (pin left, selection right, lock-left nav). |
+| [src/core/](src/core/) | `app_state` (includes `pinned_compare_path`, `prompt_similarity_index` / `similar_paths`), `scan_coordinator` (folder switches, generation IDs; clears compare pin and similarity index/filter). |
 | [src/scanner.rs](src/scanner.rs) | Background thread: 2-phase directory scan (enumerate → enrich). Sends `ScanMessage` ([src/scan.rs](src/scan.rs)) via `async-channel`. |
 | [src/db.rs](src/db.rs) | Per-folder SQLite (`.lumen-node.db`). Caches SHA-256 hash + metadata; `image_tags` junction; `ui_state` for sort/search/favourites/active tags/thumbnail size. Staleness check on mtime+size. |
+| [src/similarity.rs](src/similarity.rs) | Prompt-token normalization + Jaccard / same-seed scoring for *Similar in folder*. |
 | [src/thumbnails.rs](src/thumbnails.rs) | Freedesktop thumbnail spec (`$XDG_CACHE_HOME/thumbnails/`). Two stores: MD5-URI named (spec-compliant) and hash-named (`lumen-node/` subdir). |
 | [src/metadata.rs](src/metadata.rs) | Format-dispatched metadata extraction: EXIF for JPEG/TIFF/PNG eXIf; PNG text chunks for AI-gen images (A1111, ComfyUI, InvokeAI). |
 | [src/config.rs](src/config.rs) | `~/.lumen-node/config.yml` — plain-text KV. Window/panes/recent folders/`color_scheme` on exit; preference keys via partial writers / Edit → Preferences (General / Appearance / Startup). |

@@ -295,7 +295,7 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `0` (or keypad) | Preview, single, or compare (right pane; not in a text field) | Reset zoom to fit-to-display |
 | `Ctrl+scroll` | Preview, single-view, or either compare pane | Zoom that picture (plain scroll still changes selection / right pane) |
 | `Ctrl+C` | Selection | Copy image pixels to clipboard |
-| `Ctrl+X` | Selection | Mark image to move; `Ctrl+V` into an open folder completes the move (same-filesystem `rename`) |
+| `Ctrl+X` | Selection | Mark image to move; `Ctrl+V` into an open folder completes the move (`rename`, or copy+remove across filesystems) |
 | `Ctrl+V` | Grid (folder open) | Paste clipboard image as PNG into the folder (then rename flow when applicable), or complete a prior cut-move |
 | `Delete` | Grid (selection, not in a text field) | Move selection to trash (same as context menu) |
 | `Shift+Delete` | Grid | Permanent delete (confirmation) |
@@ -303,6 +303,8 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `F2` | Selection (not in a text field) | Rename selected image |
 | `Ctrl+Shift+P` / `N` / `S` / `C` / `M` / `G` | Selection | Copy prompt / negative / seed / path / metadata / generation command |
 | `Ctrl+Alt+T` / `M` | Folder open | Refresh folder thumbnails / folder metadata |
+| `Ctrl+,` | Anywhere | Open Preferences |
+| `Ctrl+?` | Anywhere | Show Keyboard Shortcuts |
 | Double-click | Single / compare view | Toggle window fullscreen |
 | Middle-click | Single / compare view | Return to grid (compare also clears pin) |
 
@@ -344,13 +346,14 @@ LumenNode is organized into focused Rust modules. For a developer-oriented map o
 ```
 src/
 ├── main.rs            Composition root, scan progress state, global flags, wiring entry
-├── ui/                GTK widgets, actions, keyboard, layout, scan runtime, selection, …
+├── ui/                GTK widgets, actions, keyboard, layout, zoom, preferences, empty_state, shortcuts, …
 ├── core/              app_state, scan_coordinator (folder switches, generation IDs)
 ├── services/          Background helpers (e.g. update check integration)
 ├── scan.rs            ScanMessage enum (worker → UI channel)
 ├── scanner.rs         Background scan thread → async-channel
 ├── db.rs              Per-folder SQLite + ui_state
 ├── metadata.rs        Format-dispatched metadata extraction
+├── similarity.rs      Prompt-token Jaccard + same-seed boost (Similar in folder)
 ├── thumbnails.rs      Freedesktop spec + content-hash thumbnail stores
 ├── thumbnail_sizing.rs Discrete thumbnail size steps
 ├── config.rs          ~/.lumen-node/config.yml read/write
