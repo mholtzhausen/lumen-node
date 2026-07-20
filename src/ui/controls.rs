@@ -1,6 +1,6 @@
 use crate::core::app_state::AppState;
 use crate::db;
-use crate::sort::{sort_key_for_index, SORT_KEY_NAME_ASC};
+use crate::sort::sort_key_for_index;
 use crate::ui::grid::apply_thumbnail_size_change;
 use gtk4::prelude::*;
 use gtk4::gio::ListStore;
@@ -207,12 +207,12 @@ pub(crate) fn apply_clear_filters(
     similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
     sort_key: &Rc<RefCell<String>>,
     filter: &CustomFilter,
-    sorter: &CustomSorter,
+    _sorter: &CustomSorter,
     favourites_filter_btn: &gtk4::ToggleButton,
     tags_filter_btn: &gtk4::MenuButton,
     tags_filter_list: &gtk4::Box,
     search_entry: &gtk4::SearchEntry,
-    sort_dropdown: &gtk4::DropDown,
+    _sort_dropdown: &gtk4::DropDown,
     thumbnail_size: &Rc<RefCell<i32>>,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
 ) {
@@ -220,11 +220,9 @@ pub(crate) fn apply_clear_filters(
     favorites_only.set(false);
     active_tags.borrow_mut().clear();
     *similar_paths.borrow_mut() = None;
-    *sort_key.borrow_mut() = SORT_KEY_NAME_ASC.to_string();
     favourites_filter_btn.remove_css_class("favorites-filter-active");
     favourites_filter_btn.set_active(false);
     search_entry.set_text("");
-    sort_dropdown.set_selected(0);
     if let Some(folder) = current_folder.borrow().as_ref() {
         let _ = db::save_ui_state(
             folder.as_path(),
@@ -245,7 +243,6 @@ pub(crate) fn apply_clear_filters(
         current_folder,
     );
     filter.changed(gtk4::FilterChange::LessStrict);
-    sorter.changed(gtk4::SorterChange::Different);
 }
 
 pub(crate) fn deactivate_tag_filter(
