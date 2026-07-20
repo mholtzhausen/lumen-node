@@ -58,6 +58,8 @@ pub(crate) struct AppState {
     pub(crate) pinned_compare_path: Rc<RefCell<Option<String>>>,
     /// Optional UI sync after favourite toggles (preview header + full-view HUD).
     pub(crate) on_favourite_changed: Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
+    /// Optional UI sync after folder-wide tag renames (filter chrome + refilter).
+    pub(crate) on_folder_tags_changed: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     /// Live scale for grid thumbnail chrome buttons (0.4–1.0).
     pub(crate) thumbnail_chrome_scale: Rc<Cell<f64>>,
     /// Centered spinner overlay on the thumbnail grid (set after center build).
@@ -142,6 +144,7 @@ pub(crate) fn build_app_state(
         selected_path: Rc::new(RefCell::new(None)),
         pinned_compare_path: Rc::new(RefCell::new(None)),
         on_favourite_changed: Rc::new(RefCell::new(None)),
+        on_folder_tags_changed: Rc::new(RefCell::new(None)),
         thumbnail_chrome_scale,
         grid_loading: Rc::new(RefCell::new(None)),
     }

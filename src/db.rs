@@ -694,6 +694,28 @@ pub fn remove_tag(conn: &Connection, path: &Path, tag: &str) -> rusqlite::Result
     Ok(n > 0)
 }
 
+/// Renames a tag across all images in this folder DB.
+///
+/// If an image already has `new_tag`, the old row is dropped (merge). Returns the
+/// number of `image_tags` rows updated or deleted as part of the rename.
+pub fn rename_tag(conn: &Connection, old_tag: &str, new_tag: &str) -> rusqlite::Result<usize> {
+    let Some(old_tag) = normalize_tag(old_tag) else {
+        return Ok(0);
+    };
+    let Some(new_tag) = normalize_tag(new_tag) else {
+        return Ok(0);
+    };
+    if old_tag == new_tag {
+        return Ok(0);
+    }
+    let updated = conn.execute(
+        "UPDATE OR IGNORE image_tags SET tag = ?1 WHERE tag = ?2",
+        params![new_tag, old_tag],
+    )?;
+    let deleted = conn.execute("DELETE FROM image_tags WHERE tag = ?1", params![old_tag])?;
+    Ok(updated + deleted)
+}
+
 /// Moves all tags from `old_path` to `new_path` (e.g. after rename).
 pub fn move_tags(conn: &Connection, old_path: &Path, new_path: &Path) -> rusqlite::Result<()> {
     let old = old_path.to_string_lossy();
@@ -1012,13 +1034,29 @@ mod tests {
         );
         assert!(!remove_tag(&conn, &path, "missing").unwrap());
 
+        assert!(add_tag(&conn, &path, "keep").unwrap());
+        assert_eq!(rename_tag(&conn, "keep", "archive").unwrap(), 1);
+        assert_eq!(
+            list_tags_for_path(&conn, &path).unwrap(),
+            vec!["archive".to_string(), "style".to_string()]
+        );
+        // Merge when destination tag already exists on the same image.
+        assert!(add_tag(&conn, &path, "keep").unwrap());
+        assert_eq!(rename_tag(&conn, "keep", "archive").unwrap(), 1);
+        assert_eq!(
+            list_tags_for_path(&conn, &path).unwrap(),
+            vec!["archive".to_string(), "style".to_string()]
+        );
+        assert_eq!(rename_tag(&conn, "archive", "archive").unwrap(), 0);
+        assert_eq!(rename_tag(&conn, "   ", "x").unwrap(), 0);
+
         let renamed = dir.join("renamed.jpg");
         std::fs::rename(&path, &renamed).unwrap();
         move_tags(&conn, &path, &renamed).unwrap();
         assert!(list_tags_for_path(&conn, &path).unwrap().is_empty());
         assert_eq!(
             list_tags_for_path(&conn, &renamed).unwrap(),
-            vec!["style".to_string()]
+            vec!["archive".to_string(), "style".to_string()]
         );
     }
 

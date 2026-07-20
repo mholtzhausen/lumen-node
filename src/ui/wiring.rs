@@ -7,6 +7,7 @@ use crate::ui::controls::{
     install_clear_button_handler, install_favorites_only_handler, install_search_entry_handler,
     install_similar_filter_button_handler, install_sort_dropdown_handler,
     install_tags_filter_popover_handler, install_thumbnail_size_handlers,
+    refresh_tag_filter_from_folder,
 };
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::list_mutation::ListMutationContext;
@@ -281,6 +282,28 @@ pub(crate) struct ControlsWiringDeps {
 }
 
 pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
+    {
+        let tags_filter_list = deps.chrome.tags_filter_list.clone();
+        let tags_filter_btn = deps.chrome.tags_filter_btn.clone();
+        let active_tag_filters = deps.app_state.active_tag_filters.clone();
+        let tag_filter_debounce_gen = deps.app_state.tag_filter_debounce_gen.clone();
+        let filter = deps.filter.clone();
+        let current_folder = deps.app_state.current_folder.clone();
+        let grid_loading = deps.app_state.grid_loading.clone();
+        *deps.app_state.on_folder_tags_changed.borrow_mut() = Some(Rc::new(move || {
+            refresh_tag_filter_from_folder(
+                &tags_filter_list,
+                &tags_filter_btn,
+                &active_tag_filters,
+                &tag_filter_debounce_gen,
+                &filter,
+                &current_folder,
+                &grid_loading,
+            );
+            filter.changed(gtk4::FilterChange::Different);
+        }));
+    }
+
     install_sort_dropdown_handler(
         &deps.chrome.sort_dropdown,
         &deps.app_state.sort_key,

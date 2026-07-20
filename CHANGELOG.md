@@ -1,5 +1,7 @@
 ## Unreleased
 ### Features and Improvements
+- Preferences opens as an in-window modal dialog that dims the background, with a left-hand page sidebar (General / Appearance / Startup / Tags).
+- Preferences → Tags lets you rename folder tags; renames update all images, active filters, and the tag-filter chrome.
 - Grid loading spinner is opaque and full-bleed so thumbnails stay hidden while busy.
 - Quick-tag popover lists tags alphabetically with a letter header for each group when more than 10 tags are shown.
 - Tag filter applies live while the popover is open (200ms debounce; newer clicks cancel pending applies).

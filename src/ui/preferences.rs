@@ -1,7 +1,9 @@
-//! Tabbed preferences dialog (`adw::PreferencesWindow`) for `~/.lumen-node/config.yml`.
+//! Tabbed preferences dialog (`adw::PreferencesDialog`) for `~/.lumen-node/config.yml`
+//! and per-folder tag renaming.
 
 use crate::config::{self, ColorSchemePref};
 use crate::core::app_state::AppState;
+use crate::db;
 use crate::sort::{normalize_sort_key, sort_index_for_key, sort_key_for_index};
 use crate::thumbnail_sizing::{normalize_thumbnail_size, thumbnail_size_options};
 use crate::ui::grid::refresh_realized_grid_chrome_sizes;
@@ -11,7 +13,7 @@ use crate::ui::shell::{
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -26,19 +28,19 @@ pub(crate) struct PreferencesDeps {
 pub(crate) fn present_preferences_window(parent: &adw::ApplicationWindow, deps: PreferencesDeps) {
     let cfg = config::load();
 
-    let prefs = adw::PreferencesWindow::new();
-    prefs.set_transient_for(Some(parent));
-    prefs.set_modal(true);
-    prefs.set_title(Some("Preferences"));
+    let prefs = adw::PreferencesDialog::new();
+    prefs.set_title("Preferences");
     prefs.set_search_enabled(false);
-    prefs.set_default_width(560);
-    prefs.set_default_height(480);
+    prefs.set_content_width(760);
+    prefs.set_content_height(520);
+    prefs.set_presentation_mode(adw::DialogPresentationMode::Floating);
 
     prefs.add(&build_general_page(&cfg));
     prefs.add(&build_appearance_page(&cfg, &deps));
     prefs.add(&build_startup_page(&cfg));
+    prefs.add(&build_tags_page(&prefs, &deps));
 
-    prefs.present();
+    prefs.present(Some(parent));
 }
 
 fn build_general_page(cfg: &config::AppConfig) -> adw::PreferencesPage {
@@ -279,4 +281,147 @@ fn build_startup_page(cfg: &config::AppConfig) -> adw::PreferencesPage {
     group.add(&search_row);
     page.add(&group);
     page
+}
+
+fn build_tags_page(prefs: &adw::PreferencesDialog, deps: &PreferencesDeps) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::builder()
+        .title("Tags")
+        .icon_name(crate::icons::TAG_ICON_NAME)
+        .name("tags")
+        .build();
+
+    let group = adw::PreferencesGroup::builder()
+        .title("Rename tags")
+        .description(
+            "Edits tag names for the current folder. Renames update every image that uses the tag.",
+        )
+        .build();
+
+    let folder = deps.app_state.current_folder.borrow().clone();
+    let tags = folder
+        .as_ref()
+        .and_then(|folder| db::open(folder).ok())
+        .and_then(|conn| db::list_all_tags_in_folder(&conn).ok())
+        .unwrap_or_default();
+
+    if folder.is_none() {
+        let empty = adw::ActionRow::builder()
+            .title("No folder open")
+            .subtitle("Open a folder to rename its tags")
+            .build();
+        group.add(&empty);
+        page.add(&group);
+        return page;
+    }
+
+    if tags.is_empty() {
+        let empty = adw::ActionRow::builder()
+            .title("No tags yet")
+            .subtitle("Add tags from the thumbnail chrome or context menu first")
+            .build();
+        group.add(&empty);
+        page.add(&group);
+        return page;
+    }
+
+    for tag in tags {
+        let row = adw::EntryRow::builder()
+            .title("Tag name")
+            .show_apply_button(true)
+            .build();
+        row.set_text(&tag);
+
+        let app_state = deps.app_state.clone();
+        let prefs = prefs.clone();
+        let current_name = Rc::new(RefCell::new(tag));
+        row.connect_apply(move |row| {
+            let old_tag = current_name.borrow().clone();
+            let new_text = row.text().to_string();
+            match apply_tag_rename(&app_state, &old_tag, &new_text) {
+                Ok(RenameOutcome::Unchanged) => {
+                    row.set_text(&old_tag);
+                }
+                Ok(RenameOutcome::Renamed) => {
+                    if let Some(normalized) = db::normalize_tag(&new_text) {
+                        *current_name.borrow_mut() = normalized.clone();
+                        row.set_text(&normalized);
+                    }
+                }
+                Err(message) => {
+                    row.set_text(&old_tag);
+                    prefs.add_toast(adw::Toast::new(&message));
+                }
+            }
+        });
+        group.add(&row);
+    }
+
+    page.add(&group);
+    page
+}
+
+enum RenameOutcome {
+    Unchanged,
+    Renamed,
+}
+
+fn apply_tag_rename(
+    app_state: &AppState,
+    old_tag: &str,
+    new_tag: &str,
+) -> Result<RenameOutcome, String> {
+    let Some(old_norm) = db::normalize_tag(old_tag) else {
+        return Err("Tag name cannot be empty".to_string());
+    };
+    let Some(new_norm) = db::normalize_tag(new_tag) else {
+        return Err("Tag name cannot be empty".to_string());
+    };
+    if old_norm == new_norm {
+        return Ok(RenameOutcome::Unchanged);
+    }
+
+    let Some(folder) = app_state.current_folder.borrow().as_ref().cloned() else {
+        return Err("No folder open".to_string());
+    };
+    let conn = db::open(&folder).map_err(|_| "Could not open folder database".to_string())?;
+    let changed = db::rename_tag(&conn, &old_norm, &new_norm)
+        .map_err(|_| "Could not rename tag".to_string())?;
+    if changed == 0 {
+        return Ok(RenameOutcome::Unchanged);
+    }
+
+    {
+        let mut cache = app_state.tags_cache.borrow_mut();
+        for tags in cache.values_mut() {
+            let mut dirty = false;
+            for tag in tags.iter_mut() {
+                if tag == &old_norm {
+                    *tag = new_norm.clone();
+                    dirty = true;
+                }
+            }
+            if dirty {
+                tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+                tags.dedup();
+            }
+        }
+    }
+
+    {
+        let mut filters = app_state.active_tag_filters.borrow_mut();
+        if let Some(mode) = filters.remove(&old_norm) {
+            filters.insert(new_norm.clone(), mode);
+        }
+        let _ = db::set_ui_state_value(
+            folder.as_path(),
+            "active_tags",
+            &db::encode_active_tag_filters(&filters),
+        );
+    }
+
+    if let Some(cb) = app_state.on_folder_tags_changed.borrow().as_ref() {
+        cb();
+    }
+
+    Ok(RenameOutcome::Renamed)
 }
