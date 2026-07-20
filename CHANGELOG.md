@@ -1,8 +1,17 @@
+## 2.0.2 (fdb0da6) — 2026-07-20
+### Features and Improvements
+- Bundle portable `lumen-*-symbolic` UI icons (Freepik/Flaticon SVGs) so toolbar chrome works without a host Adwaita/Yaru icon theme; install/AppImage ship the full actions set.
+
+### Bugfixes
+- Replace remaining host FreeDesktop icon names in UI chrome with bundled `lumen-*-symbolic` constants.
+
+### Deprecations
+- No deprecations were introduced in this release.
+
 ## 2.0.1 (82f7dcb) — 2026-07-20
 ### Features and Improvements
 - Similar in folder: hover the clear-similar control for a top-N slider (10–100, default 50, persisted as `similar_top_n`, 200ms debounce).
 - Batch editor selection list shows at most 10 rows (scroll for more).
-- Bundle portable `lumen-*-symbolic` UI icons (Freepik/Flaticon SVGs) so toolbar chrome works without a host Adwaita/Yaru icon theme.
 
 ### Bugfixes
 - Replace missing `view-filter-symbolic` on the similar-clear control with `edit-clear-symbolic`.
