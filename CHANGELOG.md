@@ -1,5 +1,6 @@
 ## Unreleased
 ### Features and Improvements
+- Batch editor polish: stats table (count, size, extensions, date range), icon actions, collapsed rename expander, multi-column tags with add-to-all.
 - Grid multiselect via `MultiSelection` (Ctrl/Shift click, Ctrl+A for filtered); right sidebar batch editor for tags, favourites, rename, and copy paths/filenames.
 - Batch rename with `{index}` / `{index:N}`, live preview, and Apply disabled on collisions.
 - Dual context menus: selection management when multi-selected; single-item menu when right-clicking outside the set.

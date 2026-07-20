@@ -218,10 +218,11 @@ Hovering a grid thumbnail (or selecting / favouriting it) shows a right-hand chr
 
 With two or more images selected (`Ctrl+click` toggle, `Shift+click` range, `Ctrl+A` for all filtered), the right sidebar switches to a **batch editor**:
 
-- Selection summary, copy paths / filenames, and a tri-state favourite control
-- Batch rename with `{index}` or `{index:N}` (zero-padded), live preview, collision gating
+- Stats table: file count, total size, extension counts, date range
+- Icon actions for copy paths / filenames and tri-state favourite
 - Sortable list of selected images (name / date / size)
-- Tri-state tag checkboxes (none / mixed / all); mixed→all asks for confirmation
+- Collapsed **Batch rename** expander (`{index}` / `{index:N}`, live preview when open, collision gating)
+- Multi-column tri-state tags plus **Add tag to all** entry
 
 Plain click on a thumbnail exits batch mode (selection becomes that image only). `Escape` collapses to the last item in the batch list’s current sort. Changing search, filters, or folder also cancels batch mode. Rubber-band drag select is not in this release.
 

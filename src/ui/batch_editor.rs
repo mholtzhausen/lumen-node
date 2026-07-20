@@ -7,6 +7,7 @@ use crate::file_name_ops::{
     batch_rename_target, default_index_pad_width, expand_batch_rename_stem,
     find_batch_rename_collisions, parse_batch_index_placeholder,
 };
+use crate::sort_flags::format_sort_flag_date;
 use crate::thumbnails;
 use crate::ui::grid::refresh_realized_grid_favourite_icons;
 use crate::ui::list_mutation::ListMutationContext;
@@ -15,14 +16,18 @@ use crate::view_helpers::{
 };
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, CheckButton, DropDown, Entry, Image, Label, ListBox, ListBoxRow,
-    Orientation, PolicyType, ScrolledWindow, Separator,
+    Align, Box as GtkBox, Button, CheckButton, DropDown, Entry, Expander, Grid, Image, Label,
+    ListBox, ListBoxRow, Orientation, PolicyType, ScrolledWindow, Separator,
 };
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::SystemTime;
+
+const TAG_COLUMNS: i32 = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TriState {
@@ -66,25 +71,27 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
     content.set_margin_bottom(12);
     content.set_hexpand(true);
 
-    let summary = Label::new(Some("0 selected"));
-    summary.add_css_class("title-3");
-    summary.set_halign(Align::Start);
-    content.append(&summary);
+    // --- Stats table ---
+    let stats_grid = Grid::new();
+    stats_grid.set_column_spacing(12);
+    stats_grid.set_row_spacing(4);
+    stats_grid.set_halign(Align::Start);
+    let stats_files = make_stat_row(&stats_grid, 0, "Files");
+    let stats_size = make_stat_row(&stats_grid, 1, "Total size");
+    let stats_ext = make_stat_row(&stats_grid, 2, "Extensions");
+    let stats_dates = make_stat_row(&stats_grid, 3, "Date range");
+    content.append(&stats_grid);
 
-    let actions = GtkBox::new(Orientation::Horizontal, 6);
+    // --- Icon actions ---
+    let actions = GtkBox::new(Orientation::Horizontal, 4);
+    actions.add_css_class("linked");
     actions.set_halign(Align::Start);
-    let copy_paths_btn = Button::with_label("Copy paths");
-    let copy_names_btn = Button::with_label("Copy filenames");
-
-    let fav_btn = Button::new();
-    fav_btn.set_tooltip_text(Some("Toggle favourite for all selected"));
-    let fav_row = GtkBox::new(Orientation::Horizontal, 6);
-    let fav_icon = Image::from_icon_name("non-starred-symbolic");
-    let fav_label = Label::new(Some("Favourite all"));
-    fav_row.append(&fav_icon);
-    fav_row.append(&fav_label);
-    fav_btn.set_child(Some(&fav_row));
-
+    let copy_paths_btn = Button::from_icon_name("edit-copy-symbolic");
+    copy_paths_btn.set_tooltip_text(Some("Copy paths"));
+    let copy_names_btn = Button::from_icon_name("text-x-generic-symbolic");
+    copy_names_btn.set_tooltip_text(Some("Copy filenames"));
+    let fav_btn = Button::from_icon_name("non-starred-symbolic");
+    fav_btn.set_tooltip_text(Some("Favourite all"));
     actions.append(&copy_paths_btn);
     actions.append(&copy_names_btn);
     actions.append(&fav_btn);
@@ -92,22 +99,7 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
 
     content.append(&Separator::new(Orientation::Horizontal));
 
-    let rename_header = Label::new(Some("Batch rename"));
-    rename_header.add_css_class("heading");
-    rename_header.set_halign(Align::Start);
-    content.append(&rename_header);
-
-    let pattern_entry = Entry::new();
-    pattern_entry.set_placeholder_text(Some("name_{index} or name_{index:3}"));
-    pattern_entry.set_text("image_{index}");
-    content.append(&pattern_entry);
-
-    let rename_apply = Button::with_label("Apply rename");
-    rename_apply.add_css_class("suggested-action");
-    content.append(&rename_apply);
-
-    content.append(&Separator::new(Orientation::Horizontal));
-
+    // --- Selection list ---
     let list_header_row = GtkBox::new(Orientation::Horizontal, 8);
     let list_label = Label::new(Some("Selected images"));
     list_label.add_css_class("heading");
@@ -135,13 +127,51 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
 
     content.append(&Separator::new(Orientation::Horizontal));
 
+    // --- Rename (collapsed by default) ---
+    let rename_body = GtkBox::new(Orientation::Vertical, 8);
+    rename_body.set_margin_top(6);
+    let pattern_entry = Entry::new();
+    pattern_entry.set_placeholder_text(Some("name_{index} or name_{index:3}"));
+    pattern_entry.set_text("image_{index}");
+    rename_body.append(&pattern_entry);
+    let rename_apply = Button::with_label("Apply rename");
+    rename_apply.add_css_class("suggested-action");
+    rename_apply.set_halign(Align::Start);
+    rename_body.append(&rename_apply);
+
+    let rename_expander = Expander::builder()
+        .label("Batch rename")
+        .expanded(false)
+        .child(&rename_body)
+        .build();
+    content.append(&rename_expander);
+
+    content.append(&Separator::new(Orientation::Horizontal));
+
+    // --- Tags ---
     let tags_header = Label::new(Some("Tags"));
     tags_header.add_css_class("heading");
     tags_header.set_halign(Align::Start);
     content.append(&tags_header);
 
-    let tags_box = GtkBox::new(Orientation::Vertical, 4);
-    content.append(&tags_box);
+    let tags_grid = Grid::new();
+    tags_grid.set_column_spacing(12);
+    tags_grid.set_row_spacing(4);
+    tags_grid.set_column_homogeneous(true);
+    tags_grid.set_halign(Align::Fill);
+    tags_grid.set_hexpand(true);
+    content.append(&tags_grid);
+
+    let add_tag_row = GtkBox::new(Orientation::Horizontal, 6);
+    let add_tag_entry = Entry::new();
+    add_tag_entry.set_placeholder_text(Some("Add tag to all…"));
+    add_tag_entry.set_hexpand(true);
+    let add_tag_btn = Button::from_icon_name("list-add-symbolic");
+    add_tag_btn.set_tooltip_text(Some("Add tag to all selected images"));
+    add_tag_btn.add_css_class("suggested-action");
+    add_tag_row.append(&add_tag_entry);
+    add_tag_row.append(&add_tag_btn);
+    content.append(&add_tag_row);
 
     scroll.set_child(Some(&content));
     root.append(&scroll);
@@ -150,19 +180,34 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
     let fav_state: Rc<Cell<TriState>> = Rc::new(Cell::new(TriState::None));
     let suppress_tag_toggle: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let refresh_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let rename_expanded: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+
+    {
+        let rename_expanded = rename_expanded.clone();
+        let refresh_slot = refresh_slot.clone();
+        rename_expander.connect_notify_local(Some("expanded"), move |exp, _| {
+            rename_expanded.set(exp.is_expanded());
+            if let Some(refresh) = refresh_slot.borrow().as_ref() {
+                refresh();
+            }
+        });
+    }
 
     let refresh: Rc<dyn Fn()> = {
         let app_state = deps.app_state.clone();
         let selection_model = deps.selection_model.clone();
-        let summary = summary.clone();
+        let stats_files = stats_files.clone();
+        let stats_size = stats_size.clone();
+        let stats_ext = stats_ext.clone();
+        let stats_dates = stats_dates.clone();
         let selection_list = selection_list.clone();
-        let tags_box = tags_box.clone();
-        let fav_icon = fav_icon.clone();
-        let fav_label = fav_label.clone();
+        let tags_grid = tags_grid.clone();
+        let fav_btn = fav_btn.clone();
         let fav_state = fav_state.clone();
         let ordered_paths = ordered_paths.clone();
         let pattern_entry = pattern_entry.clone();
         let rename_apply = rename_apply.clone();
+        let rename_expanded = rename_expanded.clone();
         let sort_dropdown = sort_dropdown.clone();
         let window = deps.window.clone();
         let suppress_tag_toggle = suppress_tag_toggle.clone();
@@ -170,15 +215,11 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
 
         Rc::new(move || {
             let count = selected_count(&selection_model);
-            summary.set_text(&format!(
-                "{} selected",
-                if count == 1 {
-                    "1 image".to_string()
-                } else {
-                    format!("{count} images")
-                }
-            ));
             if count < 2 {
+                stats_files.set_text("—");
+                stats_size.set_text("—");
+                stats_ext.set_text("—");
+                stats_dates.set_text("—");
                 return;
             }
 
@@ -189,6 +230,15 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
             let ordered = order_batch_paths(&paths, &app_state.sort_fields_cache.borrow(), key);
             *ordered_paths.borrow_mut() = ordered.clone();
 
+            populate_stats(
+                &app_state,
+                &ordered,
+                &stats_files,
+                &stats_size,
+                &stats_ext,
+                &stats_dates,
+            );
+
             while let Some(child) = selection_list.first_child() {
                 selection_list.remove(&child);
             }
@@ -196,6 +246,7 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
             let pad = default_index_pad_width(ordered.len());
             let pattern = pattern_entry.text().to_string();
             let pattern_ok = parse_batch_index_placeholder(&pattern).is_ok();
+            let show_rename_preview = rename_expanded.get();
 
             let mut sources = Vec::new();
             let mut targets = Vec::new();
@@ -243,11 +294,12 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
                     .get(path)
                     .map(|f| f.size)
                     .unwrap_or(0);
-                let meta = Label::new(Some(&format!(
-                    "{} → {}",
-                    human_readable_bytes(size),
-                    preview_name
-                )));
+                let meta_text = if show_rename_preview {
+                    format!("{} → {}", human_readable_bytes(size), preview_name)
+                } else {
+                    human_readable_bytes(size)
+                };
+                let meta = Label::new(Some(&meta_text));
                 meta.add_css_class("dim-label");
                 meta.add_css_class("caption");
                 meta.set_halign(Align::Start);
@@ -288,21 +340,21 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
             fav_state.set(state);
             match state {
                 TriState::All => {
-                    fav_label.set_text("Unfavourite all");
-                    fav_icon.set_icon_name(Some("starred-symbolic"));
+                    fav_btn.set_icon_name("starred-symbolic");
+                    fav_btn.set_tooltip_text(Some("Unfavourite all"));
                 }
                 TriState::Mixed => {
-                    fav_label.set_text("Favourite all…");
-                    fav_icon.set_icon_name(Some("semi-starred-symbolic"));
+                    fav_btn.set_icon_name("semi-starred-symbolic");
+                    fav_btn.set_tooltip_text(Some("Favourite all…"));
                 }
                 TriState::None => {
-                    fav_label.set_text("Favourite all");
-                    fav_icon.set_icon_name(Some("non-starred-symbolic"));
+                    fav_btn.set_icon_name("non-starred-symbolic");
+                    fav_btn.set_tooltip_text(Some("Favourite all"));
                 }
             }
 
-            while let Some(child) = tags_box.first_child() {
-                tags_box.remove(&child);
+            while let Some(child) = tags_grid.first_child() {
+                tags_grid.remove(&child);
             }
             suppress_tag_toggle.set(true);
             let folder_tags = app_state
@@ -312,7 +364,7 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
                 .and_then(|f| db::open(f).ok())
                 .and_then(|conn| db::list_all_tags_in_folder(&conn).ok())
                 .unwrap_or_default();
-            for tag in folder_tags {
+            for (i, tag) in folder_tags.iter().enumerate() {
                 let counts = ordered
                     .iter()
                     .filter(|p| {
@@ -320,7 +372,7 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
                             .tags_cache
                             .borrow()
                             .get(*p)
-                            .map(|t| t.iter().any(|x| x == &tag))
+                            .map(|t| t.iter().any(|x| x == tag))
                             .unwrap_or(false)
                     })
                     .count();
@@ -332,7 +384,9 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
                     TriState::Mixed
                 };
 
-                let check = CheckButton::with_label(&tag);
+                let check = CheckButton::with_label(tag);
+                check.set_halign(Align::Start);
+                check.set_hexpand(true);
                 apply_tri_check(&check, tag_state);
 
                 let tag_name = tag.clone();
@@ -403,7 +457,10 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
                         refresh();
                     }
                 });
-                tags_box.append(&check);
+
+                let col = (i as i32) % TAG_COLUMNS;
+                let row = (i as i32) / TAG_COLUMNS;
+                tags_grid.attach(&check, col, row, 1, 1);
             }
             suppress_tag_toggle.set(false);
         })
@@ -587,6 +644,40 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
         });
     }
 
+    let add_tag_action = {
+        let app_state = deps.app_state.clone();
+        let ordered_paths = ordered_paths.clone();
+        let add_tag_entry = add_tag_entry.clone();
+        let refresh_c = refresh.clone();
+        let toast_overlay = deps.toast_overlay.clone();
+        let filter = deps.filter.clone();
+        Rc::new(move || {
+            let tag = add_tag_entry.text().trim().to_string();
+            if tag.is_empty() {
+                return;
+            }
+            let paths = ordered_paths.borrow().clone();
+            if paths.is_empty() {
+                return;
+            }
+            apply_tag_to_paths(&app_state, &paths, &tag, true);
+            filter.changed(gtk4::FilterChange::Different);
+            add_tag_entry.set_text("");
+            let toast = adw::Toast::new(&format!("Added “{tag}” to {} images", paths.len()));
+            toast.set_timeout(2);
+            toast_overlay.add_toast(toast);
+            refresh_c();
+        })
+    };
+    {
+        let add_tag_action = add_tag_action.clone();
+        add_tag_btn.connect_clicked(move |_| add_tag_action());
+    }
+    {
+        let add_tag_action = add_tag_action.clone();
+        add_tag_entry.connect_activate(move |_| add_tag_action());
+    }
+
     {
         let refresh_c = refresh.clone();
         deps.selection_model
@@ -598,6 +689,86 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
     refresh();
 
     BatchEditorBundle { root, refresh }
+}
+
+fn make_stat_row(grid: &Grid, row: i32, key: &str) -> Label {
+    let key_label = Label::new(Some(key));
+    key_label.add_css_class("dim-label");
+    key_label.set_halign(Align::Start);
+    let value = Label::new(Some("—"));
+    value.set_halign(Align::Start);
+    value.set_hexpand(true);
+    value.set_xalign(0.0);
+    // Wrap only — combining wrap + ellipsize triggers GTK measure warnings
+    // (min width > natural width for some for_size values).
+    value.set_wrap(true);
+    value.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+    grid.attach(&key_label, 0, row, 1, 1);
+    grid.attach(&value, 1, row, 1, 1);
+    value
+}
+
+fn populate_stats(
+    app_state: &AppState,
+    ordered: &[String],
+    files: &Label,
+    size_label: &Label,
+    ext_label: &Label,
+    dates_label: &Label,
+) {
+    files.set_text(&ordered.len().to_string());
+
+    let cache = app_state.sort_fields_cache.borrow();
+    let mut total_size = 0u64;
+    let mut ext_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut min_date: Option<SystemTime> = None;
+    let mut max_date: Option<SystemTime> = None;
+
+    for path in ordered {
+        let fields = cache.get(path);
+        let size = fields.map(|f| f.size).unwrap_or(0);
+        total_size = total_size.saturating_add(size);
+        if let Some(modified) = fields.and_then(|f| f.modified) {
+            min_date = Some(match min_date {
+                Some(cur) => cur.min(modified),
+                None => modified,
+            });
+            max_date = Some(match max_date {
+                Some(cur) => cur.max(modified),
+                None => modified,
+            });
+        }
+        let ext = Path::new(path)
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy().to_ascii_lowercase()))
+            .unwrap_or_else(|| "(none)".to_string());
+        *ext_counts.entry(ext).or_insert(0) += 1;
+    }
+
+    size_label.set_text(&human_readable_bytes(total_size));
+
+    let ext_text = if ext_counts.is_empty() {
+        "—".to_string()
+    } else {
+        ext_counts
+            .iter()
+            .map(|(ext, n)| format!("{ext}: {n}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    ext_label.set_text(&ext_text);
+    ext_label.set_tooltip_text(Some(&ext_text));
+
+    let date_text = match (
+        format_sort_flag_date(min_date),
+        format_sort_flag_date(max_date),
+    ) {
+        (Some(a), Some(b)) if a == b => a,
+        (Some(a), Some(b)) => format!("{a} – {b}"),
+        (Some(a), None) | (None, Some(a)) => a,
+        (None, None) => "—".to_string(),
+    };
+    dates_label.set_text(&date_text);
 }
 
 fn sort_key_to_index(key: BatchListSortKey) -> u32 {
@@ -624,11 +795,9 @@ fn index_to_sort_key(index: u32) -> BatchListSortKey {
 
 fn load_batch_thumb(thumb: &Image, app_state: &AppState, path: &str) {
     if let Some(hash) = app_state.hash_cache.borrow().get(path).cloned() {
-        if let Some(pb) = thumbnails::hash_thumb_if_exists_for_size(&hash, 64)
-            .or_else(|| {
-                thumbnails::hash_thumb_if_exists_for_size(&hash, thumbnails::THUMB_NORMAL_SIZE)
-            })
-        {
+        if let Some(pb) = thumbnails::hash_thumb_if_exists_for_size(&hash, 64).or_else(|| {
+            thumbnails::hash_thumb_if_exists_for_size(&hash, thumbnails::THUMB_NORMAL_SIZE)
+        }) {
             thumb.set_from_file(Some(&pb));
             return;
         }
