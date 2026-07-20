@@ -5,7 +5,9 @@ use gtk4::prelude::*;
 use gtk4::{
     CustomFilter, CustomSorter, FilterListModel, SingleSelection, SortListModel, StringObject,
 };
+use std::cell::Cell;
 use std::path::Path;
+use std::rc::Rc;
 
 pub(crate) struct ModelAssemblyDeps {
     pub(crate) app_state: AppState,
@@ -197,19 +199,30 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
     let selection_model = SingleSelection::new(Some(sort_model.clone()));
     let selection_for_default = selection_model.clone();
     let selected_path_hint = deps.app_state.selected_path.clone();
+    // Last valid selection index — kept across clears so filter eviction can
+    // reselect a neighbor after FilterChange::Different rebuilds (position=0).
+    let last_selected_index = Rc::new(Cell::new(0u32));
     {
         let selected_path_hint = selected_path_hint.clone();
+        let last_selected_index = last_selected_index.clone();
         selection_model.connect_selection_changed(move |model, _, _| {
             let path = model
                 .selected_item()
                 .and_downcast::<StringObject>()
                 .map(|obj| obj.string().to_string());
+            if path.is_some() {
+                let pos = model.selected();
+                if pos != gtk4::INVALID_LIST_POSITION {
+                    last_selected_index.set(pos);
+                }
+            }
             *selected_path_hint.borrow_mut() = path;
         });
     }
     {
         let selected_path_hint = selected_path_hint.clone();
-        sort_model.connect_items_changed(move |model, _, _, _| {
+        let last_selected_index = last_selected_index.clone();
+        sort_model.connect_items_changed(move |model, _position, removed, _added| {
             if model.n_items() == 0 {
                 return;
             }
@@ -240,6 +253,18 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
                     }
                     return;
                 }
+            }
+
+            // Selection filtered out (or hint path gone): keep place like trash —
+            // select what slid into the vacated index (next), or previous if last.
+            // Use last_selected_index (not signal position) because Different
+            // rebuilds report position=0 for the whole model.
+            if selected_path.is_none() && removed > 0 {
+                let next_idx = last_selected_index
+                    .get()
+                    .min(model.n_items().saturating_sub(1));
+                selection_for_default.set_selected(next_idx);
+                return;
             }
 
             // Hint missing or stale (folder change): index may be unchanged so
