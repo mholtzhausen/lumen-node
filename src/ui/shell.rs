@@ -39,6 +39,7 @@ pub(crate) struct HeaderControls {
     pub(crate) tags_filter_list: gtk4::Box,
     pub(crate) search_entry: gtk4::SearchEntry,
     pub(crate) clear_btn: gtk4::Button,
+    pub(crate) similar_filter_btn: gtk4::Button,
     pub(crate) left_toggle: gtk4::ToggleButton,
     pub(crate) right_toggle: gtk4::ToggleButton,
     pub(crate) open_btn: gtk4::Button,
@@ -260,6 +261,11 @@ pub(crate) fn build_header_controls(
     let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
     clear_btn.set_tooltip_text(Some("Clear filters"));
 
+    let similar_filter_btn = gtk4::Button::from_icon_name("view-filter-symbolic");
+    similar_filter_btn.set_tooltip_text(Some("Clear similar filter"));
+    similar_filter_btn.add_css_class("flat");
+    similar_filter_btn.set_sensitive(false);
+
     let controls_row = gtk4::Box::new(Orientation::Horizontal, 6);
     controls_row.set_halign(gtk4::Align::Fill);
     controls_row.set_hexpand(true);
@@ -295,6 +301,7 @@ pub(crate) fn build_header_controls(
     controls_row.append(&size_selector);
     controls_row.append(&favourites_filter_btn);
     controls_row.append(&tags_filter_btn);
+    controls_row.append(&similar_filter_btn);
     controls_row.append(&search_entry);
     controls_row.append(&clear_btn);
     header_bar.pack_start(&menubar);
@@ -351,6 +358,7 @@ pub(crate) fn build_header_controls(
         tags_filter_list,
         search_entry,
         clear_btn,
+        similar_filter_btn,
         left_toggle,
         right_toggle,
         open_btn,
@@ -420,7 +428,8 @@ pub(crate) fn create_window_with_defaults(
             color: @accent_color;
         }
         .favorites-filter-active,
-        .tags-filter-active {
+        .tags-filter-active,
+        .similar-filter-active {
             color: @accent_color;
         }
         gridview > child {

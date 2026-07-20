@@ -31,6 +31,26 @@ pub(crate) fn sync_tags_filter_button_style(
     }
 }
 
+pub(crate) fn set_similar_filter_chrome(similar_filter_btn: &gtk4::Button, active: bool) {
+    if active {
+        similar_filter_btn.add_css_class("similar-filter-active");
+        similar_filter_btn.set_sensitive(true);
+    } else {
+        similar_filter_btn.remove_css_class("similar-filter-active");
+        similar_filter_btn.set_sensitive(false);
+    }
+}
+
+pub(crate) fn clear_similar_filter(
+    similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
+    filter: &CustomFilter,
+    similar_filter_btn: &gtk4::Button,
+) {
+    *similar_paths.borrow_mut() = None;
+    set_similar_filter_chrome(similar_filter_btn, false);
+    filter.changed(gtk4::FilterChange::Different);
+}
+
 /// Rebuilds the tag-filter popover checkboxes from folder tags + active set.
 pub(crate) fn rebuild_tag_filter_list(
     tags_filter_list: &gtk4::Box,
@@ -215,11 +235,13 @@ pub(crate) fn apply_clear_filters(
     _sort_dropdown: &gtk4::DropDown,
     thumbnail_size: &Rc<RefCell<i32>>,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    similar_filter_btn: &gtk4::Button,
 ) {
     *search_text.borrow_mut() = String::new();
     favorites_only.set(false);
     active_tags.borrow_mut().clear();
     *similar_paths.borrow_mut() = None;
+    set_similar_filter_chrome(similar_filter_btn, false);
     favourites_filter_btn.remove_css_class("favorites-filter-active");
     favourites_filter_btn.set_active(false);
     search_entry.set_text("");
@@ -297,6 +319,7 @@ pub(crate) fn install_clear_button_handler(
     sort_dropdown: &gtk4::DropDown,
     thumbnail_size: &Rc<RefCell<i32>>,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
+    similar_filter_btn: &gtk4::Button,
 ) {
     let search_text_clear = search_text.clone();
     let favorites_only_clear = favorites_only.clone();
@@ -312,6 +335,7 @@ pub(crate) fn install_clear_button_handler(
     let sort_dropdown_clear = sort_dropdown.clone();
     let thumbnail_size_clear = thumbnail_size.clone();
     let current_folder_clear = current_folder.clone();
+    let similar_filter_btn_clear = similar_filter_btn.clone();
     clear_btn.connect_clicked(move |_| {
         apply_clear_filters(
             &search_text_clear,
@@ -328,7 +352,21 @@ pub(crate) fn install_clear_button_handler(
             &sort_dropdown_clear,
             &thumbnail_size_clear,
             &current_folder_clear,
+            &similar_filter_btn_clear,
         );
+    });
+}
+
+pub(crate) fn install_similar_filter_button_handler(
+    similar_filter_btn: &gtk4::Button,
+    similar_paths: &Rc<RefCell<Option<HashSet<String>>>>,
+    filter: &CustomFilter,
+) {
+    let similar_paths = similar_paths.clone();
+    let filter = filter.clone();
+    let btn = similar_filter_btn.clone();
+    similar_filter_btn.connect_clicked(move |_| {
+        clear_similar_filter(&similar_paths, &filter, &btn);
     });
 }
 

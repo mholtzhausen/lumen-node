@@ -369,6 +369,7 @@ fn build_ui(app: &adw::Application) {
         progress_box: progress_box.clone(),
         progress_label: progress_label.clone(),
         progress_bar: progress_bar.clone(),
+        similar_filter_btn: chrome.similar_filter_btn.clone(),
     });
 
     let model_bundle = build_model_bundle(ModelAssemblyDeps {
@@ -419,6 +420,7 @@ fn build_ui(app: &adw::Application) {
         tags_filter_list: chrome.tags_filter_list.clone(),
         search_entry: chrome.search_entry.clone(),
         sort_dropdown: chrome.sort_dropdown.clone(),
+        similar_filter_btn: chrome.similar_filter_btn.clone(),
         filter: filter.clone(),
         sorter: sorter.clone(),
     });
@@ -492,6 +494,7 @@ fn build_ui(app: &adw::Application) {
         pre_fullview_right: pre_fullview_right.clone(),
         tags_filter_btn: chrome.tags_filter_btn.clone(),
         tags_filter_list: chrome.tags_filter_list.clone(),
+        similar_filter_btn: chrome.similar_filter_btn.clone(),
     });
 
     install_scan_runtime(ScanRuntimeDeps {

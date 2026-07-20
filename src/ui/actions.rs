@@ -244,6 +244,7 @@ pub fn install_context_menu(
     on_favourite_changed: Rc<dyn Fn(bool)>,
     tags_filter_btn: &gtk4::MenuButton,
     tags_filter_list: &gtk4::Box,
+    similar_filter_btn: &gtk4::Button,
 ) -> Rc<dyn Fn()> {
     let action_group = gio::SimpleActionGroup::new();
     let sync_context_menu_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
@@ -821,6 +822,7 @@ pub fn install_context_menu(
         let similar_paths = mutation_ctx.app_state.similar_paths.clone();
         let filter_for_similar = filter.clone();
         let toast_for_similar = toast_overlay.clone();
+        let similar_filter_btn = similar_filter_btn.clone();
         show_similar_action.connect_activate(move |_, _| {
             let Some(path) = selected_image_path(&selection_for_similar) else {
                 return;
@@ -836,6 +838,7 @@ pub fn install_context_menu(
             };
             let count = matches.len();
             *similar_paths.borrow_mut() = Some(matches);
+            crate::ui::controls::set_similar_filter_chrome(&similar_filter_btn, true);
             filter_for_similar.changed(gtk4::FilterChange::Different);
 
             let toast = adw::Toast::new(&format!(
@@ -847,9 +850,13 @@ pub fn install_context_menu(
             toast.set_timeout(4);
             let similar_paths_clear = similar_paths.clone();
             let filter_clear = filter_for_similar.clone();
+            let similar_btn_clear = similar_filter_btn.clone();
             toast.connect_button_clicked(move |_| {
-                *similar_paths_clear.borrow_mut() = None;
-                filter_clear.changed(gtk4::FilterChange::Different);
+                crate::ui::controls::clear_similar_filter(
+                    &similar_paths_clear,
+                    &filter_clear,
+                    &similar_btn_clear,
+                );
             });
             toast_for_similar.add_toast(toast);
         });

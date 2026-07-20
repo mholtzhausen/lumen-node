@@ -5,7 +5,8 @@ use crate::ui::actions::install_context_menu;
 use crate::ui::center::CenterContentBundle;
 use crate::ui::controls::{
     install_clear_button_handler, install_favorites_only_handler, install_search_entry_handler,
-    install_sort_dropdown_handler, install_thumbnail_size_handlers,
+    install_similar_filter_button_handler, install_sort_dropdown_handler,
+    install_thumbnail_size_handlers,
 };
 use crate::ui::left_chrome_wiring::LeftChromeWiring;
 use crate::ui::list_mutation::ListMutationContext;
@@ -56,6 +57,7 @@ pub(crate) struct ContextMenuWiringDeps {
     pub(crate) pre_fullview_right: Rc<Cell<bool>>,
     pub(crate) tags_filter_btn: gtk4::MenuButton,
     pub(crate) tags_filter_list: gtk4::Box,
+    pub(crate) similar_filter_btn: gtk4::Button,
 }
 
 pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn Fn()> {
@@ -139,6 +141,7 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
         on_favourite_changed,
         &deps.tags_filter_btn,
         &deps.tags_filter_list,
+        &deps.similar_filter_btn,
     )
 }
 
@@ -306,6 +309,12 @@ pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {
         &deps.chrome.sort_dropdown,
         &deps.app_state.thumbnail_size,
         &deps.app_state.current_folder,
+        &deps.chrome.similar_filter_btn,
+    );
+    install_similar_filter_button_handler(
+        &deps.chrome.similar_filter_btn,
+        &deps.app_state.similar_paths,
+        &deps.filter,
     );
     install_favorites_only_handler(
         &deps.chrome.favourites_filter_btn,

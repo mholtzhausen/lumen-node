@@ -63,6 +63,7 @@ pub(crate) struct EmptyStateWiringDeps {
     pub(crate) tags_filter_list: gtk4::Box,
     pub(crate) search_entry: gtk4::SearchEntry,
     pub(crate) sort_dropdown: gtk4::DropDown,
+    pub(crate) similar_filter_btn: gtk4::Button,
     pub(crate) filter: gtk4::CustomFilter,
     pub(crate) sorter: gtk4::CustomSorter,
 }
@@ -95,6 +96,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
         let tags_filter_list = deps.tags_filter_list.clone();
         let search_entry = deps.search_entry.clone();
         let sort_dropdown = deps.sort_dropdown.clone();
+        let similar_filter_btn = deps.similar_filter_btn.clone();
         let filter = deps.filter.clone();
         let sorter = deps.sorter.clone();
         let current_action = current_action.clone();
@@ -140,6 +142,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
                         &sort_dropdown,
                         &app_state.thumbnail_size,
                         &app_state.current_folder,
+                        &similar_filter_btn,
                     );
                 }
                 EmptyAction::None => {}
