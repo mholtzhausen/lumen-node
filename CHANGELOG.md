@@ -1,27 +1,33 @@
-## Unreleased
+## 2.0.0 (6e71ac9) — 2026-07-20
 ### Features and Improvements
-- Batch editor polish: stats table (count, size, extensions, date range), icon actions, collapsed rename expander, multi-column tags with add-to-all.
 - Grid multiselect via `MultiSelection` (Ctrl/Shift click, Ctrl+A for filtered); right sidebar batch editor for tags, favourites, rename, and copy paths/filenames.
+- Batch editor polish: stats table (count, size, extensions, date range), icon actions, collapsed rename expander, multi-column tags with add-to-all.
 - Batch rename with `{index}` / `{index:N}`, live preview, and Apply disabled on collisions.
 - Dual context menus: selection management when multi-selected; single-item menu when right-clicking outside the set.
 - Preferences opens as an in-window modal dialog that dims the background, with a left-hand page sidebar (General / Appearance / Startup / Tags).
 - Preferences → Tags lets you rename folder tags; renames update all images, active filters, and the tag-filter chrome.
-- Grid loading spinner is opaque and full-bleed so thumbnails stay hidden while busy.
-- Quick-tag popover lists tags alphabetically with a letter header for each group when more than 10 tags are shown.
-- Tag filter applies live while the popover is open (200ms debounce; newer clicks cancel pending applies).
-- Tag filter is three-state per tag: require (✓), ignore (empty), or exclude (✕); polarity persists in the folder DB.
-- Show a centered spinner overlay on the thumbnail grid while a folder scan has no items yet and during user-initiated filter/search updates.
-- Use directional `FilterChange` hints (MoreStrict / LessStrict) for favourites, search, and tag-filter toggles so GTK can avoid full refilters.
 - Grid thumbnails show a right-hand chrome pane (favourite + tags) on hover/selection; tags open a filterable multi-select checklist with **Add `foo`** for new tags.
-- Vendored `lumen-tag-symbolic` price-tag icon for tag UI (works without Adwaita `tag-symbolic`).
+- Quick-tag popover lists tags alphabetically with letter headers (when >10 tags); closes on pointer leave / Escape; Enter creates when only **Add** is shown; tagged images use a filled tag icon.
+- Tag filter is three-state per tag: require (✓), ignore (empty), or exclude (✕); polarity persists in the folder DB as `active_tags` JSON object (legacy arrays still load as all-require).
+- Tag filter applies live while the popover is open (200ms debounce; newer clicks cancel pending applies).
+- Show a centered opaque full-bleed spinner on the thumbnail grid while a folder scan has no items yet and during user-initiated filter/search updates.
+- Use directional `FilterChange` hints (MoreStrict / LessStrict) for favourites, search, and tag-filter toggles so GTK can avoid full refilters.
+- Vendored `lumen-tag-symbolic` / `lumen-tag-filled-symbolic` icons for tag UI.
 - Preferences → Appearance slider for thumbnail chrome button size (`thumbnail_chrome_scale`, default 60%), updates live.
-- Quick-tag popover closes on pointer leave / Escape; Enter creates when only **Add** is shown; tagged images use a filled tag icon.
+- Show header chrome when the similar-only filter is active.
+- Keyboard: `Ctrl+O` Open Folder; accelerators for pin, tag, and similar-in-folder.
 
 ### Bugfixes
 - When a filter change removes the selected thumbnail, select the next/previous neighbor instead of jumping to the top of the grid.
 - Selecting a tag on an unselected thumbnail selects that image first so filter eviction keeps place.
 - Skip O(N) selection path scan on model `items-changed` when the current selection already matches `selected_path_hint` (reduces filter/search UI freezes).
+- Preserve favourite and tags across rename/cut; upsert prompt similarity index after path insert/replace.
+- Reset immersive views when opening a folder; clear filters without resetting sort.
+- Label trash tooltip as Move to Trash; point About website at `mholtzhausen/lumen-node`.
 - Replace missing `tag-symbolic` glyph with the bundled `lumen-tag-symbolic` icon.
+
+### Deprecations
+- No deprecations were introduced in this release. Legacy `active_tags` JSON arrays remain readable and migrate on save.
 
 ## 1.7.0 (c664ab5)
 ### Features and Improvements

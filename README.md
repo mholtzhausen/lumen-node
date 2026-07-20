@@ -83,7 +83,7 @@ Current UI screenshot:
 | 🖼️ | **Grid + single-view + compare** — grid for browsing, click for focus, Escape to return; pin a reference for side-by-side compare (lock-left); empty grid shows guidance (open folder, no images, no matches) |
 | 📐 | **4 thumbnail sizes** — 128px base with larger steps up to 240px (128, 160, 208, 240), adjustable in one click |
 | 🔍 | **Live search** — filters grid by filename, tags, and metadata in real time |
-| 🏷️ | **Free-form tags** — assign tags from the thumbnail chrome pane (filterable checkboxes + Add), context menu, or `Ctrl+Shift+T`; filter with the header tag popover (AND); persisted per folder |
+| 🏷️ | **Free-form tags** — assign tags from the thumbnail chrome pane (filterable checkboxes + Add), context menu, or `Ctrl+Shift+T`; filter with the header tag popover (require / ignore / exclude per tag); persisted per folder |
 | ☑️ | **Multiselect & batch editor** — Ctrl/Shift select, Ctrl+A (filtered); right pane becomes a batch workspace for tags, favourites, rename, and copy |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |
 | 💾 | **Session persistence** — window, pane positions, recent folders, and theme preference (`color_scheme`) in `~/.lumen-node/config.yml`; sort, search, and thumbnail size per folder in `.lumen-node.db` (`ui_state`). Optional YAML startup defaults and editor/HUD keys are editable via **Edit → Preferences…** (partial writes; unknown keys preserved) |
@@ -495,7 +495,7 @@ CREATE TABLE image_tags (
 CREATE INDEX idx_image_tags_tag ON image_tags(tag);
 ```
 
-A companion **`ui_state`** table stores string key-value rows for the current folder’s sort mode, search text, favourites filter, active tag filter (`active_tags` as a JSON array), and thumbnail size (`db::save_ui_state` / `load_ui_state`).
+A companion **`ui_state`** table stores string key-value rows for the current folder’s sort mode, search text, favourites filter, active tag filter (`active_tags` as a JSON object of `require`/`exclude` modes; legacy arrays decode as all-require), and thumbnail size (`db::save_ui_state` / `load_ui_state`).
 
 `ensure_indexed_with_outcome()` checks `mtime + size` for staleness. A match returns the cached row in microseconds. A mismatch triggers the full slow path: SHA-256 hash → metadata extraction → thumbnail generation → DB write.
 
@@ -578,7 +578,7 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 - [x] **External open** — file manager and external editor (optional `external_editor` config); per-format custom apps remain a possible enhancement
 - [x] **Side-by-side compare** — pin reference image (left), navigate selection on the right (lock-left); context menu Pin / Exit compare
 - [x] **Multiselect & batch editor** — `MultiSelection` grid; batch pane for tags / favourite / rename / copy; selection-management context menu; rubber-band deferred
-- [x] **Free-form tags** — junction table `image_tags`, context menu add/remove, header multi-select filter (AND), search inclusion, `ui_state.active_tags`
+- [x] **Free-form tags** — junction table `image_tags`, context menu add/remove, header three-state tag filter (require / ignore / exclude), search inclusion, `ui_state.active_tags`
 - [x] **Version checker** — background check + in-app banner (`src/updater.rs` → `mholtzhausen/lumen-node` releases; `services::update_checker`)
 - [x] **Prompt / parameter similarity browse** — in-memory token index after enrich; *Similar in folder* from context menu / metadata pane (`src/similarity.rs`)
 

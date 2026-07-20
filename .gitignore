@@ -1,6 +1,9 @@
 # Rust build artifacts
 /target/
+/dist/
 **/*.rs.bk
+*.zip
+*.zip.sha256
 
 # Editor and IDE
 .vscode/
