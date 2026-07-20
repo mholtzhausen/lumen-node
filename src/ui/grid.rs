@@ -683,7 +683,7 @@ pub fn setup_grid_list_item(
     let delete_btn = Button::from_icon_name("user-trash-symbolic");
     delete_btn.add_css_class("flat");
     delete_btn.add_css_class("destructive-action");
-    delete_btn.set_tooltip_text(Some("Delete file"));
+    delete_btn.set_tooltip_text(Some("Move to Trash"));
     delete_btn.set_opacity(0.0);
     delete_btn.set_focus_on_click(false);
     let on_rename_btn = on_rename.clone();
