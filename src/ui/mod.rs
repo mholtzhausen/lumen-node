@@ -14,6 +14,7 @@ pub mod navigation;
 pub mod open_folder;
 pub mod preferences;
 pub mod preview;
+pub mod quick_tag;
 pub mod right_sidebar;
 pub mod scan_runtime;
 pub mod selection;

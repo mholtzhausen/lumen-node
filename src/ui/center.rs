@@ -29,6 +29,8 @@ pub(crate) struct CenterContentDeps {
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
+    pub(crate) tags_filter_btn: gtk4::MenuButton,
+    pub(crate) tags_filter_list: gtk4::Box,
     pub(crate) full_view_favourite_icon: bool,
     pub(crate) full_view_favourite_icon_seconds: f64,
 }
@@ -69,6 +71,8 @@ pub(crate) fn build_center_content(deps: CenterContentDeps) -> CenterContentBund
         },
         thumb_generations: deps.thumb_generations.clone(),
         bound_paths: deps.bound_paths.clone(),
+        tags_filter_btn: deps.tags_filter_btn.clone(),
+        tags_filter_list: deps.tags_filter_list.clone(),
     });
 
     let grid_view = create_grid_view(&deps.selection_model, &factory);

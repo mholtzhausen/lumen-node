@@ -1,7 +1,8 @@
 use gtk4::prelude::*;
 use gtk4::{
     gdk, gio, glib, Box as GtkBox, Button, EventControllerMotion, GridView, Image, Label, ListItem,
-    Orientation, Overlay, ScrolledWindow, SignalListItemFactory, SingleSelection, StringObject,
+    MenuButton, Orientation, Overlay, ScrolledWindow, SignalListItemFactory, SingleSelection,
+    StringObject,
 };
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
@@ -18,6 +19,7 @@ use crate::{
     sort_flags::sort_flag_text_for_path,
     ui::list_mutation::ListMutationContext,
     ui::preview::ACTIVE_PREVIEW_TASKS,
+    ui::quick_tag::{attach_quick_tag_popover, QuickTagAttachDeps},
     thumbnails,
     PREVIEW_REQUEST_PENDING,
 };
@@ -45,6 +47,8 @@ pub struct GridFactoryDeps {
     pub mutation_ctx: ListMutationContext,
     pub thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     pub bound_paths: Rc<RefCell<HashMap<usize, String>>>,
+    pub tags_filter_btn: MenuButton,
+    pub tags_filter_list: gtk4::Box,
 }
 
 pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
@@ -69,6 +73,8 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let app_state_setup = deps.app_state.clone();
     let toast_overlay_setup = deps.toast_overlay.clone();
     let filter_setup = deps.filter.clone();
+    let tags_filter_btn_setup = deps.tags_filter_btn.clone();
+    let tags_filter_list_setup = deps.tags_filter_list.clone();
     factory.connect_setup(move |_, obj| {
         let Some(list_item) = obj.downcast_ref::<ListItem>() else {
             return;
@@ -85,6 +91,8 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             app_state_setup.clone(),
             toast_overlay_setup.clone(),
             filter_setup.clone(),
+            tags_filter_btn_setup.clone(),
+            tags_filter_list_setup.clone(),
         );
     });
 
@@ -472,7 +480,22 @@ pub fn refresh_realized_grid_cell_sizes(
     }
 }
 
-fn apply_favourite_button_state(
+fn chrome_widgets_from_overlay(overlay: &Overlay) -> Option<(GtkBox, Button, MenuButton)> {
+    let chrome_pane = overlay.last_child().and_downcast::<GtkBox>()?;
+    let favourite_btn = chrome_pane.first_child().and_downcast::<Button>()?;
+    let tags_btn = chrome_pane.last_child().and_downcast::<MenuButton>()?;
+    Some((chrome_pane, favourite_btn, tags_btn))
+}
+
+fn tag_popover_is_open(tags_btn: &MenuButton) -> bool {
+    tags_btn
+        .popover()
+        .map(|p| p.is_visible())
+        .unwrap_or(false)
+}
+
+fn apply_chrome_pane_state(
+    chrome_pane: &GtkBox,
     favourite_btn: &Button,
     favourite_cache: &Rc<RefCell<HashMap<String, bool>>>,
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
@@ -501,14 +524,14 @@ fn apply_favourite_button_state(
     } else {
         favourite_btn.remove_css_class("thumbnail-favourite-active");
     }
-    favourite_btn.set_opacity(if is_favourite {
+    chrome_pane.set_opacity(if is_favourite {
         1.0
     } else if show_chrome {
         0.66
     } else {
         0.0
     });
-    favourite_btn.set_visible(show_chrome);
+    chrome_pane.set_visible(show_chrome);
 }
 
 pub fn refresh_realized_grid_favourite_icons(app_state: &AppState) {
@@ -521,15 +544,18 @@ pub fn refresh_realized_grid_favourite_icons(app_state: &AppState) {
         let Some(overlay) = cell_box.first_child().and_downcast::<Overlay>() else {
             continue;
         };
-        let Some(favourite_btn) = overlay.last_child().and_downcast::<Button>() else {
+        let Some((chrome_pane, favourite_btn, tags_btn)) = chrome_widgets_from_overlay(&overlay)
+        else {
             continue;
         };
-        apply_favourite_button_state(
+        let hover_active = tag_popover_is_open(&tags_btn);
+        apply_chrome_pane_state(
+            &chrome_pane,
             &favourite_btn,
             &app_state.favourite_cache,
             &app_state.bound_paths,
             &app_state.selected_path,
-            false,
+            hover_active,
         );
     }
 }
@@ -595,13 +621,16 @@ fn toggle_grid_favourite(
                 .map(|bound| bound.as_str() == path.as_str())
                 .unwrap_or(false);
             if is_current {
-                apply_favourite_button_state(
-                    &button,
-                    &app_state.favourite_cache,
-                    &bound_paths,
-                    &app_state.selected_path,
-                    true,
-                );
+                if let Some(chrome_pane) = button.parent().and_downcast::<GtkBox>() {
+                    apply_chrome_pane_state(
+                        &chrome_pane,
+                        &button,
+                        &app_state.favourite_cache,
+                        &bound_paths,
+                        &app_state.selected_path,
+                        true,
+                    );
+                }
             }
         }
         if app_state.selected_path.borrow().as_ref() == Some(&path) {
@@ -631,6 +660,8 @@ pub fn setup_grid_list_item(
     app_state: AppState,
     toast_overlay: adw::ToastOverlay,
     filter: gtk4::CustomFilter,
+    tags_filter_btn: MenuButton,
+    tags_filter_list: gtk4::Box,
 ) {
     let cell_box = GtkBox::new(Orientation::Vertical, 4);
     cell_box.add_css_class("thumbnail-card");
@@ -645,19 +676,65 @@ pub fn setup_grid_list_item(
     thumb_image.set_pixel_size(size);
     let thumb_overlay = Overlay::new();
     thumb_overlay.set_child(Some(&thumb_image));
+
+    let chrome_pane = GtkBox::new(Orientation::Vertical, 2);
+    chrome_pane.set_halign(gtk4::Align::End);
+    chrome_pane.set_valign(gtk4::Align::Start);
+    chrome_pane.set_margin_top(4);
+    chrome_pane.set_margin_end(4);
+    chrome_pane.set_opacity(0.0);
+    chrome_pane.set_visible(false);
+
     let favourite_btn = Button::from_icon_name("non-starred-symbolic");
     favourite_btn.add_css_class("flat");
     favourite_btn.add_css_class("circular");
     favourite_btn.add_css_class("thumbnail-favourite-button");
     favourite_btn.set_tooltip_text(Some("Toggle favourite"));
     favourite_btn.set_focus_on_click(false);
-    favourite_btn.set_halign(gtk4::Align::End);
-    favourite_btn.set_valign(gtk4::Align::Start);
-    favourite_btn.set_margin_top(4);
-    favourite_btn.set_margin_end(4);
-    favourite_btn.set_opacity(0.0);
-    favourite_btn.set_visible(false);
-    thumb_overlay.add_overlay(&favourite_btn);
+
+    let tags_btn = MenuButton::new();
+    tags_btn.set_icon_name("user-bookmarks-symbolic");
+    tags_btn.add_css_class("flat");
+    tags_btn.add_css_class("circular");
+    tags_btn.add_css_class("thumbnail-favourite-button");
+    tags_btn.set_tooltip_text(Some("Tags"));
+    tags_btn.set_focus_on_click(false);
+
+    chrome_pane.append(&favourite_btn);
+    chrome_pane.append(&tags_btn);
+    thumb_overlay.add_overlay(&chrome_pane);
+
+    let hover_active = Rc::new(Cell::new(false));
+    let tags_popover = attach_quick_tag_popover(
+        &tags_btn,
+        QuickTagAttachDeps {
+            app_state: app_state.clone(),
+            toast_overlay: toast_overlay.clone(),
+            filter: filter.clone(),
+            tags_filter_btn,
+            tags_filter_list,
+            bound_paths: bound_paths.clone(),
+        },
+    );
+    {
+        let chrome_pane_closed = chrome_pane.clone();
+        let favourite_btn_closed = favourite_btn.clone();
+        let favourite_cache_closed = app_state.favourite_cache.clone();
+        let bound_paths_closed = bound_paths.clone();
+        let selected_path_closed = app_state.selected_path.clone();
+        let hover_active_closed = hover_active.clone();
+        tags_popover.connect_closed(move |_| {
+            apply_chrome_pane_state(
+                &chrome_pane_closed,
+                &favourite_btn_closed,
+                &favourite_cache_closed,
+                &bound_paths_closed,
+                &selected_path_closed,
+                hover_active_closed.get(),
+            );
+        });
+    }
+
     let generation_token = Rc::new(Cell::new(0_u64));
     thumb_generations.borrow_mut().insert(
         thumb_image.as_ptr() as usize,
@@ -731,19 +808,26 @@ pub fn setup_grid_list_item(
     let rename_btn_leave = rename_btn.clone();
     let delete_btn_enter = delete_btn.clone();
     let delete_btn_leave = delete_btn.clone();
+    let chrome_pane_enter = chrome_pane.clone();
+    let chrome_pane_leave = chrome_pane.clone();
     let favourite_btn_enter = favourite_btn.clone();
     let favourite_btn_leave = favourite_btn.clone();
+    let tags_btn_leave = tags_btn.clone();
     let favourite_cache_enter = app_state.favourite_cache.clone();
     let favourite_cache_leave = app_state.favourite_cache.clone();
     let bound_paths_enter = bound_paths.clone();
     let bound_paths_leave = bound_paths.clone();
     let selected_path_enter = app_state.selected_path.clone();
     let selected_path_leave = app_state.selected_path.clone();
+    let hover_active_enter = hover_active.clone();
+    let hover_active_leave = hover_active.clone();
     let motion = EventControllerMotion::new();
     motion.connect_enter(move |_, _, _| {
+        hover_active_enter.set(true);
         rename_btn_enter.set_opacity(1.0);
         delete_btn_enter.set_opacity(1.0);
-        apply_favourite_button_state(
+        apply_chrome_pane_state(
+            &chrome_pane_enter,
             &favourite_btn_enter,
             &favourite_cache_enter,
             &bound_paths_enter,
@@ -752,14 +836,17 @@ pub fn setup_grid_list_item(
         );
     });
     motion.connect_leave(move |_| {
+        hover_active_leave.set(false);
         rename_btn_leave.set_opacity(0.0);
         delete_btn_leave.set_opacity(0.0);
-        apply_favourite_button_state(
+        let keep_chrome = tag_popover_is_open(&tags_btn_leave);
+        apply_chrome_pane_state(
+            &chrome_pane_leave,
             &favourite_btn_leave,
             &favourite_cache_leave,
             &bound_paths_leave,
             &selected_path_leave,
-            false,
+            keep_chrome,
         );
     });
     cell_box.add_controller(motion);
@@ -793,7 +880,8 @@ pub fn bind_grid_list_item(
     let Some(thumb_image) = thumb_overlay.child().and_downcast::<Image>() else {
         return;
     };
-    let Some(favourite_btn) = thumb_overlay.last_child().and_downcast::<Button>() else {
+    let Some((chrome_pane, favourite_btn, tags_btn)) = chrome_widgets_from_overlay(&thumb_overlay)
+    else {
         return;
     };
     let Some(name_row) = cell_box.last_child().and_downcast::<GtkBox>() else {
@@ -834,18 +922,21 @@ pub fn bind_grid_list_item(
         favourite_btn.as_ptr() as usize,
         path_str.clone(),
     );
+    bound_paths_map.insert(tags_btn.as_ptr() as usize, path_str.clone());
+    bound_paths_map.insert(chrome_pane.as_ptr() as usize, path_str.clone());
     bound_paths_map.insert(cell_box.as_ptr() as usize, path_str.clone());
     bound_paths_map.insert(thumb_overlay.as_ptr() as usize, path_str.clone());
     bound_paths_map.insert(name_row.as_ptr() as usize, path_str.clone());
     bound_paths_map.insert(name_label.as_ptr() as usize, path_str.clone());
     bound_paths_map.insert(action_box.as_ptr() as usize, path_str.clone());
     drop(bound_paths_map);
-    apply_favourite_button_state(
+    apply_chrome_pane_state(
+        &chrome_pane,
         &favourite_btn,
         &favourite_cache,
         bound_paths,
         &selected_path,
-        false,
+        tag_popover_is_open(&tags_btn),
     );
     let thumb_key = thumb_image.as_ptr() as usize;
     let generation_token = thumb_generations
@@ -879,14 +970,18 @@ pub fn unbind_grid_list_item(
 ) {
     if let Some(cell_box) = list_item.child().and_downcast::<GtkBox>() {
         if let Some(overlay) = cell_box.first_child().and_downcast::<Overlay>() {
-            let favourite_btn = overlay.last_child().and_downcast::<Button>();
-            if let Some(favourite_btn) = favourite_btn.as_ref() {
-                bound_paths
-                    .borrow_mut()
-                    .remove(&(favourite_btn.as_ptr() as usize));
-                favourite_btn.set_opacity(0.0);
-                favourite_btn.set_visible(false);
+            if let Some((chrome_pane, favourite_btn, tags_btn)) =
+                chrome_widgets_from_overlay(&overlay)
+            {
+                let mut map = bound_paths.borrow_mut();
+                map.remove(&(favourite_btn.as_ptr() as usize));
+                map.remove(&(tags_btn.as_ptr() as usize));
+                map.remove(&(chrome_pane.as_ptr() as usize));
+                drop(map);
                 favourite_btn.set_icon_name("non-starred-symbolic");
+                favourite_btn.remove_css_class("thumbnail-favourite-active");
+                chrome_pane.set_opacity(0.0);
+                chrome_pane.set_visible(false);
             }
             let Some(image) = overlay.child().and_downcast::<Image>() else {
                 return;
@@ -944,10 +1039,13 @@ pub fn teardown_grid_list_item(
             bound_paths
                 .borrow_mut()
                 .remove(&(overlay.as_ptr() as usize));
-            if let Some(favourite_btn) = overlay.last_child().and_downcast::<Button>() {
-                bound_paths
-                    .borrow_mut()
-                    .remove(&(favourite_btn.as_ptr() as usize));
+            if let Some((chrome_pane, favourite_btn, tags_btn)) =
+                chrome_widgets_from_overlay(&overlay)
+            {
+                let mut map = bound_paths.borrow_mut();
+                map.remove(&(favourite_btn.as_ptr() as usize));
+                map.remove(&(tags_btn.as_ptr() as usize));
+                map.remove(&(chrome_pane.as_ptr() as usize));
             }
             if let Some(image) = overlay.child().and_downcast::<Image>() {
                 let thumb_key = image.as_ptr() as usize;

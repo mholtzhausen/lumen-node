@@ -83,7 +83,7 @@ Current UI screenshot:
 | 🖼️ | **Grid + single-view + compare** — grid for browsing, click for focus, Escape to return; pin a reference for side-by-side compare (lock-left); empty grid shows guidance (open folder, no images, no matches) |
 | 📐 | **4 thumbnail sizes** — 128px base with larger steps up to 240px (128, 160, 208, 240), adjustable in one click |
 | 🔍 | **Live search** — filters grid by filename, tags, and metadata in real time |
-| 🏷️ | **Free-form tags** — assign tags from the context menu; filter with the header tag popover (AND); persisted per folder |
+| 🏷️ | **Free-form tags** — assign tags from the thumbnail chrome pane (filterable checkboxes + Add), context menu, or `Ctrl+Shift+T`; filter with the header tag popover (AND); persisted per folder |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |
 | 💾 | **Session persistence** — window, pane positions, recent folders, and theme preference (`color_scheme`) in `~/.lumen-node/config.yml`; sort, search, and thumbnail size per folder in `.lumen-node.db` (`ui_state`). Optional YAML startup defaults and editor/HUD keys are editable via **Edit → Preferences…** (partial writes; unknown keys preserved) |
 | 🌓 | **Theme toggle** — header icon cycles System → Light → Dark (libadwaita color scheme) |
@@ -210,6 +210,8 @@ Right-click any image thumbnail, the single-view / compare image, or the sidebar
 - **Open:** Open in File Manager, Open in External Editor (optional `external_editor` in config; otherwise the default image app)
 - **Organise:** Favourite (toggle), Add tag / Remove tag, Pin for compare, Exit compare, Move to Trash
 - **Refresh** (submenu): Refresh Thumbnail, Refresh Metadata, Refresh Folder Thumbnails, Refresh Folder Metadata
+
+Hovering a grid thumbnail (or selecting / favouriting it) shows a right-hand chrome pane with favourite and tags buttons. The tags button opens a short filterable checklist of folder tags; type a new name to get **Add `foo`**.
 
 **Similar in folder** is enabled when the selection has a prompt or raw parameters. The metadata pane shows a **Similar** button next to the Prompt (or Parameters) row. The filter ANDs with search / favourites / tags; clear it via the header × button, the toast’s Clear action, or the empty-state “Clear filters” CTA.
 
@@ -350,7 +352,7 @@ LumenNode is organized into focused Rust modules. For a developer-oriented map o
 ```
 src/
 ├── main.rs            Composition root, scan progress state, global flags, wiring entry
-├── ui/                GTK widgets, actions, keyboard, layout, zoom, preferences, empty_state, shortcuts, …
+├── ui/                GTK widgets, actions, keyboard, layout, zoom, preferences, empty_state, quick_tag, shortcuts, …
 ├── core/              app_state, scan_coordinator (folder switches, generation IDs)
 ├── services/          Background helpers (e.g. update check integration)
 ├── scan.rs            ScanMessage enum (worker → UI channel)

@@ -406,6 +406,8 @@ fn build_ui(app: &adw::Application) {
         start_scan_for_folder: start_scan_for_folder.clone(),
         thumb_generations: thumb_generations.clone(),
         bound_paths: app_state.bound_paths.clone(),
+        tags_filter_btn: chrome.tags_filter_btn.clone(),
+        tags_filter_list: chrome.tags_filter_list.clone(),
         full_view_favourite_icon: app_config.full_view_favourite_icon.unwrap_or(true),
         full_view_favourite_icon_seconds: app_config
             .full_view_favourite_icon_seconds

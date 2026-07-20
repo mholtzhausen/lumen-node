@@ -247,7 +247,7 @@ fn apply_variant(
             status_page.set_visible(true);
         }
         EmptyStateVariant::NoTags => {
-            status_page.set_icon_name(Some("tag-symbolic"));
+            status_page.set_icon_name(Some("user-bookmarks-symbolic"));
             status_page.set_title("No matching tags");
             status_page.set_description(Some(
                 "No images have all of the selected tags. Clear the tag filter to see more.",

@@ -1,3 +1,10 @@
+## Unreleased
+### Features and Improvements
+- Grid thumbnails show a right-hand chrome pane (favourite + tags) on hover/selection; tags open a filterable multi-select checklist with **Add `foo`** for new tags.
+
+### Bugfixes
+- Use Adwaita-available `user-bookmarks-symbolic` for tag filter icons (was broken `tag-symbolic`).
+
 ## 1.7.0 (c664ab5)
 ### Features and Improvements
 - Added side-by-side compare with pinned left image and lock-left navigation.

@@ -241,7 +241,7 @@ pub(crate) fn build_header_controls(
     favourites_filter_btn.add_css_class("flat");
 
     let tags_filter_btn = gtk4::MenuButton::new();
-    tags_filter_btn.set_icon_name("tag-symbolic");
+    tags_filter_btn.set_icon_name("user-bookmarks-symbolic");
     tags_filter_btn.set_tooltip_text(Some("Filter by tags"));
     tags_filter_btn.add_css_class("flat");
     let tags_filter_popover = gtk4::Popover::new();
