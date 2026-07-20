@@ -1,9 +1,13 @@
 use crate::core::app_state::AppState;
 use crate::sort::{normalize_sort_key, SORT_KEY_DATE_DESC, SORT_KEY_NAME_DESC, SORT_KEY_SIZE_DESC};
 use crate::sort_flags::compute_sort_fields;
+use crate::view_helpers::{
+    cancel_batch_selection, find_path_index, path_at_index, primary_image_path, selected_count,
+    selected_image_path_strings, select_only_index, select_only_path,
+};
 use gtk4::prelude::*;
 use gtk4::{
-    CustomFilter, CustomSorter, FilterListModel, SingleSelection, SortListModel, StringObject,
+    CustomFilter, CustomSorter, FilterListModel, MultiSelection, SortListModel, StringObject,
 };
 use std::cell::Cell;
 use std::path::Path;
@@ -18,7 +22,7 @@ pub(crate) struct ModelBundle {
     pub(crate) filter_model: FilterListModel,
     pub(crate) sorter: CustomSorter,
     pub(crate) sort_model: SortListModel,
-    pub(crate) selection_model: SingleSelection,
+    pub(crate) selection_model: MultiSelection,
 }
 
 pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
@@ -196,27 +200,40 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
     });
     let sort_model = SortListModel::new(Some(filter_model.clone()), Some(sorter.clone()));
 
-    let selection_model = SingleSelection::new(Some(sort_model.clone()));
+    let selection_model = MultiSelection::new(Some(sort_model.clone()));
     let selection_for_default = selection_model.clone();
     let selected_path_hint = deps.app_state.selected_path.clone();
+    let selected_paths_mirror = deps.app_state.selected_paths.clone();
     // Last valid selection index — kept across clears so filter eviction can
     // reselect a neighbor after FilterChange::Different rebuilds (position=0).
     let last_selected_index = Rc::new(Cell::new(0u32));
     {
         let selected_path_hint = selected_path_hint.clone();
+        let selected_paths_mirror = selected_paths_mirror.clone();
         let last_selected_index = last_selected_index.clone();
         selection_model.connect_selection_changed(move |model, _, _| {
-            let path = model
-                .selected_item()
-                .and_downcast::<StringObject>()
-                .map(|obj| obj.string().to_string());
-            if path.is_some() {
-                let pos = model.selected();
-                if pos != gtk4::INVALID_LIST_POSITION {
+            let paths = selected_image_path_strings(model);
+            let count = paths.len();
+            let primary = if count == 0 {
+                None
+            } else if count == 1 {
+                paths.first().cloned()
+            } else {
+                // Prefer existing primary if still selected; else last index in set.
+                let prev = selected_path_hint.borrow().clone();
+                if prev.as_ref().is_some_and(|p| paths.iter().any(|x| x == p)) {
+                    prev
+                } else {
+                    primary_image_path(model).map(|p| p.to_string_lossy().into_owned())
+                }
+            };
+            if let Some(ref p) = primary {
+                if let Some(pos) = find_path_index(model, p) {
                     last_selected_index.set(pos);
                 }
             }
-            *selected_path_hint.borrow_mut() = path;
+            *selected_path_hint.borrow_mut() = primary;
+            *selected_paths_mirror.borrow_mut() = paths.into_iter().collect();
         });
     }
     {
@@ -224,61 +241,61 @@ pub(crate) fn build_model_bundle(deps: ModelAssemblyDeps) -> ModelBundle {
         let last_selected_index = last_selected_index.clone();
         sort_model.connect_items_changed(move |model, _position, removed, _added| {
             if model.n_items() == 0 {
+                let _ = selection_for_default.unselect_all();
                 return;
             }
 
-            let selected_path = selection_for_default
-                .selected_item()
-                .and_downcast::<StringObject>()
-                .map(|obj| obj.string().to_string());
+            let count = selected_count(&selection_for_default);
             let hint = selected_path_hint.borrow().clone();
 
+            // Filter / sort reshuffle with multi selected → cancel batch to primary.
+            if count > 1 {
+                cancel_batch_selection(&selection_for_default, hint.as_deref());
+                return;
+            }
+
+            let selected_path = if count == 1 {
+                primary_image_path(&selection_for_default).map(|p| p.to_string_lossy().into_owned())
+            } else {
+                None
+            };
+
             // Fast path: selection already matches the path hint — no O(N) scan.
-            // Common after filter storms when the selection index was preserved.
             if hint.is_some() && hint == selected_path {
                 return;
             }
 
             // Prefer restoring by absolute path after sort/filter reshuffles.
             if let Some(ref wanted_path) = hint {
-                if let Some(pos) = (0..model.n_items()).find(|idx| {
-                    model
-                        .item(*idx)
-                        .and_downcast::<StringObject>()
-                        .map(|obj| obj.string().as_str() == wanted_path.as_str())
-                        .unwrap_or(false)
-                }) {
-                    if selection_for_default.selected() != pos {
-                        selection_for_default.set_selected(pos);
-                    }
+                if select_only_path(&selection_for_default, wanted_path) {
                     return;
                 }
             }
 
             // Selection filtered out (or hint path gone): keep place like trash —
             // select what slid into the vacated index (next), or previous if last.
-            // Use last_selected_index (not signal position) because Different
-            // rebuilds report position=0 for the whole model.
             if selected_path.is_none() && removed > 0 {
                 let next_idx = last_selected_index
                     .get()
                     .min(model.n_items().saturating_sub(1));
-                selection_for_default.set_selected(next_idx);
+                select_only_index(&selection_for_default, next_idx);
                 return;
             }
 
-            // Hint missing or stale (folder change): index may be unchanged so
-            // selection-changed never fired — bounce to force a preview reload.
+            // Hint missing or stale (folder change): bounce to force a preview reload.
             match selected_path {
                 None => {
-                    selection_for_default.set_selected(0);
+                    select_only_index(&selection_for_default, 0);
                 }
                 Some(path) if hint.as_ref() != Some(&path) => {
-                    selection_for_default.set_can_unselect(true);
-                    let pos = selection_for_default.selected();
+                    let pos = find_path_index(&selection_for_default, &path).unwrap_or(0);
                     let pos = if pos < model.n_items() { pos } else { 0 };
-                    selection_for_default.set_selected(gtk4::INVALID_LIST_POSITION);
-                    selection_for_default.set_selected(pos);
+                    let _ = selection_for_default.unselect_all();
+                    select_only_index(&selection_for_default, pos);
+                    // Ensure hint catches up even if path string matches.
+                    if let Some(p) = path_at_index(&selection_for_default, pos) {
+                        *selected_path_hint.borrow_mut() = Some(p);
+                    }
                 }
                 Some(_) => {}
             }

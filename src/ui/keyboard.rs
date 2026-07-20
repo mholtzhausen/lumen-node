@@ -5,13 +5,16 @@ use crate::ui::grid::is_immersive_view;
 use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::preview::{clear_picture, load_picture_async};
 use crate::ui::zoom::{adjust_zoom, zoom_in, zoom_out, zoom_reset};
-use crate::view_helpers::selected_image_path;
+use crate::view_helpers::{
+    path_at_index, primary_image_path, primary_selected_index, selected_count, selected_image_path,
+    select_only_index,
+};
 use crate::core::app_state::AppState;
 use crate::db;
 use gtk4::prelude::*;
 use gtk4::{
     gdk, gio, glib, EventControllerKey, EventControllerScroll, EventControllerScrollFlags,
-    ListScrollFlags, StringObject, Widget,
+    ListScrollFlags, Widget,
 };
 use libadwaita as adw;
 use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
@@ -21,7 +24,7 @@ pub(crate) struct KeyboardDeps {
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) center: CenterContentBundle,
     pub(crate) meta_preview: gtk4::Picture,
-    pub(crate) selection_model: gtk4::SingleSelection,
+    pub(crate) selection_model: gtk4::MultiSelection,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
@@ -59,10 +62,18 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
         selection_model: deps.selection_model.clone(),
         start_scan_for_folder: deps.start_scan_for_folder.clone(),
     };
+    let app_state_for_keys = deps.app_state.clone();
     key_controller.connect_key_pressed(move |_, key, _, state| {
         let ctrl_pressed = state.contains(gdk::ModifierType::CONTROL_MASK);
         let alt_pressed = state.contains(gdk::ModifierType::ALT_MASK);
         let super_pressed = state.contains(gdk::ModifierType::SUPER_MASK);
+        if ctrl_pressed && key == gdk::Key::a && !alt_pressed && !super_pressed {
+            if focus_in_text_input(&window_for_keys) {
+                return glib::Propagation::Proceed;
+            }
+            crate::view_helpers::select_all_visible(&selection_for_keys);
+            return glib::Propagation::Stop;
+        }
         if ctrl_pressed && key == gdk::Key::c {
             let Some(path) = selected_image_path(&selection_for_keys) else {
                 return glib::Propagation::Stop;
@@ -382,16 +393,10 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                 *pinned_for_keys.borrow_mut() = None;
                 clear_picture(&compare_left_for_keys);
                 clear_picture(&compare_right_for_keys);
-                if let Some(item) = selection_for_keys
-                    .selected_item()
-                    .and_downcast::<StringObject>()
+                if let Some(path) = primary_image_path(&selection_for_keys)
+                    .map(|p| p.to_string_lossy().into_owned())
                 {
-                    load_picture_async(
-                        &picture_for_keys,
-                        &item.string().to_string(),
-                        None,
-                        None,
-                    );
+                    load_picture_async(&picture_for_keys, &path, None, None);
                 } else {
                     clear_picture(&picture_for_keys);
                 }
@@ -400,6 +405,23 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             }
             let in_grid = page.as_deref() == Some("grid");
             if in_grid {
+                // Batch mode: Esc collapses to last item in batch-list order.
+                if selected_count(&selection_for_keys) > 1 {
+                    let paths = crate::view_helpers::selected_image_path_strings(&selection_for_keys);
+                    let key = crate::view_helpers::BatchListSortKey::from_str(
+                        app_state_for_keys.batch_list_sort_key.borrow().as_str(),
+                    );
+                    let ordered = crate::view_helpers::order_batch_paths(
+                        &paths,
+                        &app_state_for_keys.sort_fields_cache.borrow(),
+                        key,
+                    );
+                    crate::view_helpers::collapse_selection_to_last_ordered(
+                        &selection_for_keys,
+                        &ordered,
+                    );
+                    return glib::Propagation::Stop;
+                }
                 if esc_pending.get() {
                     if let Some(app) = window_for_keys.application() {
                         app.quit();
@@ -425,6 +447,20 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             return glib::Propagation::Stop;
         }
         let in_grid = stack_for_keys.visible_child_name().as_deref() == Some("grid");
+        // In batch mode, grid arrow/page nav is disabled (batch pane owns focus nav).
+        if in_grid && selected_count(&selection_for_keys) > 1 {
+            if key == gdk::Key::Page_Up
+                || key == gdk::Key::Page_Down
+                || key == gdk::Key::Home
+                || key == gdk::Key::End
+                || key == gdk::Key::Left
+                || key == gdk::Key::Right
+                || key == gdk::Key::Up
+                || key == gdk::Key::Down
+            {
+                return glib::Propagation::Stop;
+            }
+        }
         if in_grid
             && (key == gdk::Key::Page_Up
                 || key == gdk::Key::Page_Down
@@ -435,8 +471,8 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             if count == 0 {
                 return glib::Propagation::Proceed;
             }
-            let has_selection = selection_for_keys.selected_item().is_some();
-            let cur = selection_for_keys.selected();
+            let has_selection = primary_selected_index(&selection_for_keys).is_some();
+            let cur = primary_selected_index(&selection_for_keys).unwrap_or(0);
             let thumb_size = (*thumbnail_size_for_keys.borrow()).max(1);
             let cell_width = (thumb_size + 4).max(1);
             let cell_height = (thumb_size + 20).max(1);
@@ -467,7 +503,7 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             };
 
             if !has_selection || next != cur {
-                selection_for_keys.set_selected(next);
+                select_only_index(&selection_for_keys, next);
                 grid_view_for_keys.scroll_to(
                     next,
                     ListScrollFlags::FOCUS | ListScrollFlags::SELECT,
@@ -483,23 +519,16 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
             if count == 0 {
                 return glib::Propagation::Proceed;
             }
-            let cur = selection_for_keys.selected();
+            let cur = primary_selected_index(&selection_for_keys).unwrap_or(0);
             let next = if key == gdk::Key::Left {
                 cur.saturating_sub(1)
             } else {
                 (cur + 1).min(count - 1)
             };
             if next != cur {
-                selection_for_keys.set_selected(next);
-                if let Some(item) = selection_for_keys
-                    .selected_item()
-                    .and_downcast::<StringObject>()
-                {
-                    let path = item.string().to_string();
+                select_only_index(&selection_for_keys, next);
+                if let Some(path) = path_at_index(&selection_for_keys, next) {
                     if page.as_deref() == Some("compare") {
-                        // Lock-left: only the right (selection) pane advances.
-                        // Selection wiring also reloads compare_right; load here
-                        // so keyboard nav stays responsive if that path changes.
                         load_picture_async(&compare_right_for_keys, &path, None, None);
                     } else {
                         load_picture_async(&picture_for_keys, &path, None, None);
@@ -514,7 +543,7 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
 }
 
 pub(crate) fn install_scroll_navigation_handlers(
-    selection_model: &gtk4::SingleSelection,
+    selection_model: &gtk4::MultiSelection,
     single_picture: &gtk4::Picture,
     compare_left_picture: &gtk4::Picture,
     compare_right_picture: &gtk4::Picture,
@@ -554,10 +583,10 @@ pub(crate) fn install_scroll_navigation_handlers(
                 return glib::Propagation::Stop;
             }
             nav_accum.set(nav_accum.get().fract());
-            let cur = selection.selected() as i32;
+            let cur = primary_selected_index(&selection).unwrap_or(0) as i32;
             let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
             if next != cur as u32 {
-                selection.set_selected(next);
+                select_only_index(&selection, next);
             }
             glib::Propagation::Stop
         });
@@ -569,7 +598,7 @@ pub(crate) fn install_scroll_navigation_handlers(
 /// When `reload_self` is true, also reload this picture (single view). Compare panes
 /// leave reload to selection wiring so only the right pane updates (lock-left).
 fn install_picture_scroll_nav(
-    selection_model: &gtk4::SingleSelection,
+    selection_model: &gtk4::MultiSelection,
     picture: &gtk4::Picture,
     reload_self: bool,
 ) {
@@ -602,13 +631,13 @@ fn install_picture_scroll_nav(
             return glib::Propagation::Stop;
         }
         nav_accum.set(nav_accum.get().fract());
-        let cur = selection.selected() as i32;
+        let cur = primary_selected_index(&selection).unwrap_or(0) as i32;
         let next = (cur + steps).clamp(0, count as i32 - 1) as u32;
         if next != cur as u32 {
-            selection.set_selected(next);
+            select_only_index(&selection, next);
             if reload_self {
-                if let Some(item) = selection.selected_item().and_downcast::<StringObject>() {
-                    load_picture_async(&picture_nav, &item.string().to_string(), None, None);
+                if let Some(path) = path_at_index(&selection, next) {
+                    load_picture_async(&picture_nav, &path, None, None);
                 }
             }
         }

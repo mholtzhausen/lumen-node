@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod batch_editor;
 pub mod center;
 pub mod chrome;
 pub mod controls;

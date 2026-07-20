@@ -8,7 +8,7 @@ use crate::ui::grid::{
     install_grid_scroll_speed_gate, set_default_grid_page, FullViewFavouriteHud, GridFactoryDeps,
 };
 use crate::ui::list_mutation::ListMutationContext;
-use gtk4::{glib, SingleSelection};
+use gtk4::{glib, MultiSelection};
 use libadwaita as adw;
 use std::{
     cell::{Cell, RefCell},
@@ -19,7 +19,7 @@ use std::{
 
 pub(crate) struct CenterContentDeps {
     pub(crate) app_state: AppState,
-    pub(crate) selection_model: SingleSelection,
+    pub(crate) selection_model: MultiSelection,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) realized_cell_boxes: Rc<RefCell<Vec<glib::WeakRef<gtk4::Box>>>>,
     pub(crate) realized_thumb_images: Rc<RefCell<Vec<glib::WeakRef<gtk4::Image>>>>,

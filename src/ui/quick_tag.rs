@@ -4,7 +4,7 @@ use gtk4::prelude::*;
 use gtk4::{
     gdk, glib, Box as GtkBox, Button, CheckButton, EventControllerKey, EventControllerMotion,
     Label, MenuButton, Orientation, Popover, PropagationPhase, ScrolledWindow, SearchEntry,
-    SingleSelection, StringObject,
+    MultiSelection,
 };
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
@@ -16,12 +16,13 @@ use crate::core::app_state::AppState;
 use crate::db;
 use crate::icons::{TAG_ICON_FILLED_NAME, TAG_ICON_NAME};
 use crate::ui::controls::refresh_tag_filter_from_folder;
+use crate::view_helpers::{is_path_selected, select_only_path};
 
 pub(crate) struct QuickTagAttachDeps {
     pub(crate) app_state: AppState,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) filter: gtk4::CustomFilter,
-    pub(crate) selection_model: SingleSelection,
+    pub(crate) selection_model: MultiSelection,
     pub(crate) tags_filter_btn: MenuButton,
     pub(crate) tags_filter_list: gtk4::Box,
     pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
@@ -268,7 +269,7 @@ fn rebuild_quick_tag_list(
     app_state: &AppState,
     toast_overlay: &adw::ToastOverlay,
     filter: &gtk4::CustomFilter,
-    selection_model: &SingleSelection,
+    selection_model: &MultiSelection,
     tags_filter_btn: &MenuButton,
     tags_filter_list: &gtk4::Box,
     search_entry: &SearchEntry,
@@ -444,26 +445,15 @@ fn tag_section_letter(tag: &str) -> char {
 }
 
 /// Select `path` in the grid if it is not already the current selection.
-fn ensure_path_selected(selection_model: &SingleSelection, path: &str) {
-    let already = selection_model
-        .selected_item()
-        .and_downcast::<StringObject>()
-        .map(|obj| obj.string().as_str() == path)
-        .unwrap_or(false);
-    if already {
+fn ensure_path_selected(selection_model: &MultiSelection, path: &str) {
+    if is_path_selected(selection_model, path) && selected_count_is_one(selection_model) {
         return;
     }
-    for idx in 0..selection_model.n_items() {
-        let is_match = selection_model
-            .item(idx)
-            .and_downcast::<StringObject>()
-            .map(|obj| obj.string().as_str() == path)
-            .unwrap_or(false);
-        if is_match {
-            selection_model.set_selected(idx);
-            return;
-        }
-    }
+    let _ = select_only_path(selection_model, path);
+}
+
+fn selected_count_is_one(selection_model: &MultiSelection) -> bool {
+    selection_model.selection().size() == 1
 }
 
 /// Returns `true` when the DB mutation succeeded.
@@ -471,7 +461,7 @@ fn toggle_tag_on_image(
     app_state: &AppState,
     toast_overlay: &adw::ToastOverlay,
     filter: &gtk4::CustomFilter,
-    selection_model: &SingleSelection,
+    selection_model: &MultiSelection,
     tags_filter_btn: &MenuButton,
     tags_filter_list: &gtk4::Box,
     path_str: &str,

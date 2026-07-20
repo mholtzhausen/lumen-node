@@ -33,7 +33,7 @@ pub(crate) struct LifecycleDeps {
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) center: CenterContentBundle,
     pub(crate) right: RightSidebarBundle,
-    pub(crate) selection_model: gtk4::SingleSelection,
+    pub(crate) selection_model: gtk4::MultiSelection,
     pub(crate) thumbnail_size: Rc<RefCell<i32>>,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) current_folder: Rc<RefCell<Option<PathBuf>>>,
@@ -162,7 +162,7 @@ pub(crate) fn install_lifecycle(deps: LifecycleDeps) {
 
 fn install_folder_delta_watcher(
     app_state: AppState,
-    selection_model: gtk4::SingleSelection,
+    selection_model: gtk4::MultiSelection,
     start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     sorter: gtk4::CustomSorter,
 ) {

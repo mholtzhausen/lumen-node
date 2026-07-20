@@ -5,6 +5,7 @@ use crate::ui::preview::{
     load_picture_async, PreviewLoadMetrics, PreviewLoadOutcome, ACTIVE_PREVIEW_TASKS,
 };
 use crate::ui::right_sidebar::RightSidebarBundle;
+use crate::view_helpers::{primary_image_path, selected_count};
 use gtk4::prelude::*;
 use gtk4::{GestureClick, StringObject};
 use libadwaita as adw;
@@ -160,7 +161,7 @@ pub(crate) struct NavigationDeps {
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) center: CenterContentBundle,
     pub(crate) right: RightSidebarBundle,
-    pub(crate) selection_model: gtk4::SingleSelection,
+    pub(crate) selection_model: gtk4::MultiSelection,
     pub(crate) left_toggle: gtk4::ToggleButton,
     pub(crate) right_toggle: gtk4::ToggleButton,
     pub(crate) pre_fullview_left: Rc<Cell<bool>>,
@@ -192,6 +193,9 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
     let hud_for_grid = deps.center.full_view_favourite_hud.clone();
     let app_state_for_grid = deps.app_state.clone();
     deps.center.grid_view.connect_activate(move |_, pos| {
+        if selected_count(&selection_for_grid) > 1 {
+            return;
+        }
         if let Some(item) = selection_for_grid.item(pos).and_downcast::<StringObject>() {
             let path_str = item.string().to_string();
             let trace = new_full_view_trace(path_str.clone());
@@ -221,13 +225,15 @@ pub(crate) fn install_navigation_handlers(deps: NavigationDeps) {
         if n_press < 2 {
             return;
         }
-        let Some(item) = selection_for_preview
-            .selected_item()
-            .and_downcast::<StringObject>()
+        // Batch mode: do not enter single view.
+        if selected_count(&selection_for_preview) > 1 {
+            return;
+        }
+        let Some(path_str) =
+            primary_image_path(&selection_for_preview).map(|p| p.to_string_lossy().into_owned())
         else {
             return;
         };
-        let path_str = item.string().to_string();
         let trace = new_full_view_trace(path_str.clone());
         dispatch_full_view_load(&picture_for_preview, &path_str, trace);
         show_hud_for_path(&app_state_for_preview, &hud_for_preview, &path_str);

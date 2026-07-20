@@ -15,11 +15,15 @@ use crate::ui::list_mutation::ListMutationContext;
 use crate::ui::grid::{enter_compare_view_mode, refresh_realized_grid_favourite_icons};
 use crate::ui::preview::{clear_picture, load_picture_async};
 use crate::thumbnails;
-use crate::view_helpers::{attach_context_menu_with_prepare, selected_image_path};
+use crate::view_helpers::{
+    attach_context_menu_dynamic, attach_context_menu_with_prepare, collapse_selection_to_last_ordered,
+    filename_of, is_path_selected, order_batch_paths, selected_count, selected_image_path,
+    selected_image_path_strings, select_all_visible, select_only_path, BatchListSortKey,
+};
 use gtk4::glib;
 use gtk4::glib::prelude::*;
 use gtk4::prelude::*;
-use gtk4::{gdk, gio, GridView, Picture, SingleSelection, StringObject};
+use gtk4::{gdk, gio, GridView, Picture, MultiSelection, StringObject};
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -70,18 +74,8 @@ fn register_context_menu_accels(window: &adw::ApplicationWindow) {
     // Delete → trash is handled in `keyboard.rs` so `SearchEntry` and other text widgets keep Delete.
 }
 
-fn select_path_for_context_menu(selection_model: &SingleSelection, path: &str) {
-    for idx in 0..selection_model.n_items() {
-        let is_match = selection_model
-            .item(idx)
-            .and_downcast::<StringObject>()
-            .map(|obj| obj.string().as_str() == path)
-            .unwrap_or(false);
-        if is_match {
-            selection_model.set_selected(idx);
-            return;
-        }
-    }
+fn select_path_for_context_menu(selection_model: &MultiSelection, path: &str) {
+    let _ = select_only_path(selection_model, path);
 }
 
 fn bound_path_at_widget_point(
@@ -106,7 +100,7 @@ fn bound_path_at_widget_point(
 }
 
 fn sync_context_menu_action_states(
-    selection_model: &SingleSelection,
+    selection_model: &MultiSelection,
     meta_cache: &RefCell<HashMap<String, ImageMetadata>>,
     current_folder: &RefCell<Option<PathBuf>>,
     pinned_compare_path: &RefCell<Option<String>>,
@@ -214,7 +208,7 @@ fn sync_context_menu_action_states(
 pub fn install_context_menu(
     window: &adw::ApplicationWindow,
     toast_overlay: &adw::ToastOverlay,
-    selection_model: &SingleSelection,
+    selection_model: &MultiSelection,
     meta_cache: &Rc<RefCell<HashMap<String, ImageMetadata>>>,
     hash_cache: &Rc<RefCell<HashMap<String, String>>>,
     thumbnail_size: &Rc<RefCell<i32>>,
@@ -799,16 +793,11 @@ pub fn install_context_menu(
             clear_picture(&left_picture);
             clear_picture(&right_picture);
             if view_stack_exit.visible_child_name().as_deref() == Some("compare") {
-                if let Some(item) = selection_for_exit
-                    .selected_item()
-                    .and_downcast::<StringObject>()
+                if let Some(path) =
+                    crate::view_helpers::primary_image_path(&selection_for_exit)
+                        .map(|p| p.to_string_lossy().into_owned())
                 {
-                    load_picture_async(
-                        &single_picture_exit,
-                        &item.string().to_string(),
-                        None,
-                        None,
-                    );
+                    load_picture_async(&single_picture_exit, &path, None, None);
                 } else {
                     clear_picture(&single_picture_exit);
                 }
@@ -894,6 +883,80 @@ pub fn install_context_menu(
     action_group.add_action(&pin_for_compare_action);
     action_group.add_action(&exit_compare_action);
     action_group.add_action(&show_similar_action);
+
+    // Batch selection-management actions (ctx.batch.*)
+    let batch_remove_action = gio::SimpleAction::new("batch-remove-from-selection", None);
+    let batch_select_all_action = gio::SimpleAction::new("batch-select-all", None);
+    let batch_clear_action = gio::SimpleAction::new("batch-clear-selection", None);
+    let batch_copy_paths_action = gio::SimpleAction::new("batch-copy-paths", None);
+    let batch_copy_names_action = gio::SimpleAction::new("batch-copy-filenames", None);
+    let context_click_path: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+
+    {
+        let selection = selection_model.clone();
+        let click_path = context_click_path.clone();
+        batch_remove_action.connect_activate(move |_, _| {
+            let Some(path) = click_path.borrow().clone() else {
+                return;
+            };
+            if let Some(idx) = crate::view_helpers::find_path_index(&selection, &path) {
+                let _ = selection.unselect_item(idx);
+            }
+        });
+    }
+    {
+        let selection = selection_model.clone();
+        batch_select_all_action.connect_activate(move |_, _| {
+            select_all_visible(&selection);
+        });
+    }
+    {
+        let selection = selection_model.clone();
+        let app_state = mutation_ctx.app_state.clone();
+        batch_clear_action.connect_activate(move |_, _| {
+            let paths = selected_image_path_strings(&selection);
+            let key = BatchListSortKey::from_str(app_state.batch_list_sort_key.borrow().as_str());
+            let ordered = order_batch_paths(&paths, &app_state.sort_fields_cache.borrow(), key);
+            collapse_selection_to_last_ordered(&selection, &ordered);
+        });
+    }
+    {
+        let selection = selection_model.clone();
+        let window = window.clone();
+        let app_state = mutation_ctx.app_state.clone();
+        batch_copy_paths_action.connect_activate(move |_, _| {
+            let paths = selected_image_path_strings(&selection);
+            let key = BatchListSortKey::from_str(app_state.batch_list_sort_key.borrow().as_str());
+            let ordered = order_batch_paths(&paths, &app_state.sort_fields_cache.borrow(), key);
+            gtk4::prelude::WidgetExt::display(&window)
+                .clipboard()
+                .set_text(&ordered.join("\n"));
+        });
+    }
+    {
+        let selection = selection_model.clone();
+        let window = window.clone();
+        let app_state = mutation_ctx.app_state.clone();
+        batch_copy_names_action.connect_activate(move |_, _| {
+            let paths = selected_image_path_strings(&selection);
+            let key = BatchListSortKey::from_str(app_state.batch_list_sort_key.borrow().as_str());
+            let ordered = order_batch_paths(&paths, &app_state.sort_fields_cache.borrow(), key);
+            let text = ordered
+                .iter()
+                .map(|p| filename_of(p))
+                .collect::<Vec<_>>()
+                .join("\n");
+            gtk4::prelude::WidgetExt::display(&window)
+                .clipboard()
+                .set_text(&text);
+        });
+    }
+    action_group.add_action(&batch_remove_action);
+    action_group.add_action(&batch_select_all_action);
+    action_group.add_action(&batch_clear_action);
+    action_group.add_action(&batch_copy_paths_action);
+    action_group.add_action(&batch_copy_names_action);
+
     window.insert_action_group("ctx", Some(&action_group));
     register_context_menu_accels(window);
 
@@ -951,6 +1014,17 @@ pub fn install_context_menu(
     );
     menu_model.append_submenu(Some("Refresh"), &refresh_submenu);
 
+    let batch_menu = gio::Menu::new();
+    let batch_sel = gio::Menu::new();
+    batch_sel.append(Some("Remove from selection"), Some("ctx.batch-remove-from-selection"));
+    batch_sel.append(Some("Select all"), Some("ctx.batch-select-all"));
+    batch_sel.append(Some("Clear selection"), Some("ctx.batch-clear-selection"));
+    batch_menu.append_section(None, &batch_sel);
+    let batch_copy = gio::Menu::new();
+    batch_copy.append(Some("Copy all paths"), Some("ctx.batch-copy-paths"));
+    batch_copy.append(Some("Copy all filenames"), Some("ctx.batch-copy-filenames"));
+    batch_menu.append_section(None, &batch_copy);
+
     let handles = CtxMenuActionHandles {
         copy_prompt: copy_prompt_action.clone(),
         copy_negative_prompt: copy_negative_prompt_action.clone(),
@@ -995,11 +1069,23 @@ pub fn install_context_menu(
         let selection_for_menu = selection_model.clone();
         let sync_for_menu = sync_fn.clone();
         let bound_paths_for_menu = mutation_ctx.app_state.bound_paths.clone();
-        attach_context_menu_with_prepare(grid_view, &menu_model, move |widget, x, y| {
-            if let Some(path) = bound_path_at_widget_point(widget, x, y, &bound_paths_for_menu) {
-                select_path_for_context_menu(&selection_for_menu, &path);
+        let menu_single = menu_model.clone();
+        let menu_batch = batch_menu.clone();
+        let click_path = context_click_path.clone();
+        attach_context_menu_dynamic(grid_view, move |widget, x, y| {
+            let path_opt = bound_path_at_widget_point(widget, x, y, &bound_paths_for_menu);
+            *click_path.borrow_mut() = path_opt.clone();
+            if let Some(ref path) = path_opt {
+                let n = selected_count(&selection_for_menu);
+                if n > 1 && is_path_selected(&selection_for_menu, path) {
+                    // Keep multi-selection; show batch menu.
+                    return menu_batch.clone();
+                }
+                // Unselected (or single): cancel batch and show single menu.
+                select_path_for_context_menu(&selection_for_menu, path);
             }
             sync_for_menu();
+            menu_single.clone()
         });
     }
     {

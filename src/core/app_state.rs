@@ -52,8 +52,12 @@ pub(crate) struct AppState {
     pub(crate) thumb_generations: Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     /// Safe storage for bound paths per Widget (replaces unsafe set_data).
     pub(crate) bound_paths: Rc<RefCell<HashMap<usize, String>>>,
-    /// Absolute path of the currently selected image (if any).
+    /// Absolute path of the primary selected image (sole selection, or last focus in multi).
     pub(crate) selected_path: Rc<RefCell<Option<String>>>,
+    /// All currently selected image paths (grid MultiSelection mirror).
+    pub(crate) selected_paths: Rc<RefCell<HashSet<String>>>,
+    /// Sort key for the batch editor list (also Esc collapse order).
+    pub(crate) batch_list_sort_key: Rc<RefCell<String>>,
     /// Absolute path pinned as the left pane in side-by-side compare mode.
     pub(crate) pinned_compare_path: Rc<RefCell<Option<String>>>,
     /// Optional UI sync after favourite toggles (preview header + full-view HUD).
@@ -142,6 +146,8 @@ pub(crate) fn build_app_state(
         thumb_generations: Rc::new(RefCell::new(HashMap::new())),
         bound_paths: Rc::new(RefCell::new(HashMap::new())),
         selected_path: Rc::new(RefCell::new(None)),
+        selected_paths: Rc::new(RefCell::new(HashSet::new())),
+        batch_list_sort_key: Rc::new(RefCell::new("name_asc".to_string())),
         pinned_compare_path: Rc::new(RefCell::new(None)),
         on_favourite_changed: Rc::new(RefCell::new(None)),
         on_folder_tags_changed: Rc::new(RefCell::new(None)),

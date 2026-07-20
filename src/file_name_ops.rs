@@ -102,3 +102,150 @@ pub fn build_renamed_target(source_path: &Path, input_base_name: &str) -> Result
     }
     Ok(target)
 }
+
+/// Parse `{index}` or `{index:N}` from a batch rename pattern. Returns pad width (explicit or None).
+pub fn parse_batch_index_placeholder(pattern: &str) -> Result<Option<usize>, String> {
+    let re = regex_lite_find_index(pattern)?;
+    Ok(re)
+}
+
+fn regex_lite_find_index(pattern: &str) -> Result<Option<usize>, String> {
+    if !pattern.contains("{index") {
+        return Err("Pattern must include {index} or {index:N}".to_string());
+    }
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    let mut found = None;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            if let Some(end) = pattern[i..].find('}') {
+                let token = &pattern[i..i + end + 1];
+                if token == "{index}" {
+                    if found.is_some() {
+                        return Err("Pattern may contain only one {index} placeholder".to_string());
+                    }
+                    found = Some(None);
+                } else if let Some(rest) = token.strip_prefix("{index:") {
+                    let num = rest.trim_end_matches('}');
+                    let width: usize = num
+                        .parse()
+                        .map_err(|_| "Invalid {index:N} width".to_string())?;
+                    if width == 0 || width > 12 {
+                        return Err("{index:N} width must be 1–12".to_string());
+                    }
+                    if found.is_some() {
+                        return Err("Pattern may contain only one {index} placeholder".to_string());
+                    }
+                    found = Some(Some(width));
+                } else if token.starts_with("{index") {
+                    return Err("Use {index} or {index:N}".to_string());
+                }
+                i += end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    found.ok_or_else(|| "Pattern must include {index} or {index:N}".to_string())
+}
+
+pub fn default_index_pad_width(count: usize) -> usize {
+    if count == 0 {
+        return 1;
+    }
+    ((count as f64).log10().floor() as usize) + 1
+}
+
+/// Expand pattern for 1-based index; preserves nothing about extension (caller appends).
+pub fn expand_batch_rename_stem(pattern: &str, index: usize, pad_width: usize) -> Result<String, String> {
+    let explicit = parse_batch_index_placeholder(pattern)?;
+    let width = explicit.unwrap_or(pad_width).max(1);
+    let index_str = format!("{index:0width$}", width = width);
+    let mut out = pattern.to_string();
+    if let Some(start) = out.find("{index:") {
+        if let Some(rel_end) = out[start..].find('}') {
+            out.replace_range(start..start + rel_end + 1, &index_str);
+        }
+    } else if let Some(start) = out.find("{index}") {
+        out.replace_range(start..start + "{index}".len(), &index_str);
+    } else {
+        return Err("Pattern must include {index} or {index:N}".to_string());
+    }
+    if let Some(reason) = invalid_filename_reason(&out) {
+        return Err(reason.to_string());
+    }
+    Ok(out)
+}
+
+pub fn batch_rename_target(source_path: &Path, pattern: &str, index: usize, pad_width: usize) -> Result<PathBuf, String> {
+    let stem = expand_batch_rename_stem(pattern, index, pad_width)?;
+    let (_, ext) = split_filename(source_path);
+    let Some(parent) = source_path.parent() else {
+        return Err("Cannot determine parent folder".to_string());
+    };
+    let name = if let Some(ext) = ext {
+        format!("{stem}.{ext}")
+    } else {
+        stem
+    };
+    Ok(parent.join(name))
+}
+
+/// Returns collision messages if any target collides with another target or an existing file
+/// outside the rename set (sources may be overwritten by swap within set).
+pub fn find_batch_rename_collisions(
+    sources: &[PathBuf],
+    targets: &[PathBuf],
+) -> Vec<String> {
+    let mut msgs = Vec::new();
+    let source_set: std::collections::HashSet<_> = sources.iter().collect();
+    let mut seen_targets: std::collections::HashMap<PathBuf, usize> = std::collections::HashMap::new();
+    for (i, target) in targets.iter().enumerate() {
+        if let Some(prev) = seen_targets.insert(target.clone(), i) {
+            msgs.push(format!(
+                "Items {} and {} map to the same name",
+                prev + 1,
+                i + 1
+            ));
+        }
+        if target.exists() && !source_set.contains(target) {
+            msgs.push(format!(
+                "“{}” already exists",
+                target.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+            ));
+        }
+        // No-op rename (same path) is fine.
+    }
+    msgs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_index_placeholder() {
+        assert_eq!(parse_batch_index_placeholder("a_{index}").unwrap(), None);
+        assert_eq!(parse_batch_index_placeholder("a_{index:3}").unwrap(), Some(3));
+        assert!(parse_batch_index_placeholder("nope").is_err());
+    }
+
+    #[test]
+    fn expand_pads_default_and_explicit() {
+        assert_eq!(
+            expand_batch_rename_stem("img_{index}", 7, 3).unwrap(),
+            "img_007"
+        );
+        assert_eq!(
+            expand_batch_rename_stem("img_{index:2}", 7, 5).unwrap(),
+            "img_07"
+        );
+    }
+
+    #[test]
+    fn default_pad_width() {
+        assert_eq!(default_index_pad_width(9), 1);
+        assert_eq!(default_index_pad_width(10), 2);
+        assert_eq!(default_index_pad_width(100), 3);
+    }
+}

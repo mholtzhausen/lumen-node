@@ -3,7 +3,7 @@ use crate::ui::controls::{
     apply_clear_filters, deactivate_favorites_filter, deactivate_tag_filter,
 };
 use gtk4::prelude::*;
-use gtk4::{SortListModel, SingleSelection};
+use gtk4::{SortListModel, MultiSelection};
 use libadwaita as adw;
 use std::{cell::Cell, rc::Rc};
 
@@ -53,7 +53,7 @@ pub(crate) fn add_empty_status_overlay(grid_overlay: &gtk4::Overlay, page: &adw:
 
 pub(crate) struct EmptyStateWiringDeps {
     pub(crate) app_state: AppState,
-    pub(crate) selection_model: SingleSelection,
+    pub(crate) selection_model: MultiSelection,
     pub(crate) sort_model: SortListModel,
     pub(crate) status_page: adw::StatusPage,
     pub(crate) action_btn: gtk4::Button,
@@ -179,7 +179,7 @@ pub(crate) fn install_empty_state_wiring(deps: EmptyStateWiringDeps) -> Rc<dyn F
     refresh
 }
 
-fn compute_variant(app_state: &AppState, selection_model: &SingleSelection) -> EmptyStateVariant {
+fn compute_variant(app_state: &AppState, selection_model: &MultiSelection) -> EmptyStateVariant {
     if app_state.current_folder.borrow().is_none() {
         return EmptyStateVariant::OpenFolder;
     }

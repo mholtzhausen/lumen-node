@@ -21,6 +21,16 @@ Run this checklist after structural changes and before release.
 3. Rename one image and verify filename updates in grid/list.
 4. Delete one image and verify it disappears from the current view.
 
+## Multiselect and Batch Editor
+
+1. Ctrl+click two thumbnails → right pane shows batch editor (not metadata).
+2. Ctrl+A selects all filtered; Esc collapses to last item in batch list sort order.
+3. Plain click one thumb exits batch; chrome (fav/tags) is hidden while multi-selected.
+4. Toggle a mixed tag (confirm dialog) and favourite-all; verify grid icons update.
+5. Batch rename with `test_{index:2}`; confirm preview and that Apply disables on collision.
+6. Right-click a selected item in multi → selection-management menu; right-click unselected → single menu and exits batch.
+7. Confirm Similar / double-click full view do nothing while multi-selected.
+
 ## Navigation and Persistence
 
 1. Toggle between grid and full preview and back.

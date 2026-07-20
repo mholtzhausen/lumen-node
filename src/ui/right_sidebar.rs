@@ -19,6 +19,7 @@ pub(crate) struct RightSidebarDeps {
 #[derive(Clone)]
 pub(crate) struct RightSidebarBundle {
     pub(crate) right_sidebar: gtk4::Box,
+    pub(crate) sidebar_stack: gtk4::Stack,
     pub(crate) meta_preview: gtk4::Picture,
     pub(crate) meta_listbox: gtk4::ListBox,
     pub(crate) meta_expander: gtk4::Expander,
@@ -70,10 +71,23 @@ pub(crate) fn build_right_sidebar(deps: RightSidebarDeps) -> RightSidebarBundle 
         deps.min_meta_split_px,
         &meta_section_expanded_pref,
     );
-    append_meta_paned_to_sidebar(&right_sidebar, &meta_paned);
+
+    let single_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    single_page.set_hexpand(true);
+    single_page.set_vexpand(true);
+    append_meta_paned_to_sidebar(&single_page, &meta_paned);
+
+    let sidebar_stack = gtk4::Stack::new();
+    sidebar_stack.set_hexpand(true);
+    sidebar_stack.set_vexpand(true);
+    sidebar_stack.set_transition_type(gtk4::StackTransitionType::None);
+    sidebar_stack.add_named(&single_page, Some("single"));
+    // Batch page is added later once the editor is built (needs selection/filter deps).
+    right_sidebar.append(&sidebar_stack);
 
     RightSidebarBundle {
         right_sidebar,
+        sidebar_stack,
         meta_preview,
         meta_listbox,
         meta_expander,

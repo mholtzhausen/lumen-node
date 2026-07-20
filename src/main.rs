@@ -39,6 +39,7 @@ use ui::chrome::build_left_chrome;
 use ui::empty_state::{install_empty_state_wiring, EmptyStateWiringDeps};
 use ui::layout::{assemble_and_mount_layout, compute_startup_pane_metrics, LayoutMountDeps};
 use ui::lifecycle::{install_lifecycle, LifecycleDeps};
+use ui::list_mutation::ListMutationContext;
 use ui::models::{build_model_bundle, ModelAssemblyDeps};
 use ui::navigation::{install_navigation_handlers, NavigationDeps};
 use ui::right_sidebar::{build_right_sidebar, RightSidebarDeps};
@@ -481,6 +482,24 @@ fn build_ui(app: &adw::Application) {
         meta_pane_start_px: pane_metrics.meta_pane_start_px,
         min_meta_split_px: MIN_META_SPLIT_PX,
     });
+
+    let batch_editor = ui::batch_editor::build_batch_editor(ui::batch_editor::BatchEditorDeps {
+        app_state: app_state.clone(),
+        selection_model: selection_model.clone(),
+        toast_overlay: toast_overlay.clone(),
+        window: window.clone(),
+        filter: filter.clone(),
+        mutation_ctx: ListMutationContext {
+            app_state: app_state.clone(),
+            selection_model: selection_model.clone(),
+            start_scan_for_folder: start_scan_for_folder.clone(),
+        },
+    });
+    right
+        .sidebar_stack
+        .add_named(&batch_editor.root, Some("batch"));
+    right.sidebar_stack.set_visible_child_name("single");
+    let _batch_editor_refresh = batch_editor.refresh;
 
     *immersive_reset.borrow_mut() = Some(ImmersiveResetHandles {
         view_stack: center.view_stack.clone(),

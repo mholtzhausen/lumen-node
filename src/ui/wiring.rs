@@ -20,8 +20,11 @@ use crate::ui::grid::show_full_view_favourite_hud;
 use crate::ui::sidebar::{
     clear_metadata_sidebar, populate_metadata_sidebar, update_preview_favourite_indicator,
 };
+use crate::view_helpers::{
+    primary_image_path, primary_selected_index, selected_count,
+};
 use gtk4::prelude::*;
-use gtk4::{ListScrollFlags, StringObject};
+use gtk4::ListScrollFlags;
 use libadwaita as adw;
 use std::{
     cell::{Cell, RefCell},
@@ -45,7 +48,7 @@ pub(crate) struct ContextMenuWiringDeps {
     pub(crate) app_state: AppState,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) toast_overlay: adw::ToastOverlay,
-    pub(crate) selection_model: gtk4::SingleSelection,
+    pub(crate) selection_model: gtk4::MultiSelection,
     pub(crate) center: CenterContentBundle,
     pub(crate) right: RightSidebarBundle,
     pub(crate) min_meta_split_px: i32,
@@ -148,7 +151,7 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
 
 pub(crate) struct SelectionWiringDeps {
     pub(crate) app_state: AppState,
-    pub(crate) selection_model: gtk4::SingleSelection,
+    pub(crate) selection_model: gtk4::MultiSelection,
     pub(crate) center: CenterContentBundle,
     pub(crate) right: RightSidebarBundle,
 }
@@ -170,9 +173,19 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
     let hud_sel = deps.center.full_view_favourite_hud.clone();
     let view_stack_sel = deps.center.view_stack.clone();
     let compare_right_sel = deps.center.compare_right_picture.clone();
+    let sidebar_stack_sel = deps.right.sidebar_stack.clone();
     deps.selection_model
         .connect_selection_changed(move |model, _, _| {
-            let Some(item) = model.selected_item().and_downcast::<StringObject>() else {
+            let count = selected_count(model);
+            if count > 1 {
+                crate::ui::batch_editor::set_batch_mode_visible(&sidebar_stack_sel, true);
+                clear_picture(&meta_preview_sel);
+                clear_metadata_sidebar(&meta_listbox_sel);
+                update_preview_favourite_indicator(&preview_favourite_sel, None);
+                return;
+            }
+            crate::ui::batch_editor::set_batch_mode_visible(&sidebar_stack_sel, false);
+            if count == 0 {
                 clear_picture(&meta_preview_sel);
                 clear_metadata_sidebar(&meta_listbox_sel);
                 update_preview_favourite_indicator(&preview_favourite_sel, None);
@@ -180,8 +193,14 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                     clear_picture(&compare_right_sel);
                 }
                 return;
+            }
+            let Some(path_str) = primary_image_path(model).map(|p| p.to_string_lossy().into_owned())
+            else {
+                return;
             };
-            let selected = model.selected();
+            let Some(selected) = primary_selected_index(model) else {
+                return;
+            };
             if selected < model.n_items() {
                 grid_view_sel.scroll_to(
                     selected,
@@ -189,6 +208,7 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                     None,
                 );
             }
+            let item = gtk4::StringObject::new(&path_str);
             handle_selection_change_event(
                 &item,
                 &click_trace_state_sel,
@@ -209,7 +229,7 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                 show_full_view_favourite_hud(&hud_sel, is_favourite.unwrap_or(false));
             }
             if page.as_deref() == Some("compare") {
-                load_picture_async(&compare_right_sel, &item.string().to_string(), None, None);
+                load_picture_async(&compare_right_sel, &path_str, None, None);
             }
         });
 }
@@ -278,7 +298,7 @@ pub(crate) struct ControlsWiringDeps {
     pub(crate) start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
     pub(crate) filter: gtk4::CustomFilter,
     pub(crate) toast_overlay: adw::ToastOverlay,
-    pub(crate) selection_model: gtk4::SingleSelection,
+    pub(crate) selection_model: gtk4::MultiSelection,
 }
 
 pub(crate) fn install_controls_wiring(deps: ControlsWiringDeps) {

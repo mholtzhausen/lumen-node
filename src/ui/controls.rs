@@ -7,7 +7,7 @@ use crate::ui::grid_loading::{
 };
 use gtk4::prelude::*;
 use gtk4::gio::ListStore;
-use gtk4::{glib, CustomFilter, CustomSorter, Orientation, SingleSelection};
+use gtk4::{glib, CustomFilter, CustomSorter, Orientation, MultiSelection};
 use libadwaita as adw;
 use std::{
     cell::{Cell, RefCell},
@@ -535,7 +535,7 @@ pub(crate) fn install_favorites_only_handler(
     filter: &CustomFilter,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     toast_overlay: &adw::ToastOverlay,
-    selection_model: &SingleSelection,
+    selection_model: &MultiSelection,
     list_store: &ListStore,
     grid_loading: &Rc<RefCell<Option<GridLoadingOverlay>>>,
 ) {

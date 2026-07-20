@@ -2,6 +2,9 @@ use crate::core::app_state::AppState;
 use crate::image_types::is_supported_image_path;
 use crate::similarity::{rekey_prompt_index, upsert_prompt_index};
 use crate::sort_flags::compute_sort_fields;
+use crate::view_helpers::{
+    find_path_index, is_path_selected, primary_selected_index, select_only_index, select_only_path,
+};
 use gtk4::prelude::*;
 use gtk4::StringObject;
 use std::path::{Path, PathBuf};
@@ -10,7 +13,7 @@ use std::rc::Rc;
 #[derive(Clone)]
 pub struct ListMutationContext {
     pub app_state: AppState,
-    pub selection_model: gtk4::SingleSelection,
+    pub selection_model: gtk4::MultiSelection,
     pub start_scan_for_folder: Rc<dyn Fn(PathBuf)>,
 }
 
@@ -28,12 +31,10 @@ impl ListMutationContext {
             return false;
         };
 
-        let selected_path_before = self
-            .selection_model
-            .selected_item()
-            .and_downcast::<StringObject>()
-            .map(|obj| obj.string().to_string());
-        let selected_idx_before = self.selection_model.selected();
+        let was_selected = is_path_selected(&self.selection_model, &target);
+        let selected_idx_before = find_path_index(&self.selection_model, &target)
+            .or_else(|| primary_selected_index(&self.selection_model))
+            .unwrap_or(0);
 
         self.app_state.list_store.remove(remove_idx);
         self.app_state.hash_cache.borrow_mut().remove(&target);
@@ -48,14 +49,18 @@ impl ListMutationContext {
             similar.remove(&target);
         }
         self.app_state.sort_fields_cache.borrow_mut().remove(&target);
+        self.app_state.selected_paths.borrow_mut().remove(&target);
 
-        if selected_path_before.as_deref() == Some(target.as_str()) {
+        if was_selected {
             let item_count = self.selection_model.n_items();
             if item_count == 0 {
                 return true;
             }
-            let next_idx = selected_idx_before.min(item_count.saturating_sub(1));
-            self.selection_model.set_selected(next_idx);
+            // If other selections remain, leave them; else pick neighbor.
+            if self.selection_model.selection().size() == 0 {
+                let next_idx = selected_idx_before.min(item_count.saturating_sub(1));
+                select_only_index(&self.selection_model, next_idx);
+            }
         }
         true
     }
@@ -140,17 +145,6 @@ impl ListMutationContext {
     }
 
     fn select_path(&self, target: &str) {
-        for idx in 0..self.selection_model.n_items() {
-            let is_match = self
-                .selection_model
-                .item(idx)
-                .and_downcast::<StringObject>()
-                .map(|obj| obj.string().as_str() == target)
-                .unwrap_or(false);
-            if is_match {
-                self.selection_model.set_selected(idx);
-                return;
-            }
-        }
+        let _ = select_only_path(&self.selection_model, target);
     }
 }

@@ -1,12 +1,12 @@
 use gtk4::prelude::*;
 use gtk4::{
     gdk, gio, glib, Box as GtkBox, Button, EventControllerMotion, GridView, Image, Label, ListItem,
-    MenuButton, Orientation, Overlay, ScrolledWindow, SignalListItemFactory, SingleSelection,
+    MenuButton, Orientation, Overlay, ScrolledWindow, SignalListItemFactory, MultiSelection,
     StringObject,
 };
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -25,7 +25,7 @@ use crate::{
 };
 
 pub fn create_grid_view(
-    selection_model: &SingleSelection,
+    selection_model: &MultiSelection,
     factory: &gtk4::SignalListItemFactory,
 ) -> GridView {
     let grid_view = GridView::new(Some(selection_model.clone()), Some(factory.clone()));
@@ -101,6 +101,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
     let hash_cache_bind = deps.hash_cache.clone();
     let favourite_cache_bind = deps.app_state.favourite_cache.clone();
     let selected_path_bind = deps.app_state.selected_path.clone();
+    let selected_paths_bind = deps.app_state.selected_paths.clone();
     let thumbnail_size_bind = deps.thumbnail_size.clone();
     let fast_scroll_active_bind = deps.fast_scroll_active.clone();
     let thumb_generations_bind = deps.thumb_generations.clone();
@@ -117,6 +118,7 @@ pub fn install_grid_factory(deps: GridFactoryDeps) -> SignalListItemFactory {
             hash_cache_bind.clone(),
             favourite_cache_bind.clone(),
             selected_path_bind.clone(),
+            selected_paths_bind.clone(),
             &thumb_generations_bind,
             &bound_paths_bind,
             &app_state_bind,
@@ -504,8 +506,15 @@ fn apply_chrome_pane_state(
     favourite_cache: &Rc<RefCell<HashMap<String, bool>>>,
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
     selected_path: &Rc<RefCell<Option<String>>>,
+    selected_paths: &Rc<RefCell<HashSet<String>>>,
     hover_active: bool,
 ) {
+    // Batch mode: suppress per-thumb chrome entirely.
+    if selected_paths.borrow().len() > 1 {
+        chrome_pane.set_visible(false);
+        chrome_pane.set_opacity(0.0);
+        return;
+    }
     let key = favourite_btn.as_ptr() as usize;
     let bound_path = bound_paths.borrow().get(&key).cloned();
     let is_favourite = bound_path
@@ -559,6 +568,7 @@ pub fn refresh_realized_grid_favourite_icons(app_state: &AppState) {
             &app_state.favourite_cache,
             &app_state.bound_paths,
             &app_state.selected_path,
+            &app_state.selected_paths,
             hover_active,
         );
     }
@@ -653,6 +663,7 @@ fn toggle_grid_favourite(
                         &app_state.favourite_cache,
                         &bound_paths,
                         &app_state.selected_path,
+                        &app_state.selected_paths,
                         true,
                     );
                 }
@@ -685,7 +696,7 @@ pub fn setup_grid_list_item(
     app_state: AppState,
     toast_overlay: adw::ToastOverlay,
     filter: gtk4::CustomFilter,
-    selection_model: SingleSelection,
+    selection_model: MultiSelection,
     tags_filter_btn: MenuButton,
     tags_filter_list: gtk4::Box,
 ) {
@@ -756,6 +767,7 @@ pub fn setup_grid_list_item(
         let favourite_cache_closed = app_state.favourite_cache.clone();
         let bound_paths_closed = bound_paths.clone();
         let selected_path_closed = app_state.selected_path.clone();
+        let selected_paths_closed = app_state.selected_paths.clone();
         let hover_active_closed = hover_active.clone();
         tags_popover.connect_closed(move |_| {
             apply_chrome_pane_state(
@@ -764,6 +776,7 @@ pub fn setup_grid_list_item(
                 &favourite_cache_closed,
                 &bound_paths_closed,
                 &selected_path_closed,
+                &selected_paths_closed,
                 hover_active_closed.get(),
             );
         });
@@ -853,6 +866,8 @@ pub fn setup_grid_list_item(
     let bound_paths_leave = bound_paths.clone();
     let selected_path_enter = app_state.selected_path.clone();
     let selected_path_leave = app_state.selected_path.clone();
+    let selected_paths_enter = app_state.selected_paths.clone();
+    let selected_paths_leave = app_state.selected_paths.clone();
     let hover_active_enter = hover_active.clone();
     let hover_active_leave = hover_active.clone();
     let motion = EventControllerMotion::new();
@@ -866,6 +881,7 @@ pub fn setup_grid_list_item(
             &favourite_cache_enter,
             &bound_paths_enter,
             &selected_path_enter,
+            &selected_paths_enter,
             true,
         );
     });
@@ -880,6 +896,7 @@ pub fn setup_grid_list_item(
             &favourite_cache_leave,
             &bound_paths_leave,
             &selected_path_leave,
+            &selected_paths_leave,
             keep_chrome,
         );
     });
@@ -896,6 +913,7 @@ pub fn bind_grid_list_item(
     hash_cache: Rc<RefCell<HashMap<String, String>>>,
     favourite_cache: Rc<RefCell<HashMap<String, bool>>>,
     selected_path: Rc<RefCell<Option<String>>>,
+    selected_paths: Rc<RefCell<HashSet<String>>>,
     thumb_generations: &Rc<RefCell<HashMap<usize, Rc<Cell<u64>>>>>,
     bound_paths: &Rc<RefCell<HashMap<usize, String>>>,
     app_state: &AppState,
@@ -971,6 +989,7 @@ pub fn bind_grid_list_item(
         &favourite_cache,
         bound_paths,
         &selected_path,
+        &selected_paths,
         tag_popover_is_open(&tags_btn),
     );
     sync_tags_button_icon(&tags_btn, app_state, &path_str);
@@ -1193,7 +1212,7 @@ pub fn install_grid_scroll_speed_gate(
     grid_scroll: &ScrolledWindow,
     grid_view: &GridView,
     app_state: &AppState,
-    selection_model: &SingleSelection,
+    selection_model: &MultiSelection,
     scroll_flag_box: &GtkBox,
     scroll_flag: &Label,
 ) {

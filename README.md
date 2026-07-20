@@ -84,6 +84,7 @@ Current UI screenshot:
 | 📐 | **4 thumbnail sizes** — 128px base with larger steps up to 240px (128, 160, 208, 240), adjustable in one click |
 | 🔍 | **Live search** — filters grid by filename, tags, and metadata in real time |
 | 🏷️ | **Free-form tags** — assign tags from the thumbnail chrome pane (filterable checkboxes + Add), context menu, or `Ctrl+Shift+T`; filter with the header tag popover (AND); persisted per folder |
+| ☑️ | **Multiselect & batch editor** — Ctrl/Shift select, Ctrl+A (filtered); right pane becomes a batch workspace for tags, favourites, rename, and copy |
 | ↕️ | **6 sort modes** — name, date, size (ascending and descending) |
 | 💾 | **Session persistence** — window, pane positions, recent folders, and theme preference (`color_scheme`) in `~/.lumen-node/config.yml`; sort, search, and thumbnail size per folder in `.lumen-node.db` (`ui_state`). Optional YAML startup defaults and editor/HUD keys are editable via **Edit → Preferences…** (partial writes; unknown keys preserved) |
 | 🌓 | **Theme toggle** — header icon cycles System → Light → Dark (libadwaita color scheme) |
@@ -211,7 +212,20 @@ Right-click any image thumbnail, the single-view / compare image, or the sidebar
 - **Organise:** Favourite (toggle), Add tag / Remove tag, Pin for compare, Exit compare, Move to Trash
 - **Refresh** (submenu): Refresh Thumbnail, Refresh Metadata, Refresh Folder Thumbnails, Refresh Folder Metadata
 
-Hovering a grid thumbnail (or selecting / favouriting it) shows a right-hand chrome pane with favourite and tags buttons (size is adjustable under **Preferences → Appearance**). The tags button opens a short filterable checklist of folder tags; type a new name to get **Add `foo`**.
+Hovering a grid thumbnail (or selecting / favouriting it) shows a right-hand chrome pane with favourite and tags buttons (size is adjustable under **Preferences → Appearance**). The tags button opens a short filterable checklist of folder tags; type a new name to get **Add `foo`**. Chrome is hidden while multiple images are selected (batch mode).
+
+### Multiselect and batch editor
+
+With two or more images selected (`Ctrl+click` toggle, `Shift+click` range, `Ctrl+A` for all filtered), the right sidebar switches to a **batch editor**:
+
+- Selection summary, copy paths / filenames, and a tri-state favourite control
+- Batch rename with `{index}` or `{index:N}` (zero-padded), live preview, collision gating
+- Sortable list of selected images (name / date / size)
+- Tri-state tag checkboxes (none / mixed / all); mixed→all asks for confirmation
+
+Plain click on a thumbnail exits batch mode (selection becomes that image only). `Escape` collapses to the last item in the batch list’s current sort. Changing search, filters, or folder also cancels batch mode. Rubber-band drag select is not in this release.
+
+While in batch mode, similar-in-folder, single/full view, and compare entry are disabled. Thumbnail chrome edits are suppressed — use the batch pane. The grid context menu on a selected item shows selection management (remove / select all / clear / copy paths & filenames); right-clicking an unselected thumb exits batch and shows the normal single-item menu.
 
 **Similar in folder** is enabled when the selection has a prompt or raw parameters. The metadata pane shows a **Similar** button next to the Prompt (or Parameters) row. The filter ANDs with search / favourites / tags; clear it via the header × button, the toast’s Clear action, or the empty-state “Clear filters” CTA.
 
@@ -288,7 +302,9 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `Page Down` | Grid | Scroll one page down |
 | `Home` | Grid | Jump to first image |
 | `End` | Grid | Jump to last image |
-| `Escape` | Grid | Quit (toast warns, second press confirms) |
+| `Ctrl+A` | Grid | Select all **filtered** images |
+| `Escape` | Grid (multi-select) | Collapse selection to last item in batch-list order |
+| `Escape` | Grid (single) | Quit (toast warns; second press confirms) |
 | `←` / `→` | Single view | Previous / next image |
 | `←` / `→` | Compare view | Previous / next on the **right** pane only (left stays pinned) |
 | `Escape` | Compare view | Exit compare → single view (clears pin) |
@@ -354,7 +370,7 @@ LumenNode is organized into focused Rust modules. For a developer-oriented map o
 src/
 ├── main.rs            Composition root, scan progress state, global flags, wiring entry
 ├── icons.rs           Bundled symbolic icon registration (`lumen-tag-symbolic`)
-├── ui/                GTK widgets, actions, keyboard, layout, zoom, preferences, empty_state, quick_tag, shortcuts, …
+├── ui/                GTK widgets, actions, batch_editor, keyboard, layout, zoom, preferences, empty_state, quick_tag, shortcuts, …
 ├── core/              app_state, scan_coordinator (folder switches, generation IDs)
 ├── services/          Background helpers (e.g. update check integration)
 ├── scan.rs            ScanMessage enum (worker → UI channel)
@@ -560,6 +576,7 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 - [x] **Trash / delete** — move to trash from context menu and `Delete`; permanent delete via `Shift+Delete` with confirmation
 - [x] **External open** — file manager and external editor (optional `external_editor` config); per-format custom apps remain a possible enhancement
 - [x] **Side-by-side compare** — pin reference image (left), navigate selection on the right (lock-left); context menu Pin / Exit compare
+- [x] **Multiselect & batch editor** — `MultiSelection` grid; batch pane for tags / favourite / rename / copy; selection-management context menu; rubber-band deferred
 - [x] **Free-form tags** — junction table `image_tags`, context menu add/remove, header multi-select filter (AND), search inclusion, `ui_state.active_tags`
 - [x] **Version checker** — background check + in-app banner (`src/updater.rs` → `mholtzhausen/lumen-node` releases; `services::update_checker`)
 - [x] **Prompt / parameter similarity browse** — in-memory token index after enrich; *Similar in folder* from context menu / metadata pane (`src/similarity.rs`)
