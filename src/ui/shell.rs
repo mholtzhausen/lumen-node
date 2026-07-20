@@ -190,10 +190,10 @@ pub(crate) fn build_header_controls(
         dialog.set_program_name(Some("LumenNode"));
         dialog.set_version(Some(env!("CARGO_PKG_VERSION")));
         dialog.set_comments(Some("A desktop image gallery for AI-generated art, featuring per-folder indexing, metadata extraction, and thumbnail caching."));
-        dialog.set_website(Some("https://github.com/nemesarial/lumen-node"));
+        dialog.set_website(Some("https://github.com/mholtzhausen/lumen-node"));
         dialog.set_website_label("GitHub Project");
         dialog.set_license_type(gtk4::License::MitX11);
-        dialog.set_authors(&["nemesarial"]);
+        dialog.set_authors(&["mholtzhausen"]);
         dialog.set_logo_icon_name(Some("com.lumennode.app"));
         dialog.present();
     });
