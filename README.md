@@ -301,6 +301,9 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `Shift+Delete` | Grid | Permanent delete (confirmation) |
 | `f` | Selection (not in a text field) | Toggle favourite (grid, preview, and single view) |
 | `F2` | Selection (not in a text field) | Rename selected image |
+| `Ctrl+Shift+T` | Selection | Add tag… |
+| `Ctrl+Shift+K` | Selection | Pin for compare |
+| `Ctrl+Shift+I` | Selection (prompt or parameters) | Similar in folder |
 | `Ctrl+Shift+P` / `N` / `S` / `C` / `M` / `G` | Selection | Copy prompt / negative / seed / path / metadata / generation command |
 | `Ctrl+Alt+T` / `M` | Folder open | Refresh folder thumbnails / folder metadata |
 | `Ctrl+O` | Anywhere | Open Folder… |

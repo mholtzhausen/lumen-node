@@ -64,6 +64,9 @@ fn register_context_menu_accels(window: &adw::ApplicationWindow) {
     app.set_accels_for_action("ctx.copy-generation-command", &["<Primary><Shift>g"]);
     app.set_accels_for_action("ctx.refresh-folder-thumbnails", &["<Primary><Alt>t"]);
     app.set_accels_for_action("ctx.refresh-folder-metadata", &["<Primary><Alt>m"]);
+    app.set_accels_for_action("ctx.add-tag", &["<Primary><Shift>t"]);
+    app.set_accels_for_action("ctx.show-similar", &["<Primary><Shift>i"]);
+    app.set_accels_for_action("ctx.pin-for-compare", &["<Primary><Shift>k"]);
     // Delete → trash is handled in `keyboard.rs` so `SearchEntry` and other text widgets keep Delete.
 }
 

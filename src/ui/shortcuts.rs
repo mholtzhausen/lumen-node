@@ -196,6 +196,18 @@ pub(crate) fn present_shortcuts_window(parent: &adw::ApplicationWindow) {
         "F2",
         Some("Selection, not in a text field"),
     );
+    add_action(
+        &organise_group,
+        "Add tag…",
+        "ctx.add-tag",
+        Some("Selection"),
+    );
+    add_action(
+        &organise_group,
+        "Pin for compare",
+        "ctx.pin-for-compare",
+        Some("Selection"),
+    );
     organise.add_group(&organise_group);
     window.add_section(&organise);
 
@@ -230,6 +242,12 @@ pub(crate) fn present_shortcuts_window(parent: &adw::ApplicationWindow) {
         "Copy generation command",
         "ctx.copy-generation-command",
         Some("Selection"),
+    );
+    add_action(
+        &ai_group,
+        "Similar in folder",
+        "ctx.show-similar",
+        Some("Selection with prompt or parameters"),
     );
     ai_copy.add_group(&ai_group);
     window.add_section(&ai_copy);
