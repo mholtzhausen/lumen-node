@@ -1,3 +1,14 @@
+## 2.1.0 (29ed1a0) — 2026-07-20
+### Features and Improvements
+- Move Similar in folder to a stacked-photos icon in the metadata pane header (next to the favourite star); click again to clear, with active-state sync to the top-bar similar chrome.
+- Bundle `lumen-similar-symbolic` for the Similar control (Flaticon photography pack attribution in README).
+
+### Bugfixes
+- Update application icon assets and documentation for the gallery glyph / hicolor install layout.
+
+### Deprecations
+- No deprecations were introduced in this release.
+
 ## 2.0.2 (fdb0da6) — 2026-07-20
 ### Features and Improvements
 - Bundle portable `lumen-*-symbolic` UI icons (Freepik/Flaticon SVGs) so toolbar chrome works without a host Adwaita/Yaru icon theme; install/AppImage ship the full actions set.

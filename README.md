@@ -98,7 +98,7 @@ Current UI screenshot:
 | 🎨 | **InvokeAI** — reads `invokeai_metadata` JSON for structured prompt + model info |
 | 📋 | **One-click copy** — prompt, negative prompt, seed, or full generation command |
 | 🔁 | **CLI reconstruction** — right-click → *Copy Generation Command* builds `--prompt "..." --negative "..." --seed X` |
-| 🔗 | **Similar in folder** — after enrichment, find near-duplicate prompts / same-seed variants (context menu or metadata pane); temporary grid filter; hover the header clear control for a top-N slider (10–100); clear with × / toast / empty-state |
+| 🔗 | **Similar in folder** — after enrichment, find near-duplicate prompts / same-seed variants (context menu or metadata-header Similar icon); temporary grid filter; hover the Similar control for a top-N slider (10–100); clear via toggle / toast / empty-state |
 
 ### For photographers
 
@@ -358,7 +358,7 @@ On exit, the app writes **window geometry**, **three GtkPaned positions** (`left
 | `full_view_favourite_icon` | `true` | Show the favourite star HUD in single/full view (Preferences → General; applies next launch) |
 | `full_view_favourite_icon_seconds` | `2` | Seconds the full-view favourite star stays visible before fading (Preferences → General) |
 | `thumbnail_chrome_scale` | `0.6` | Scale of grid thumbnail favourite/tag buttons (0.4–1.0; Preferences → Appearance; applies live) |
-| `similar_top_n` | `50` | Max images kept by Similar in folder (10–100; hover the header clear-similar control) |
+| `similar_top_n` | `50` | Max images kept by Similar in folder (10–100; hover the Similar control while the filter is active) |
 
 Per-folder SQLite databases (`.lumen-node.db`) store cached hashes/metadata/favourites, free-form tags (`image_tags`), plus folder-scoped UI state in the **`ui_state`** table (`sort_key`, `search_text`, `favorites_only`, `active_tags`, `thumbnail_size`). They're safe to delete — LumenNode will regenerate them.
 
