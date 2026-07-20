@@ -516,6 +516,40 @@ pub fn remove_image_row(conn: &Connection, path: &Path) -> rusqlite::Result<bool
     Ok(affected > 0)
 }
 
+/// Same-folder path move: migrate favourite + tags, remove the old row, re-index the destination.
+pub fn move_image_row(conn: &Connection, old_path: &Path, new_path: &Path) -> Option<ImageRow> {
+    let favourite = favourite_for_path(conn, old_path);
+    let _ = move_tags(conn, old_path, new_path);
+    let _ = remove_image_row(conn, old_path);
+    let mut row = refresh_indexed(conn, new_path)?;
+    if favourite != 0 {
+        let _ = set_favourite(conn, new_path, true);
+        row.favourite = favourite;
+    }
+    Some(row)
+}
+
+/// Cross-folder move: copy favourite + tags from `source_conn`, remove the source row, index into `dest_conn`.
+pub fn relocate_image_row(
+    source_conn: &Connection,
+    dest_conn: &Connection,
+    old_path: &Path,
+    new_path: &Path,
+) -> Option<ImageRow> {
+    let favourite = favourite_for_path(source_conn, old_path);
+    let tags = list_tags_for_path(source_conn, old_path).unwrap_or_default();
+    let _ = remove_image_row(source_conn, old_path);
+    let mut row = refresh_indexed(dest_conn, new_path)?;
+    if favourite != 0 {
+        let _ = set_favourite(dest_conn, new_path, true);
+        row.favourite = favourite;
+    }
+    for tag in &tags {
+        let _ = add_tag(dest_conn, new_path, tag);
+    }
+    Some(row)
+}
+
 // ---------------------------------------------------------------------------
 // Tags
 // ---------------------------------------------------------------------------
@@ -901,6 +935,86 @@ mod tests {
         assert_eq!(
             list_tags_for_path(&conn, &renamed).unwrap(),
             vec!["style".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_move_image_row_preserves_favourite_and_tags() {
+        let dir = temp_dir();
+        let conn = open(&dir).unwrap();
+        let path = write_temp_file(&dir, "kept.jpg", b"move-row-data");
+        let hash = hash_file(&path).unwrap();
+        let mtime = file_mtime(&path).unwrap();
+        let size = file_size(&path).unwrap();
+
+        upsert(
+            &conn,
+            &ImageRow {
+                path: path.to_string_lossy().into_owned(),
+                filename: "kept.jpg".to_string(),
+                hash,
+                mtime,
+                size,
+                favourite: 0,
+                meta: ImageMetadata::default(),
+            },
+        )
+        .unwrap();
+        set_favourite(&conn, &path, true).unwrap();
+        assert!(add_tag(&conn, &path, "keep").unwrap());
+        assert!(add_tag(&conn, &path, "style").unwrap());
+
+        let renamed = dir.join("kept-renamed.jpg");
+        std::fs::rename(&path, &renamed).unwrap();
+        let row = move_image_row(&conn, &path, &renamed).expect("move_image_row");
+        assert_eq!(row.favourite, 1);
+        assert_eq!(get_favourite(&conn, &renamed).unwrap(), Some(true));
+        assert!(get_favourite(&conn, &path).unwrap().is_none());
+        assert!(list_tags_for_path(&conn, &path).unwrap().is_empty());
+        assert_eq!(
+            list_tags_for_path(&conn, &renamed).unwrap(),
+            vec!["keep".to_string(), "style".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_relocate_image_row_preserves_favourite_and_tags() {
+        let src_dir = temp_dir();
+        let dest_dir = temp_dir();
+        let source_conn = open(&src_dir).unwrap();
+        let dest_conn = open(&dest_dir).unwrap();
+        let path = write_temp_file(&src_dir, "xfer.jpg", b"relocate-data");
+        let hash = hash_file(&path).unwrap();
+        let mtime = file_mtime(&path).unwrap();
+        let size = file_size(&path).unwrap();
+
+        upsert(
+            &source_conn,
+            &ImageRow {
+                path: path.to_string_lossy().into_owned(),
+                filename: "xfer.jpg".to_string(),
+                hash,
+                mtime,
+                size,
+                favourite: 0,
+                meta: ImageMetadata::default(),
+            },
+        )
+        .unwrap();
+        set_favourite(&source_conn, &path, true).unwrap();
+        assert!(add_tag(&source_conn, &path, "archive").unwrap());
+
+        let dest = dest_dir.join("xfer.jpg");
+        std::fs::rename(&path, &dest).unwrap();
+        let row =
+            relocate_image_row(&source_conn, &dest_conn, &path, &dest).expect("relocate_image_row");
+        assert_eq!(row.favourite, 1);
+        assert!(get_favourite(&source_conn, &path).unwrap().is_none());
+        assert_eq!(get_favourite(&dest_conn, &dest).unwrap(), Some(true));
+        assert!(list_tags_for_path(&source_conn, &path).unwrap().is_empty());
+        assert_eq!(
+            list_tags_for_path(&dest_conn, &dest).unwrap(),
+            vec!["archive".to_string()]
         );
     }
 

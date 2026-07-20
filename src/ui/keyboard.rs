@@ -122,18 +122,109 @@ pub(crate) fn install_keyboard_handler(deps: KeyboardDeps) {
                         };
                         if move_err.is_none() {
                             cut_source_path.borrow_mut().take();
-                            if let Some(source_dir) = source.parent() {
-                                if let Ok(conn) = db::open(source_dir) {
-                                    let _ = db::remove_image_row(&conn, &source);
+                            let same_folder = source.parent() == Some(folder.as_path());
+                            if same_folder {
+                                if let Ok(conn) = db::open(&folder) {
+                                    if let Some(row) =
+                                        db::move_image_row(&conn, &source, &destination)
+                                    {
+                                        let old_key = source.to_string_lossy().to_string();
+                                        let new_key = destination.to_string_lossy().to_string();
+                                        mutation_ctx
+                                            .app_state
+                                            .favourite_cache
+                                            .borrow_mut()
+                                            .remove(&old_key);
+                                        mutation_ctx.app_state.favourite_cache.borrow_mut().insert(
+                                            new_key.clone(),
+                                            row.favourite != 0,
+                                        );
+                                        mutation_ctx
+                                            .app_state
+                                            .meta_cache
+                                            .borrow_mut()
+                                            .insert(new_key.clone(), row.meta.clone());
+                                        mutation_ctx
+                                            .app_state
+                                            .hash_cache
+                                            .borrow_mut()
+                                            .insert(new_key.clone(), row.hash.clone());
+                                        let tags = db::list_tags_for_path(&conn, &destination)
+                                            .unwrap_or_default();
+                                        mutation_ctx
+                                            .app_state
+                                            .tags_cache
+                                            .borrow_mut()
+                                            .remove(&old_key);
+                                        if tags.is_empty() {
+                                            mutation_ctx
+                                                .app_state
+                                                .tags_cache
+                                                .borrow_mut()
+                                                .remove(&new_key);
+                                        } else {
+                                            mutation_ctx
+                                                .app_state
+                                                .tags_cache
+                                                .borrow_mut()
+                                                .insert(new_key, tags);
+                                        }
+                                    }
                                 }
-                            }
-                            if let Ok(conn) = db::open(&folder) {
-                                let _ = db::refresh_indexed(&conn, &destination);
-                            }
-                            if source.parent() == Some(folder.as_path()) {
                                 let _ = mutation_ctx.replace_path(&source, &destination, true);
-                            } else if !mutation_ctx.insert_path(&destination, true) {
-                                mutation_ctx.fallback_rescan();
+                            } else {
+                                let source_conn =
+                                    source.parent().and_then(|dir| db::open(dir).ok());
+                                let dest_conn = db::open(&folder).ok();
+                                match (source_conn, dest_conn) {
+                                    (Some(source_conn), Some(dest_conn)) => {
+                                        if let Some(row) = db::relocate_image_row(
+                                            &source_conn,
+                                            &dest_conn,
+                                            &source,
+                                            &destination,
+                                        ) {
+                                            let new_key =
+                                                destination.to_string_lossy().to_string();
+                                            mutation_ctx
+                                                .app_state
+                                                .favourite_cache
+                                                .borrow_mut()
+                                                .insert(new_key.clone(), row.favourite != 0);
+                                            mutation_ctx
+                                                .app_state
+                                                .meta_cache
+                                                .borrow_mut()
+                                                .insert(new_key.clone(), row.meta.clone());
+                                            mutation_ctx
+                                                .app_state
+                                                .hash_cache
+                                                .borrow_mut()
+                                                .insert(new_key.clone(), row.hash.clone());
+                                            let tags =
+                                                db::list_tags_for_path(&dest_conn, &destination)
+                                                    .unwrap_or_default();
+                                            if !tags.is_empty() {
+                                                mutation_ctx
+                                                    .app_state
+                                                    .tags_cache
+                                                    .borrow_mut()
+                                                    .insert(new_key, tags);
+                                            }
+                                        }
+                                    }
+                                    (source_conn, dest_conn) => {
+                                        if let Some(conn) = source_conn {
+                                            let _ = db::remove_image_row(&conn, &source);
+                                        }
+                                        if let Some(conn) = dest_conn {
+                                            let _ = db::refresh_indexed(&conn, &destination);
+                                        }
+                                    }
+                                }
+                                if !mutation_ctx.insert_path(&destination, true) {
+                                    mutation_ctx.fallback_rescan();
+                                }
                             }
                             let toast = adw::Toast::new("Image moved");
                             toast.set_timeout(2);

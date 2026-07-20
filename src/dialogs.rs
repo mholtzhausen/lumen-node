@@ -110,14 +110,34 @@ pub fn open_rename_dialog(
                 Ok(()) => {
                     if let Some(folder) = mutation_ctx.app_state.current_folder.borrow().as_ref() {
                         if let Ok(conn) = db::open(folder) {
-                            let _ = db::move_tags(&conn, &source_path, &target);
-                            let _ = db::remove_image_row(&conn, &source_path);
-                            let _ = db::refresh_indexed(&conn, &target);
+                            let row = db::move_image_row(&conn, &source_path, &target);
                             let tags =
                                 db::list_tags_for_path(&conn, &target).unwrap_or_default();
                             let old_key = source_path.to_string_lossy().to_string();
                             let new_key = target.to_string_lossy().to_string();
                             mutation_ctx.app_state.tags_cache.borrow_mut().remove(&old_key);
+                            mutation_ctx
+                                .app_state
+                                .favourite_cache
+                                .borrow_mut()
+                                .remove(&old_key);
+                            if let Some(row) = row.as_ref() {
+                                mutation_ctx
+                                    .app_state
+                                    .favourite_cache
+                                    .borrow_mut()
+                                    .insert(new_key.clone(), row.favourite != 0);
+                                mutation_ctx
+                                    .app_state
+                                    .meta_cache
+                                    .borrow_mut()
+                                    .insert(new_key.clone(), row.meta.clone());
+                                mutation_ctx
+                                    .app_state
+                                    .hash_cache
+                                    .borrow_mut()
+                                    .insert(new_key.clone(), row.hash.clone());
+                            }
                             if tags.is_empty() {
                                 mutation_ctx.app_state.tags_cache.borrow_mut().remove(&new_key);
                             } else {
