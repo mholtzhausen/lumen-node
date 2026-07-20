@@ -93,7 +93,7 @@ fn append_json_node(parent: &gtk4::Box, key: Option<&str>, value: &JsonValue, de
     }
 
     let copy_text = json_copy_text(value);
-    let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
+    let copy_button = gtk4::Button::from_icon_name(crate::icons::COPY);
     copy_button.add_css_class("flat");
     copy_button.add_css_class("circular");
     copy_button.set_tooltip_text(Some("Copy"));

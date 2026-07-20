@@ -71,7 +71,7 @@ pub(crate) fn build_tree_widgets(
         let row_box = gtk4::Box::new(Orientation::Horizontal, 4);
         row_box.set_margin_top(3);
         row_box.set_margin_bottom(3);
-        let icon = Image::from_icon_name("folder-symbolic");
+        let icon = Image::from_icon_name(crate::icons::FOLDER);
         let label = Label::new(None);
         label.set_halign(gtk4::Align::Start);
         label.set_hexpand(true);

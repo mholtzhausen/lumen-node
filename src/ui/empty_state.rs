@@ -226,7 +226,7 @@ fn apply_variant(
             current_action.set(EmptyAction::None);
         }
         EmptyStateVariant::OpenFolder => {
-            status_page.set_icon_name(Some("folder-symbolic"));
+            status_page.set_icon_name(Some(crate::icons::FOLDER));
             status_page.set_title("Open a folder");
             status_page.set_description(Some(
                 "Choose a folder to browse your images in the grid.",
@@ -237,7 +237,7 @@ fn apply_variant(
             status_page.set_visible(true);
         }
         EmptyStateVariant::NoImages => {
-            status_page.set_icon_name(Some("image-x-generic-symbolic"));
+            status_page.set_icon_name(Some(crate::icons::IMAGE));
             status_page.set_title("No images in this folder");
             status_page.set_description(Some(
                 "This folder does not contain any supported image files.",
@@ -247,7 +247,7 @@ fn apply_variant(
             status_page.set_visible(true);
         }
         EmptyStateVariant::NoFavourites => {
-            status_page.set_icon_name(Some("starred-symbolic"));
+            status_page.set_icon_name(Some(crate::icons::STARRED));
             status_page.set_title("No favourites");
             status_page.set_description(Some(
                 "None of the images in this folder are marked as favourites.",
@@ -269,7 +269,7 @@ fn apply_variant(
             status_page.set_visible(true);
         }
         EmptyStateVariant::NoMatches => {
-            status_page.set_icon_name(Some("system-search-symbolic"));
+            status_page.set_icon_name(Some(crate::icons::SEARCH));
             status_page.set_title("No matches");
             status_page.set_description(Some(
                 "No images match the current search or filter settings.",

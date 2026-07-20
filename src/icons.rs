@@ -1,4 +1,7 @@
 //! Bundled symbolic icons (hicolor) registration for GTK IconTheme.
+//!
+//! All UI chrome icons are vendored under `data/icons/hicolor/scalable/actions/`
+//! so they resolve without a host Adwaita/Yaru icon theme.
 
 use std::path::PathBuf;
 
@@ -7,7 +10,37 @@ pub const TAG_ICON_NAME: &str = "lumen-tag-symbolic";
 /// Filled price-tag (image has one or more tags).
 pub const TAG_ICON_FILLED_NAME: &str = "lumen-tag-filled-symbolic";
 
-/// Adds search paths so bundled tag icons resolve in dev, install, and AppImage.
+pub const STARRED: &str = "lumen-starred-symbolic";
+pub const NON_STARRED: &str = "lumen-non-starred-symbolic";
+pub const SEMI_STARRED: &str = "lumen-semi-starred-symbolic";
+pub const COPY: &str = "lumen-copy-symbolic";
+pub const CLEAR: &str = "lumen-clear-symbolic";
+pub const DELETE: &str = "lumen-delete-symbolic";
+pub const FOLDER_OPEN: &str = "lumen-folder-open-symbolic";
+pub const FOLDER: &str = "lumen-folder-symbolic";
+pub const RECENT: &str = "lumen-recent-symbolic";
+pub const SIDEBAR_LEFT: &str = "lumen-sidebar-left-symbolic";
+pub const SIDEBAR_RIGHT: &str = "lumen-sidebar-right-symbolic";
+pub const BRIGHTNESS: &str = "lumen-brightness-symbolic";
+pub const SUN: &str = "lumen-sun-symbolic";
+pub const MOON: &str = "lumen-moon-symbolic";
+pub const TEXT: &str = "lumen-text-symbolic";
+pub const ADD: &str = "lumen-add-symbolic";
+pub const IMAGE: &str = "lumen-image-symbolic";
+pub const SELECT: &str = "lumen-select-symbolic";
+pub const CLOSE: &str = "lumen-close-symbolic";
+pub const CHECKBOX: &str = "lumen-checkbox-symbolic";
+pub const SEARCH: &str = "lumen-search-symbolic";
+pub const GRID: &str = "lumen-grid-symbolic";
+pub const FULLSCREEN: &str = "lumen-fullscreen-symbolic";
+pub const COMPARE: &str = "lumen-compare-symbolic";
+pub const EDIT: &str = "lumen-edit-symbolic";
+pub const TRASH: &str = "lumen-trash-symbolic";
+pub const MISSING: &str = "lumen-missing-symbolic";
+pub const SETTINGS: &str = "lumen-settings-symbolic";
+pub const APPEARANCE: &str = "lumen-appearance-symbolic";
+
+/// Adds search paths so bundled icons resolve in dev, install, and AppImage.
 pub fn register_bundled_icons() {
     let Some(display) = gtk4::gdk::Display::default() else {
         return;

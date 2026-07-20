@@ -90,11 +90,11 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
     let actions = GtkBox::new(Orientation::Horizontal, 4);
     actions.add_css_class("linked");
     actions.set_halign(Align::Start);
-    let copy_paths_btn = Button::from_icon_name("edit-copy-symbolic");
+    let copy_paths_btn = Button::from_icon_name(crate::icons::COPY);
     copy_paths_btn.set_tooltip_text(Some("Copy paths"));
-    let copy_names_btn = Button::from_icon_name("text-x-generic-symbolic");
+    let copy_names_btn = Button::from_icon_name(crate::icons::TEXT);
     copy_names_btn.set_tooltip_text(Some("Copy filenames"));
-    let fav_btn = Button::from_icon_name("non-starred-symbolic");
+    let fav_btn = Button::from_icon_name(crate::icons::NON_STARRED);
     fav_btn.set_tooltip_text(Some("Favourite all"));
     actions.append(&copy_paths_btn);
     actions.append(&copy_names_btn);
@@ -178,7 +178,7 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
     let add_tag_entry = Entry::new();
     add_tag_entry.set_placeholder_text(Some("Add tag to all…"));
     add_tag_entry.set_hexpand(true);
-    let add_tag_btn = Button::from_icon_name("list-add-symbolic");
+    let add_tag_btn = Button::from_icon_name(crate::icons::ADD);
     add_tag_btn.set_tooltip_text(Some("Add tag to all selected images"));
     add_tag_btn.add_css_class("suggested-action");
     add_tag_row.append(&add_tag_entry);
@@ -291,7 +291,7 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
                 row_box.set_margin_start(4);
                 row_box.set_margin_end(4);
 
-                let thumb = Image::from_icon_name("image-x-generic-symbolic");
+                let thumb = Image::from_icon_name(crate::icons::IMAGE);
                 thumb.set_pixel_size(40);
                 load_batch_thumb(&thumb, &app_state, path);
 
@@ -352,15 +352,15 @@ pub(crate) fn build_batch_editor(deps: BatchEditorDeps) -> BatchEditorBundle {
             fav_state.set(state);
             match state {
                 TriState::All => {
-                    fav_btn.set_icon_name("starred-symbolic");
+                    fav_btn.set_icon_name(crate::icons::STARRED);
                     fav_btn.set_tooltip_text(Some("Unfavourite all"));
                 }
                 TriState::Mixed => {
-                    fav_btn.set_icon_name("semi-starred-symbolic");
+                    fav_btn.set_icon_name(crate::icons::SEMI_STARRED);
                     fav_btn.set_tooltip_text(Some("Favourite all…"));
                 }
                 TriState::None => {
-                    fav_btn.set_icon_name("non-starred-symbolic");
+                    fav_btn.set_icon_name(crate::icons::NON_STARRED);
                     fav_btn.set_tooltip_text(Some("Favourite all"));
                 }
             }

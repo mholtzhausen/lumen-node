@@ -371,7 +371,7 @@ LumenNode is organized into focused Rust modules. For a developer-oriented map o
 ```
 src/
 ├── main.rs            Composition root, scan progress state, global flags, wiring entry
-├── icons.rs           Bundled symbolic icon registration (`lumen-tag-symbolic`)
+├── icons.rs           Bundled symbolic icon registration (all UI chrome under `lumen-*-symbolic`)
 ├── ui/                GTK widgets, actions, batch_editor, keyboard, layout, zoom, preferences, empty_state, quick_tag, shortcuts, …
 ├── core/              app_state, scan_coordinator (folder switches, generation IDs)
 ├── services/          Background helpers (e.g. update check integration)
@@ -582,6 +582,12 @@ All timing data flows to `write_timing_report()` (currently inactive, ready for 
 - [x] **Free-form tags** — junction table `image_tags`, context menu add/remove, header three-state tag filter (require / ignore / exclude), search inclusion, `ui_state.active_tags`
 - [x] **Version checker** — background check + in-app banner (`src/updater.rs` → `mholtzhausen/lumen-node` releases; `services::update_checker`)
 - [x] **Prompt / parameter similarity browse** — in-memory token index after enrich; *Similar in folder* from context menu / metadata pane (`src/similarity.rs`)
+
+---
+
+## Credits
+
+UI chrome icons are bundled as GTK symbolic SVGs under `data/icons/hicolor/scalable/actions/` (`lumen-*-symbolic`) so the app does not depend on a host Adwaita/Yaru icon theme. Glyphs were adapted from Freepik / Flaticon icon packs (free license with attribution).
 
 ---
 

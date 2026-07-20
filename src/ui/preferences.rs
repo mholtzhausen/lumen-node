@@ -46,7 +46,7 @@ pub(crate) fn present_preferences_window(parent: &adw::ApplicationWindow, deps: 
 fn build_general_page(cfg: &config::AppConfig) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title("General")
-        .icon_name("preferences-system-symbolic")
+        .icon_name(crate::icons::SETTINGS)
         .name("general")
         .build();
 
@@ -111,7 +111,7 @@ fn build_general_page(cfg: &config::AppConfig) -> adw::PreferencesPage {
 fn build_appearance_page(cfg: &config::AppConfig, deps: &PreferencesDeps) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title("Appearance")
-        .icon_name("preferences-desktop-appearance-symbolic")
+        .icon_name(crate::icons::APPEARANCE)
         .name("appearance")
         .build();
 
@@ -198,7 +198,7 @@ fn build_appearance_page(cfg: &config::AppConfig, deps: &PreferencesDeps) -> adw
 fn build_startup_page(cfg: &config::AppConfig) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title("Startup")
-        .icon_name("document-open-recent-symbolic")
+        .icon_name(crate::icons::RECENT)
         .name("startup")
         .build();
 

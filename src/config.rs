@@ -36,9 +36,9 @@ impl ColorSchemePref {
 
     pub fn icon_name(self) -> &'static str {
         match self {
-            Self::System => "display-brightness-symbolic",
-            Self::Light => "weather-clear-symbolic",
-            Self::Dark => "weather-clear-night-symbolic",
+            Self::System => crate::icons::BRIGHTNESS,
+            Self::Light => crate::icons::SUN,
+            Self::Dark => crate::icons::MOON,
         }
     }
 

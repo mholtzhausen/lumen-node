@@ -38,9 +38,9 @@ pub(crate) fn sync_tags_filter_button_style(
 
 fn tag_filter_mode_icon(mode: Option<TagFilterMode>) -> &'static str {
     match mode {
-        Some(TagFilterMode::Require) => "object-select-symbolic",
-        Some(TagFilterMode::Exclude) => "window-close-symbolic",
-        None => "checkbox-symbolic",
+        Some(TagFilterMode::Require) => crate::icons::SELECT,
+        Some(TagFilterMode::Exclude) => crate::icons::CLOSE,
+        None => crate::icons::CHECKBOX,
     }
 }
 

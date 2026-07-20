@@ -32,8 +32,8 @@ install: build
 	install -Dm755 target/release/lumen-node $(INSTALL_PREFIX)/bin/lumen-node
 	install -Dm644 data/com.lumennode.app.desktop $(INSTALL_PREFIX)/share/applications/com.lumennode.app.desktop
 	install -Dm644 data/icons/com.lumennode.app.svg $(INSTALL_PREFIX)/share/icons/hicolor/scalable/apps/com.lumennode.app.svg
-	install -Dm644 data/icons/hicolor/scalable/actions/lumen-tag-symbolic.svg $(INSTALL_PREFIX)/share/icons/hicolor/scalable/actions/lumen-tag-symbolic.svg
-	install -Dm644 data/icons/hicolor/scalable/actions/lumen-tag-filled-symbolic.svg $(INSTALL_PREFIX)/share/icons/hicolor/scalable/actions/lumen-tag-filled-symbolic.svg
+	install -d $(INSTALL_PREFIX)/share/icons/hicolor/scalable/actions
+	install -m644 data/icons/hicolor/scalable/actions/*.svg $(INSTALL_PREFIX)/share/icons/hicolor/scalable/actions/
 	install -Dm644 data/com.lumennode.app.metainfo.xml $(INSTALL_PREFIX)/share/metainfo/com.lumennode.app.metainfo.xml
 	gtk-update-icon-cache -f -t $(INSTALL_PREFIX)/share/icons/hicolor || true
 
@@ -41,8 +41,7 @@ uninstall:
 	rm -f $(INSTALL_PREFIX)/bin/lumen-node
 	rm -f $(INSTALL_PREFIX)/share/applications/com.lumennode.app.desktop
 	rm -f $(INSTALL_PREFIX)/share/icons/hicolor/scalable/apps/com.lumennode.app.svg
-	rm -f $(INSTALL_PREFIX)/share/icons/hicolor/scalable/actions/lumen-tag-symbolic.svg
-	rm -f $(INSTALL_PREFIX)/share/icons/hicolor/scalable/actions/lumen-tag-filled-symbolic.svg
+	rm -f $(INSTALL_PREFIX)/share/icons/hicolor/scalable/actions/lumen-*-symbolic.svg
 	rm -f $(INSTALL_PREFIX)/share/metainfo/com.lumennode.app.metainfo.xml
 
 appimage:

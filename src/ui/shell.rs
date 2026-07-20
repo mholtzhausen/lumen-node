@@ -288,7 +288,7 @@ pub(crate) fn build_header_controls(
     search_entry.set_hexpand(true);
 
     let favourites_filter_btn = gtk4::ToggleButton::new();
-    favourites_filter_btn.set_icon_name("starred-symbolic");
+    favourites_filter_btn.set_icon_name(crate::icons::STARRED);
     favourites_filter_btn.set_tooltip_text(Some("Show favourites only"));
     favourites_filter_btn.add_css_class("flat");
 
@@ -310,10 +310,10 @@ pub(crate) fn build_header_controls(
     tags_filter_popover.set_child(Some(&tags_scroll));
     tags_filter_btn.set_popover(Some(&tags_filter_popover));
 
-    let clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
+    let clear_btn = gtk4::Button::from_icon_name(crate::icons::CLEAR);
     clear_btn.set_tooltip_text(Some("Clear filters"));
 
-    let similar_filter_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
+    let similar_filter_btn = gtk4::Button::from_icon_name(crate::icons::CLEAR);
     similar_filter_btn.set_tooltip_text(Some("Clear similar filter"));
     similar_filter_btn.add_css_class("flat");
 
@@ -325,16 +325,16 @@ pub(crate) fn build_header_controls(
     controls_row.set_margin_top(4);
     controls_row.set_margin_bottom(4);
     let left_toggle = gtk4::ToggleButton::new();
-    left_toggle.set_icon_name("sidebar-show-symbolic");
+    left_toggle.set_icon_name(crate::icons::SIDEBAR_LEFT);
     let initial_left_sidebar_visible = app_config.left_sidebar_visible.unwrap_or(false);
     left_toggle.set_active(initial_left_sidebar_visible);
     left_toggle.set_tooltip_text(Some("Toggle left panel"));
 
-    let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
+    let open_btn = gtk4::Button::from_icon_name(crate::icons::FOLDER_OPEN);
     open_btn.set_tooltip_text(Some("Open Folder..."));
 
     let history_btn = gtk4::MenuButton::new();
-    history_btn.set_icon_name("document-open-recent-symbolic");
+    history_btn.set_icon_name(crate::icons::RECENT);
     history_btn.set_tooltip_text(Some("Recent folders"));
     let history_popover = gtk4::Popover::new();
     let history_list = gtk4::Box::new(Orientation::Vertical, 0);
@@ -358,7 +358,7 @@ pub(crate) fn build_header_controls(
     header_bar.pack_start(&menubar);
 
     let right_toggle = gtk4::ToggleButton::new();
-    right_toggle.set_icon_name("sidebar-show-right-symbolic");
+    right_toggle.set_icon_name(crate::icons::SIDEBAR_RIGHT);
     let initial_right_sidebar_visible = app_config.right_sidebar_visible.unwrap_or(true);
     right_toggle.set_active(initial_right_sidebar_visible);
     right_toggle.set_tooltip_text(Some("Toggle right panel"));
@@ -705,7 +705,7 @@ pub(crate) fn install_history_popover_handler(
             btn_label.set_xalign(0.0);
             btn.set_child(Some(&btn_label));
 
-            let remove_btn = gtk4::Button::from_icon_name("edit-delete-symbolic");
+            let remove_btn = gtk4::Button::from_icon_name(crate::icons::DELETE);
             remove_btn.add_css_class("flat");
             remove_btn.set_tooltip_text(Some("Remove from history"));
             remove_btn.set_visible(false);

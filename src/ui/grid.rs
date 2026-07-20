@@ -171,7 +171,7 @@ pub fn create_grid_overlay(grid_scroll: &ScrolledWindow) -> gtk4::Overlay {
 
 pub fn attach_grid_page(view_stack: &adw::ViewStack, grid_overlay: &gtk4::Overlay) {
     let grid_page = view_stack.add_titled(grid_overlay, Some("grid"), "Grid");
-    grid_page.set_icon_name(Some("view-grid-symbolic"));
+    grid_page.set_icon_name(Some(crate::icons::GRID));
 }
 
 pub fn add_scroll_flag_overlay(grid_overlay: &gtk4::Overlay, scroll_flag_box: &GtkBox) {
@@ -206,7 +206,7 @@ pub fn create_single_view(
     overlay.set_child(Some(&single_picture));
     crate::ui::zoom::install_picture_zoom(&single_picture, &overlay);
 
-    let button = Button::from_icon_name("non-starred-symbolic");
+    let button = Button::from_icon_name(crate::icons::NON_STARRED);
     button.add_css_class("flat");
     button.add_css_class("circular");
     button.add_css_class("thumbnail-favourite-button");
@@ -233,7 +233,7 @@ pub fn create_single_view(
 
 pub fn attach_single_page(view_stack: &adw::ViewStack, single_page_child: &impl IsA<gtk4::Widget>) {
     let single_page = view_stack.add_titled(single_page_child, Some("single"), "Single");
-    single_page.set_icon_name(Some("view-fullscreen-symbolic"));
+    single_page.set_icon_name(Some(crate::icons::FULLSCREEN));
 }
 
 /// Side-by-side compare: horizontal paned with independent zoom on each picture.
@@ -273,7 +273,7 @@ pub fn create_compare_view() -> (gtk4::Overlay, gtk4::Picture, gtk4::Picture) {
 
 pub fn attach_compare_page(view_stack: &adw::ViewStack, compare_page_child: &impl IsA<gtk4::Widget>) {
     let compare_page = view_stack.add_titled(compare_page_child, Some("compare"), "Compare");
-    compare_page.set_icon_name(Some("preferences-desktop-display-symbolic"));
+    compare_page.set_icon_name(Some(crate::icons::COMPARE));
 }
 
 /// True for single-view or compare pages (immersive center, chrome/sidebars hidden).
@@ -289,9 +289,9 @@ pub fn show_full_view_favourite_hud(hud: &FullViewFavouriteHud, is_favourite: bo
         return;
     }
     hud.button.set_icon_name(if is_favourite {
-        "starred-symbolic"
+        crate::icons::STARRED
     } else {
-        "non-starred-symbolic"
+        crate::icons::NON_STARRED
     });
     if is_favourite {
         hud.button.add_css_class("thumbnail-favourite-active");
@@ -528,9 +528,9 @@ fn apply_chrome_pane_state(
     let show_chrome = is_favourite || hover_active || is_selected;
 
     favourite_btn.set_icon_name(if is_favourite {
-        "starred-symbolic"
+        crate::icons::STARRED
     } else {
-        "non-starred-symbolic"
+        crate::icons::NON_STARRED
     });
     if is_favourite {
         favourite_btn.add_css_class("thumbnail-favourite-active");
@@ -721,7 +721,7 @@ pub fn setup_grid_list_item(
     chrome_pane.set_opacity(0.0);
     chrome_pane.set_visible(false);
 
-    let favourite_btn = Button::from_icon_name("non-starred-symbolic");
+    let favourite_btn = Button::from_icon_name(crate::icons::NON_STARRED);
     favourite_btn.add_css_class("flat");
     favourite_btn.add_css_class("circular");
     favourite_btn.add_css_class("thumbnail-favourite-button");
@@ -799,12 +799,12 @@ pub fn setup_grid_list_item(
     name_label.add_css_class("caption");
     name_label.set_hexpand(true);
     name_label.set_halign(gtk4::Align::Start);
-    let rename_btn = Button::from_icon_name("document-edit-symbolic");
+    let rename_btn = Button::from_icon_name(crate::icons::EDIT);
     rename_btn.add_css_class("flat");
     rename_btn.set_tooltip_text(Some("Rename file"));
     rename_btn.set_opacity(0.0);
     rename_btn.set_focus_on_click(false);
-    let delete_btn = Button::from_icon_name("user-trash-symbolic");
+    let delete_btn = Button::from_icon_name(crate::icons::TRASH);
     delete_btn.add_css_class("flat");
     delete_btn.add_css_class("destructive-action");
     delete_btn.set_tooltip_text(Some("Move to Trash"));
@@ -1006,7 +1006,7 @@ pub fn bind_grid_list_item(
         let expected_generation = generation_token.get().saturating_add(1);
         generation_token.set(expected_generation);
         if fast_scroll_active.get() {
-            thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
+            thumb_image.set_icon_name(Some(crate::icons::IMAGE));
             bound_paths.borrow_mut().insert(thumb_key, path_str);
         } else {
             load_grid_thumbnail(
@@ -1037,7 +1037,7 @@ pub fn unbind_grid_list_item(
                 map.remove(&(tags_btn.as_ptr() as usize));
                 map.remove(&(chrome_pane.as_ptr() as usize));
                 drop(map);
-                favourite_btn.set_icon_name("non-starred-symbolic");
+                favourite_btn.set_icon_name(crate::icons::NON_STARRED);
                 favourite_btn.remove_css_class("thumbnail-favourite-active");
                 chrome_pane.set_opacity(0.0);
                 chrome_pane.set_visible(false);
@@ -1080,7 +1080,7 @@ pub fn unbind_grid_list_item(
             bound_paths
                 .borrow_mut()
                 .remove(&(cell_box.as_ptr() as usize));
-            image.set_icon_name(Some("image-x-generic-symbolic"));
+            image.set_icon_name(Some(crate::icons::IMAGE));
         }
     }
 }
@@ -1331,7 +1331,7 @@ pub fn load_grid_thumbnail(
     bound_paths: Rc<RefCell<HashMap<usize, String>>>,
 ) {
     if thumb_image.paintable().is_none() {
-        thumb_image.set_icon_name(Some("image-x-generic-symbolic"));
+        thumb_image.set_icon_name(Some(crate::icons::IMAGE));
     }
     bound_paths.borrow_mut().insert(
         thumb_image.as_ptr() as usize,
@@ -1423,7 +1423,7 @@ pub fn load_grid_thumbnail(
         }
         match maybe_texture {
             Some(tex) => image.set_paintable(Some(&tex)),
-            None => image.set_icon_name(Some("image-missing-symbolic")),
+            None => image.set_icon_name(Some(crate::icons::MISSING)),
         }
     });
 }

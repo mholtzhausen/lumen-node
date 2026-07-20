@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" height="16" width="16">
+  <!-- Bundled symbolic icon for LumenNode; Adwaita symbolic fill for GTK recoloring. -->
+  <!-- Source: 003-pencil.svg -->
+  <g fill="#2e3436">
+  <path d="m2 28.76a1 1 0 0 0 .26.95 1 1 0 0 0 .74.29 1 1 0 0 0 .24 0l7.45-1.86-6.8-6.8z"/>
+  <path d="m5.9 11.25h19.21v10.49h-19.21z" transform="matrix(.707 -.707 .707 .707 -7.13 15.79)"/>
+  <path d="m28.46 3.54a5.23 5.23 0 0 0 -7.41 0l-1.05 1.04 7.42 7.42 1-1.05a5.23 5.23 0 0 0 .04-7.41z"/>
+  </g>
+</svg>

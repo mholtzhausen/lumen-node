@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 511.88 511.88" height="16" width="16">
+  <!-- Bundled symbolic icon for LumenNode; Adwaita symbolic fill for GTK recoloring. -->
+  <!-- Source: 009-trash can.svg -->
+  <g fill="#2e3436">
+  <path d="m421.5 165.65v-60.24c-125.233 0-250.957 0-376.35 0v60.24z"/>
+  <path d="m75.26 195.65v226h316.12v-226zm112.83 195.82h-30v-165.65h30zm60.23 0h-30v-165.65h30zm60.24 0h-30v-165.65h30z"/>
+  <path d="m391.38 481.88c0-9.204 0-21.3 0-30.23h-316.12v60.23h391.47v-30z"/>
+  <path d="m278.56 75.41c0-17.836 0-59.189 0-75.41h-177.83l-16.16 75.41z"/>
+  <path d="m382.08 75.41-16.16-75.41h-57.36v75.41z"/>
+  <path d="m466.68 406.53h-30v15.12h-45.3v30h75.3z"/>
+  </g>
+</svg>

@@ -80,7 +80,7 @@ pub fn create_meta_expander(
     let fav_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
     fav_box.set_halign(Align::End);
 
-    let button = gtk4::Button::from_icon_name("non-starred-symbolic");
+    let button = gtk4::Button::from_icon_name(crate::icons::NON_STARRED);
     button.add_css_class("flat");
     button.add_css_class("circular");
     button.add_css_class("thumbnail-favourite-button");
@@ -114,21 +114,21 @@ pub fn update_preview_favourite_indicator(
     match is_favourite {
         Some(true) => {
             indicator.button.set_sensitive(true);
-            indicator.button.set_icon_name("starred-symbolic");
+            indicator.button.set_icon_name(crate::icons::STARRED);
             indicator.button.add_css_class("thumbnail-favourite-active");
             indicator.label.set_text("Favourite");
             indicator.label.set_visible(true);
         }
         Some(false) => {
             indicator.button.set_sensitive(true);
-            indicator.button.set_icon_name("non-starred-symbolic");
+            indicator.button.set_icon_name(crate::icons::NON_STARRED);
             indicator.button.remove_css_class("thumbnail-favourite-active");
             indicator.label.set_text("");
             indicator.label.set_visible(false);
         }
         None => {
             indicator.button.set_sensitive(false);
-            indicator.button.set_icon_name("non-starred-symbolic");
+            indicator.button.set_icon_name(crate::icons::NON_STARRED);
             indicator.button.remove_css_class("thumbnail-favourite-active");
             indicator.label.set_text("");
             indicator.label.set_visible(false);
@@ -242,7 +242,7 @@ pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) 
         row.set_subtitle(&glib::markup_escape_text(&display_val));
         row.set_subtitle_selectable(true);
         let copy_text = display_val.clone();
-        let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
+        let copy_button = gtk4::Button::from_icon_name(crate::icons::COPY);
         copy_button.add_css_class("flat");
         copy_button.set_tooltip_text(Some("Copy"));
         copy_button.connect_clicked(move |btn| {
@@ -298,7 +298,7 @@ pub fn populate_metadata_sidebar(listbox: &gtk4::ListBox, meta: &ImageMetadata) 
         }
 
         let copy_text = display_val.clone();
-        let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
+        let copy_button = gtk4::Button::from_icon_name(crate::icons::COPY);
         copy_button.add_css_class("flat");
         copy_button.set_tooltip_text(Some("Copy"));
         copy_button.connect_clicked(move |btn| {
