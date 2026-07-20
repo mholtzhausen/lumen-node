@@ -457,6 +457,7 @@ fn build_ui(app: &adw::Application) {
 
     let right = build_right_sidebar(RightSidebarDeps {
         initial_right_sidebar_visible: chrome.initial_right_sidebar_visible,
+        initial_meta_section_expanded: app_config.meta_section_expanded.unwrap_or(true),
         meta_pane_start_px: pane_metrics.meta_pane_start_px,
         min_meta_split_px: MIN_META_SPLIT_PX,
     });

@@ -219,6 +219,7 @@ pub fn install_context_menu(
     meta_paned: &gtk4::Paned,
     meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
     meta_position_programmatic: &Rc<Cell<u32>>,
+    meta_section_expanded_pref: &Rc<Cell<bool>>,
     min_meta_split_px: i32,
     current_folder: &Rc<RefCell<Option<PathBuf>>>,
     start_scan_for_folder: &Rc<dyn Fn(PathBuf)>,
@@ -424,6 +425,7 @@ pub fn install_context_menu(
     let meta_paned_for_actions = meta_paned.clone();
     let meta_split_before_auto_collapse_for_actions = meta_split_before_auto_collapse.clone();
     let meta_position_programmatic_for_actions = meta_position_programmatic.clone();
+    let meta_section_expanded_pref_for_actions = meta_section_expanded_pref.clone();
     let toast_overlay_for_actions = toast_overlay.clone();
     let sync_context_menu_slot_meta = sync_context_menu_slot.clone();
     refresh_meta_action.connect_activate(move |_, _| {
@@ -462,6 +464,7 @@ pub fn install_context_menu(
                 &meta_paned_for_actions,
                 &meta_split_before_auto_collapse_for_actions,
                 min_meta_split_px,
+                &meta_section_expanded_pref_for_actions,
             );
             meta_position_programmatic_for_actions.set(
                 meta_position_programmatic_for_actions

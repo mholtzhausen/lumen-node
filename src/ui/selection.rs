@@ -367,6 +367,7 @@ fn dispatch_selection_metadata_load(
     meta_paned: gtk4::Paned,
     meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
     meta_position_programmatic: Rc<Cell<u32>>,
+    meta_section_expanded_pref: Rc<Cell<bool>>,
     trace_state: Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
 ) {
@@ -377,6 +378,7 @@ fn dispatch_selection_metadata_load(
         meta_paned,
         meta_split_before_auto_collapse,
         meta_position_programmatic,
+        meta_section_expanded_pref,
         trace_state,
         click_id,
     );
@@ -391,6 +393,7 @@ pub(crate) fn handle_selection_change_event(
     meta_paned: &gtk4::Paned,
     meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
     meta_position_programmatic: &Rc<Cell<u32>>,
+    meta_section_expanded_pref: &Rc<Cell<bool>>,
     meta_preview: &gtk4::Picture,
     app_state: &AppState,
 ) {
@@ -419,6 +422,7 @@ pub(crate) fn handle_selection_change_event(
         meta_paned.clone(),
         meta_split_before_auto_collapse.clone(),
         meta_position_programmatic.clone(),
+        meta_section_expanded_pref.clone(),
         click_trace_state.clone(),
         click_id,
     );
@@ -494,6 +498,7 @@ fn load_metadata_async(
     meta_paned: gtk4::Paned,
     meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
     meta_position_programmatic: Rc<Cell<u32>>,
+    meta_section_expanded_pref: Rc<Cell<bool>>,
     trace_state: Rc<RefCell<Option<ClickTrace>>>,
     click_id: u64,
 ) {
@@ -507,6 +512,7 @@ fn load_metadata_async(
             &meta_paned,
             &meta_split_before_auto_collapse,
             MIN_META_SPLIT_PX,
+            &meta_section_expanded_pref,
         );
         meta_position_programmatic.set(meta_position_programmatic.get().saturating_sub(1));
 

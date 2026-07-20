@@ -113,6 +113,7 @@ pub(crate) fn install_context_menu_wiring(deps: ContextMenuWiringDeps) -> Rc<dyn
         &deps.right.meta_paned,
         &deps.right.meta_split_before_auto_collapse,
         &deps.right.meta_position_programmatic,
+        &deps.right.meta_section_expanded_pref,
         deps.min_meta_split_px,
         &deps.app_state.current_folder,
         &start_scan_for_folder,
@@ -156,6 +157,7 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
     let meta_paned_sel = deps.right.meta_paned.clone();
     let meta_split_before_auto_collapse_sel = deps.right.meta_split_before_auto_collapse.clone();
     let meta_position_programmatic_sel = deps.right.meta_position_programmatic.clone();
+    let meta_section_expanded_pref_sel = deps.right.meta_section_expanded_pref.clone();
     let meta_preview_sel = deps.right.meta_preview.clone();
     let meta_cache_sel = deps.app_state.meta_cache.clone();
     let app_state_sel = deps.app_state.clone();
@@ -192,6 +194,7 @@ pub(crate) fn install_selection_wiring(deps: SelectionWiringDeps) {
                 &meta_paned_sel,
                 &meta_split_before_auto_collapse_sel,
                 &meta_position_programmatic_sel,
+                &meta_section_expanded_pref_sel,
                 &meta_preview_sel,
                 &app_state_sel,
             );

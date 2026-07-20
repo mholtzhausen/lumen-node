@@ -65,6 +65,8 @@ pub struct AppConfig {
     pub meta_pane_height_pct: Option<f64>,
     pub left_sidebar_visible: Option<bool>,
     pub right_sidebar_visible: Option<bool>,
+    /// Whether the Metadata expander in the right pane is expanded. Default when unset: true.
+    pub meta_section_expanded: Option<bool>,
     pub sort_key: Option<String>,
     pub search_text: Option<String>,
     pub thumbnail_size: Option<i32>,
@@ -96,6 +98,7 @@ pub fn load() -> AppConfig {
     let mut meta_pane_height_pct = None;
     let mut left_sidebar_visible = None;
     let mut right_sidebar_visible = None;
+    let mut meta_section_expanded = None;
     let mut sort_key = None;
     let mut search_text = None;
     let mut thumbnail_size = None;
@@ -137,6 +140,8 @@ pub fn load() -> AppConfig {
                 left_sidebar_visible = val.trim().parse::<bool>().ok();
             } else if let Some(val) = line.strip_prefix("right_sidebar_visible: ") {
                 right_sidebar_visible = val.trim().parse::<bool>().ok();
+            } else if let Some(val) = line.strip_prefix("meta_section_expanded: ") {
+                meta_section_expanded = val.trim().parse::<bool>().ok();
             } else if let Some(val) = line.strip_prefix("sort_key: ") {
                 let val = val.trim();
                 if !val.is_empty() {
@@ -175,6 +180,7 @@ pub fn load() -> AppConfig {
         meta_pane_height_pct,
         left_sidebar_visible,
         right_sidebar_visible,
+        meta_section_expanded,
         sort_key,
         search_text,
         thumbnail_size,
@@ -200,6 +206,7 @@ pub fn save(
     meta_pane_height_pct: f64,
     left_sidebar_visible: bool,
     right_sidebar_visible: bool,
+    meta_section_expanded: bool,
     color_scheme: ColorSchemePref,
 ) {
     let path = config_path();
@@ -215,7 +222,7 @@ pub fn save(
         .collect::<Vec<_>>()
         .join("\n");
     let content = format!(
-        "last_folder: {}\n{}\nwindow_width: {}\nwindow_height: {}\nwindow_maximized: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\ncolor_scheme: {}\n",
+        "last_folder: {}\n{}\nwindow_width: {}\nwindow_height: {}\nwindow_maximized: {}\nleft_pane_pos: {}\nright_pane_pos: {}\nmeta_pane_pos: {}\nleft_pane_width_pct: {:.6}\nright_pane_width_pct: {:.6}\nmeta_pane_height_pct: {:.6}\nleft_sidebar_visible: {}\nright_sidebar_visible: {}\nmeta_section_expanded: {}\ncolor_scheme: {}\n",
         folder_str,
         recent_folder_lines,
         window_width,
@@ -229,6 +236,7 @@ pub fn save(
         meta_pane_height_pct,
         left_sidebar_visible,
         right_sidebar_visible,
+        meta_section_expanded,
         color_scheme.as_str(),
     );
     let _ = std::fs::write(&path, content);

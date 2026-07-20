@@ -20,6 +20,7 @@ pub(crate) struct ClosePersistenceDeps {
     pub(crate) inner_paned: gtk4::Paned,
     pub(crate) meta_paned: gtk4::Paned,
     pub(crate) meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
+    pub(crate) meta_section_expanded_pref: Rc<Cell<bool>>,
     pub(crate) sort_key: Rc<RefCell<String>>,
     pub(crate) search_text: Rc<RefCell<String>>,
     pub(crate) favorites_only: Rc<Cell<bool>>,
@@ -113,6 +114,7 @@ pub(crate) fn install_close_persistence_handler(deps: ClosePersistenceDeps) {
             meta_pct_for_save,
             deps.left_toggle.is_active(),
             deps.right_toggle.is_active(),
+            deps.meta_section_expanded_pref.get(),
             deps.color_scheme.get(),
         );
         if let Some(folder) = deps.current_folder.borrow().as_ref() {
@@ -144,6 +146,9 @@ pub(crate) struct RestoreSessionDeps {
     pub(crate) outer_paned: gtk4::Paned,
     pub(crate) inner_paned: gtk4::Paned,
     pub(crate) meta_paned: gtk4::Paned,
+    pub(crate) meta_expander: gtk4::Expander,
+    pub(crate) meta_split_before_auto_collapse: Rc<Cell<Option<i32>>>,
+    pub(crate) meta_section_expanded_pref: Rc<Cell<bool>>,
     pub(crate) outer_position_programmatic: Rc<Cell<u32>>,
     pub(crate) inner_position_programmatic: Rc<Cell<u32>>,
     pub(crate) meta_position_programmatic: Rc<Cell<u32>>,
@@ -188,6 +193,9 @@ pub(crate) fn restore_session_state(deps: RestoreSessionDeps) {
     let outer_paned_restore = deps.outer_paned.clone();
     let inner_paned_restore = deps.inner_paned.clone();
     let meta_paned_restore = deps.meta_paned.clone();
+    let meta_expander_restore = deps.meta_expander.clone();
+    let meta_split_before_auto_collapse_restore = deps.meta_split_before_auto_collapse.clone();
+    let meta_section_expanded_pref_restore = deps.meta_section_expanded_pref.clone();
     let outer_position_programmatic_restore = deps.outer_position_programmatic.clone();
     let inner_position_programmatic_restore = deps.inner_position_programmatic.clone();
     let meta_position_programmatic_restore = deps.meta_position_programmatic.clone();
@@ -256,6 +264,21 @@ pub(crate) fn restore_session_state(deps: RestoreSessionDeps) {
         meta_position_programmatic_restore
             .set(meta_position_programmatic_restore.get().saturating_add(1));
         meta_paned_restore.set_position(meta_pane_start_px);
+        // Apply persisted Metadata expander open/closed preference after the
+        // expanded-split position is restored so collapse can stash that split.
+        let want_expanded = meta_section_expanded_pref_restore.get();
+        if !want_expanded {
+            meta_split_before_auto_collapse_restore.set(Some(meta_pane_start_px));
+            meta_expander_restore.set_expanded(false);
+            crate::metadata_section::sync_meta_paned_to_expander_state(
+                false,
+                &meta_paned_restore,
+                &meta_split_before_auto_collapse_restore,
+                deps.min_meta_split_px,
+            );
+        } else {
+            meta_expander_restore.set_expanded(true);
+        }
         meta_position_programmatic_restore
             .set(meta_position_programmatic_restore.get().saturating_sub(1));
         pane_restore_complete_restore.set(true);

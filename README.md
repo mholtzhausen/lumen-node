@@ -312,7 +312,7 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 
 Config lives at `~/.lumen-node/config.yml` — a plain-text `key: value` file you can edit by hand or via **Edit → Preferences…** (tabs: General / Appearance / Startup; `Ctrl+,`). Preference edits use partial key updates so unknown lines are preserved.
 
-On exit, the app writes **window geometry**, **three GtkPaned positions** (`left_pane_pos`, `right_pane_pos`, `meta_pane_pos`), **percentage splits** (`left_pane_width_pct`, `right_pane_width_pct`, `meta_pane_height_pct`), **sidebar visibility**, **color scheme**, **last folder**, and **recent folder** lines. Theme changes (header toggle or Preferences → Appearance) write `color_scheme` immediately. Full session `save()` still does **not** rewrite preference-only keys; those are updated by dedicated helpers from the preferences dialog (and `save_color_scheme` / `save_recent_state` elsewhere).
+On exit, the app writes **window geometry**, **three GtkPaned positions** (`left_pane_pos`, `right_pane_pos`, `meta_pane_pos`), **percentage splits** (`left_pane_width_pct`, `right_pane_width_pct`, `meta_pane_height_pct`), **sidebar visibility**, **metadata section expanded state**, **color scheme**, **last folder**, and **recent folder** lines. Theme changes (header toggle or Preferences → Appearance) write `color_scheme` immediately. Full session `save()` still does **not** rewrite preference-only keys; those are updated by dedicated helpers from the preferences dialog (and `save_color_scheme` / `save_recent_state` elsewhere).
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -325,6 +325,7 @@ On exit, the app writes **window geometry**, **three GtkPaned positions** (`left
 | `meta_pane_height_pct` | derived from pane split | Metadata/detail split in the right pane (%) |
 | `left_sidebar_visible` | false | Folder tree visibility |
 | `right_sidebar_visible` | true | Metadata pane visibility |
+| `meta_section_expanded` | true | Metadata expander open/closed in the right pane |
 | `color_scheme` | `system` | Appearance: `system`, `light`, or `dark` (header toggle / Preferences) |
 | `recent_folder` | — | Repeated entry for recent folder history |
 | `sort_key` / `search_text` / `thumbnail_size` | — | Optional startup defaults (Preferences → Startup; per-folder values live in SQLite `ui_state`) |

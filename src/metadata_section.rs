@@ -67,31 +67,28 @@ pub fn sync_meta_paned_to_expander_state(
     }
 }
 
+/// Apply expander/paned state for the loaded metadata.
+///
+/// Empty metadata forces a temporary collapse without changing the user's
+/// preferred expanded state. When content exists, the expander follows
+/// `meta_section_expanded_pref`.
 pub fn apply_metadata_section_state(
     metadata: &ImageMetadata,
     meta_expander: &gtk4::Expander,
     meta_paned: &gtk4::Paned,
     meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
     min_meta_split_px: i32,
+    meta_section_expanded_pref: &Rc<Cell<bool>>,
 ) {
     let has_content = metadata_has_content(metadata);
-    if has_content {
-        meta_expander.set_expanded(true);
-        sync_meta_paned_to_expander_state(
-            true,
-            meta_paned,
-            meta_split_before_auto_collapse,
-            min_meta_split_px,
-        );
-    } else {
-        meta_expander.set_expanded(false);
-        sync_meta_paned_to_expander_state(
-            false,
-            meta_paned,
-            meta_split_before_auto_collapse,
-            min_meta_split_px,
-        );
-    }
+    let expanded = has_content && meta_section_expanded_pref.get();
+    meta_expander.set_expanded(expanded);
+    sync_meta_paned_to_expander_state(
+        expanded,
+        meta_paned,
+        meta_split_before_auto_collapse,
+        min_meta_split_px,
+    );
 }
 
 pub fn connect_meta_expander_paned_sync(
@@ -100,11 +97,18 @@ pub fn connect_meta_expander_paned_sync(
     meta_split_before_auto_collapse: &Rc<Cell<Option<i32>>>,
     meta_position_programmatic: &Rc<Cell<u32>>,
     min_meta_split_px: i32,
+    meta_section_expanded_pref: &Rc<Cell<bool>>,
 ) {
     let meta_paned = meta_paned.clone();
     let meta_split_before_auto_collapse = meta_split_before_auto_collapse.clone();
     let meta_position_programmatic = meta_position_programmatic.clone();
+    let meta_section_expanded_pref = meta_section_expanded_pref.clone();
     meta_expander.connect_notify_local(Some("expanded"), move |expander, _| {
+        // User-driven toggles update the persisted preference; programmatic
+        // apply/restore (outer wrap already increments the counter) does not.
+        if meta_position_programmatic.get() == 0 {
+            meta_section_expanded_pref.set(expander.is_expanded());
+        }
         meta_position_programmatic.set(meta_position_programmatic.get().saturating_add(1));
         sync_meta_paned_to_expander_state(
             expander.is_expanded(),

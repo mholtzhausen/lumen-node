@@ -67,6 +67,7 @@ pub struct PreviewFavouriteIndicator {
 
 pub fn create_meta_expander(
     meta_scroll: &gtk4::ScrolledWindow,
+    initially_expanded: bool,
 ) -> (gtk4::Expander, PreviewFavouriteIndicator) {
     let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     header.set_hexpand(true);
@@ -97,7 +98,7 @@ pub fn create_meta_expander(
 
     let meta_expander = gtk4::Expander::new(None);
     meta_expander.set_label_widget(Some(&header));
-    meta_expander.set_expanded(true);
+    meta_expander.set_expanded(initially_expanded);
     meta_expander.set_child(Some(meta_scroll));
 
     (
