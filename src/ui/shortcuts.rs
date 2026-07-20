@@ -44,6 +44,21 @@ pub(crate) fn present_shortcuts_window(parent: &adw::ApplicationWindow) {
         .transient_for(parent)
         .build();
 
+    // ── File ─────────────────────────────────────────────────────────────────
+    let file = ShortcutsSection::builder()
+        .title("File")
+        .section_name("file")
+        .build();
+    let file_group = ShortcutsGroup::builder().build();
+    add_action(
+        &file_group,
+        "Open Folder…",
+        "win.open-folder",
+        Some("Anywhere"),
+    );
+    file.add_group(&file_group);
+    window.add_section(&file);
+
     // ── Navigation ───────────────────────────────────────────────────────────
     let navigation = ShortcutsSection::builder()
         .title("Navigation")

@@ -561,6 +561,9 @@ fn build_ui(app: &adw::Application) {
         );
     });
     window.add_action(&open_folder_action_win);
+    if let Some(app) = window.application() {
+        app.set_accels_for_action("win.open-folder", &["<Primary>o"]);
+    }
 
     // -----------------------------------------------------------------------
     // Wire: sort/search/clear/thumbnail-size controls

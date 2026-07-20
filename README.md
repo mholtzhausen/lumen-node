@@ -303,6 +303,7 @@ Extracted: **positive prompt**, **negative prompt**, model info, raw JSON.
 | `F2` | Selection (not in a text field) | Rename selected image |
 | `Ctrl+Shift+P` / `N` / `S` / `C` / `M` / `G` | Selection | Copy prompt / negative / seed / path / metadata / generation command |
 | `Ctrl+Alt+T` / `M` | Folder open | Refresh folder thumbnails / folder metadata |
+| `Ctrl+O` | Anywhere | Open Folder… |
 | `Ctrl+,` | Anywhere | Open Preferences |
 | `Ctrl+?` | Anywhere | Show Keyboard Shortcuts |
 | Double-click | Single / compare view | Toggle window fullscreen |
