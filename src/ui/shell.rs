@@ -399,9 +399,6 @@ pub(crate) fn create_window_with_defaults(
         .scroll-flag-pointer {
             color: alpha(@theme_fg_color, 0.95);
         }
-        .zoom-picture-host {
-            overflow: hidden;
-        }
         .zoom-level-hud {
             background-color: alpha(@theme_bg_color, 0.86);
             border-radius: 8px;

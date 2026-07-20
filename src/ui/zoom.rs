@@ -28,6 +28,8 @@ struct ZoomState {
 pub fn install_picture_zoom(picture: &Picture, overlay: &Overlay) {
     picture.add_css_class("zoomable-picture");
     overlay.add_css_class("zoom-picture-host");
+    // Clip scaled paintables to the host; GTK CSS has no `overflow` property.
+    overlay.set_overflow(gtk4::Overflow::Hidden);
 
     let css = CssProvider::new();
     // Per-widget provider is the practical hook for dynamic transform CSS.

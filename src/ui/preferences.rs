@@ -42,7 +42,7 @@ fn build_general_page(cfg: &config::AppConfig) -> adw::PreferencesPage {
         .build();
 
     let group = adw::PreferencesGroup::builder()
-        .title("Editor & full view")
+        .title("Editor and full view")
         .description("Saved to ~/.lumen-node/config.yml. Favourite HUD changes apply on next launch.")
         .build();
 
